@@ -1,0 +1,39 @@
+name: notmiss
+description: AI Voice Guide for Walking Tours
+publish_to: none
+version: 0.1.0
+
+environment:
+  sdk: ">=3.3.0 <4.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  # Map
+  flutter_map: ^7.0.0
+  latlong2: ^0.9.0
+
+  # Location / GPS
+  geolocator: ^13.0.0
+
+  # Networking (Gemini REST API)
+  http: ^1.2.0
+
+  # Audio playback
+  just_audio: ^0.9.43
+
+  # Temp file paths (for TTS audio)
+  path_provider: ^2.1.0
+
+  # .env file for API key
+  flutter_dotenv: ^5.1.0
+
+  # Utilities
+  uuid: ^4.4.0
+
+flutter:
+  uses-material-design: true
+  assets:
+    - .env
+    - assets/data/stryiskyi_park.json

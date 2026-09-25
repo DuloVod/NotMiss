@@ -1,0 +1,8 @@
+.env
+.dart_tool/
+build/
+*.g.dart
+*.freezed.dart
+.flutter-plugins
+.flutter-plugins-dependencies
+pubspec.lock
