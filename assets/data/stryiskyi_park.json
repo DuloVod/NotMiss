@@ -1,323 +1,420 @@
 {
   "id": "stryiskyi_park",
   "name": "Стрийський парк / Stryiskyi Park",
-  "center_latitude": 49.8282,
-  "center_longitude": 24.0218,
+  "center_latitude": 49.8200,
+  "center_longitude": 24.0280,
   "default_zoom": 16.0,
   "pois": [
     {
-      "id": "poi_001",
-      "name": "Main Entrance & Central Alley",
-      "latitude": 49.8305,
-      "longitude": 24.0185,
-      "trigger_radius": 60,
-      "short_description": "The grand main entrance and the park's central axis.",
-      "facts": [
-        "Stryiskyi Park was established in 1877 on the initiative of Lviv city authorities.",
-        "The park was designed by Karl Bauer, a prominent landscape architect.",
-        "The central alley connects the main entrance to the heart of the park.",
-        "The park covers approximately 55 hectares, making it one of the largest parks in Lviv.",
-        "The park was named after the Stryi River valley region, as the land was associated with the road leading to the town of Stryi."
+      "id": "sp_01_vodonapirna_vezha",
+      "name_uk": "Водонапірна вежа (1894)",
+      "latitude": 49.820478,
+      "longitude": 24.027003,
+      "trigger_radius_m": 70,
+      "short_description_uk": "Єдина споруда Крайової виставки 1894 року, що збереглася донині. Стилізована під середньовічну вежу, у 1970-х перетворена на кафе «Вежа».",
+      "facts_uk": [
+        "Вежу збудовано у 1894 році для потреб водопостачання Крайової виставки.",
+        "Архітектурний ескіз виконав професор Юліан Захаревич, проєкт розробив Міхал Лужецький, будівництво здійснили Юзеф Балабан та Влодзімєж Подгорецький.",
+        "Вежа стилізована під середньовічну оборонну башту.",
+        "Є однією з небагатьох споруд виставки, що збереглися до нашого часу.",
+        "У 1970-х роках вежу переобладнали під кафе-ресторан «Вежа», яке популярне серед львів'ян досі.",
+        "Адреса: вул. Івана Франка, 160."
       ],
-      "narration_text": "Welcome to Stryiskyi Park — one of Lviv's oldest and most beloved green spaces. Established in 1877, this 55-hectare park was designed by landscape architect Karl Bauer. The long central alley you're standing on has welcomed Lviv residents and visitors for nearly 150 years. Take a moment to look ahead — this path will lead you through layers of history, nature, and culture.",
+      "narration_idea_uk": "Розповісти, що ця вежа — майже єдиний матеріальний свідок грандіозної виставки 1894 року. Тоді тут стояло 130 павільйонів. Зникли всі — крім цієї вежі. І тепер всередині неї подають каву.",
       "sources": [
-        "Lviv City Council historical records",
-        "Lviv Encyclopedia, Vol. 2"
-      ]
+        {
+          "title": "Водонапірна вежа у Стрийському парку — Вікіпедія (укр.)",
+          "url": "https://uk.wikipedia.org/wiki/%D0%92%D0%BE%D0%B4%D0%BE%D0%BD%D0%B0%D0%BF%D1%96%D1%80%D0%BD%D0%B0_%D0%B2%D0%B5%D0%B6%D0%B0_(%D0%A1%D1%82%D1%80%D0%B8%D0%B9%D1%81%D1%8C%D0%BA%D0%B8%D0%B9_%D0%BF%D0%B0%D1%80%D0%BA)"
+        },
+        {
+          "title": "Lviv.travel — Водонапірна вежа",
+          "url": "https://lviv.travel/uk/object/vodonapirna-vezha-stryiskyy-park"
+        },
+        {
+          "title": "Wikidata Q116737194 — координати",
+          "url": "https://www.wikidata.org/wiki/Q116737194"
+        }
+      ],
+      "confidence": "high"
     },
     {
-      "id": "poi_002",
-      "name": "Exhibition Pavilions (1894 Galician Exhibition Site)",
-      "latitude": 49.8285,
-      "longitude": 24.0195,
-      "trigger_radius": 70,
-      "short_description": "Where the 1894 General Galician Exhibition was held — a turning point for Lviv.",
-      "facts": [
-        "In 1894, Stryiskyi Park hosted the General Galician Exhibition, a massive industrial and cultural fair.",
-        "The exhibition attracted over 600,000 visitors from across Europe — an enormous number for the era.",
-        "The event showcased Galician industry, agriculture, and arts to the world.",
-        "The exhibition included pavilions, a model village, and even early electric lighting — a novelty at the time.",
-        "The success of the 1894 exhibition helped put Lviv on the European cultural map.",
-        "Many of the exhibition's buildings were later repurposed or became permanent park structures."
+      "id": "sp_02_pam_kilinsky",
+      "name_uk": "Пам'ятник Яну Кілінському",
+      "latitude": 49.8188,
+      "longitude": 24.0268,
+      "trigger_radius_m": 60,
+      "short_description_uk": "Бронзовий пам'ятник польському герою повстання Костюшка 1794 року, встановлений у 1895 році. Завдяки йому парк короткий час іменувався «Парком Кілінського».",
+      "facts_uk": [
+        "Пам'ятник встановлено 18 червня 1895 року — через рік після Крайової виставки.",
+        "Скульптор — Юліан Марковський.",
+        "Ян Кілінський (1760–1819) — варшавський швець, герой польського повстання 1794 року під проводом Тадеуша Костюшка.",
+        "Після встановлення пам'ятника парк кілька десятиліть офіційно називався «Парком Кілінського», але в народі назва не прижилась.",
+        "Пам'ятник розташований у нижній частині парку."
       ],
-      "narration_text": "You're standing near what was once one of the most exciting events in 19th-century Central Europe. In the summer of 1894, this very ground hosted the General Galician Exhibition. Over 600,000 people — from farmers, industrialists, to Viennese aristocrats — came through these gates to see modern industry, Galician folk art, and electric lighting for the first time. That summer transformed Lviv's identity as a cosmopolitan European city.",
+      "narration_idea_uk": "Розповісти, що Львів — місто, яке вміє вшановувати чужих героїв. Кілінський — поляк, швець за ремеслом — став символом того, що навіть звичайна людина може змінити хід повстання. І Львів 1895 року вирішив увічнити його в камені.",
       "sources": [
-        "Lviv: A City in the Crosscurrents of Culture, John Czaplicka (ed.)",
-        "Historical records of the 1894 Galician Exhibition"
-      ]
+        {
+          "title": "Kuladig — Kiliński Monument Lviv",
+          "url": "https://www.kuladig.de/Objektansicht/KLD-345622"
+        },
+        {
+          "title": "Стрийський парк — Вікіпедія (укр.)",
+          "url": "https://uk.wikipedia.org/wiki/%D0%A1%D1%82%D1%80%D0%B8%D0%B9%D1%81%D1%8C%D0%BA%D0%B8%D0%B9_%D0%BF%D0%B0%D1%80%D0%BA"
+        }
+      ],
+      "confidence": "high"
     },
     {
-      "id": "poi_003",
-      "name": "Upper Pond",
-      "latitude": 49.8275,
-      "longitude": 24.0220,
-      "trigger_radius": 65,
-      "short_description": "The tranquil upper pond at the heart of the park.",
-      "facts": [
-        "The park contains several artificial ponds created during its original design in the 1870s.",
-        "The ponds were dug by hand by the workers who built the park.",
-        "The ponds provide habitat for ducks, swans, and various migratory birds.",
-        "In winter, the ponds historically froze over and were used for ice skating.",
-        "The ponds are fed by natural underground springs in the area."
+      "id": "sp_03_lebedyne_ozero",
+      "name_uk": "Лебедине озеро",
+      "latitude": 49.8232,
+      "longitude": 24.0300,
+      "trigger_radius_m": 80,
+      "short_description_uk": "Декоративна водойма в нижній частині парку, де живуть лебеді-шипуни, качки та черепахи. Одна з найпопулярніших точок парку серед відвідувачів.",
+      "facts_uk": [
+        "Озеро знаходиться в нижній (партерній) частині Стрийського парку.",
+        "Тут постійно мешкають лебеді-шипуни — їх розводить адміністрація парку.",
+        "Крім лебедів, у водоймі живуть качки та черепахи.",
+        "Поряд з озером розташована скульптура «Лілея».",
+        "Озеро є одним із найчастіше фотографованих місць парку."
       ],
-      "narration_text": "You've reached one of the park's peaceful ponds. These water bodies weren't here naturally — they were hand-dug by laborers in the 1870s as part of Karl Bauer's landscape design. For Lviv families, these ponds have been a gathering place across generations: a spot to feed ducks in summer, to watch swans glide in spring, and in colder winters past, even to skate on the ice. The water you see comes from underground springs beneath the park.",
+      "narration_idea_uk": "Описати, як лебеді стали невід'ємною частиною міської ідентичності. Нагадати, що ця водойма — штучна: її створили, щоб парк виглядав «живим». І він справді ожив.",
       "sources": [
-        "Karl Bauer, Landscape Architecture of Galicia (1878)",
-        "Lviv Nature Conservancy historical notes"
-      ]
+        {
+          "title": "Parky.lviv.ua — Стрийський парк",
+          "url": "https://parky.lviv.ua"
+        },
+        {
+          "title": "Wikimapia — Лебедине озеро Стрийський парк",
+          "url": "https://wikimapia.org"
+        }
+      ],
+      "confidence": "high"
     },
     {
-      "id": "poi_004",
-      "name": "Monument to Ivan Franko",
-      "latitude": 49.8265,
-      "longitude": 24.0230,
-      "trigger_radius": 50,
-      "short_description": "A monument to Ukraine's greatest writer and thinker.",
-      "facts": [
-        "Ivan Franko (1856–1916) is considered the greatest Ukrainian writer after Taras Shevchenko.",
-        "Franko was a poet, novelist, journalist, translator, scholar, and political activist.",
-        "He was born in the village of Nahuievychi and spent much of his life in Lviv.",
-        "Franko wrote in Ukrainian, Polish, and German, making his work accessible across Central Europe.",
-        "He was nominated for the Nobel Prize in Literature in 1916, the year of his death.",
-        "His literary output exceeds 5,000 works across all genres.",
-        "Ivan Franko University in Lviv is named in his honor."
+      "id": "sp_04_shtuchni_ruiny",
+      "name_uk": "Штучні руїни",
+      "latitude": 49.8198,
+      "longitude": 24.0253,
+      "trigger_radius_m": 70,
+      "short_description_uk": "Декоративні «руїни середньовічного замку», створені в XIX столітті з матеріалів старого мосту та надгробків Стрийського цвинтаря. Розташовані в нижній частині парку.",
+      "facts_uk": [
+        "Штучні руїни створені в XIX столітті як романтичний декоративний елемент пейзажного парку.",
+        "При будівництві використовувались матеріали зі старого мосту та надгробки зі Стрийського цвинтаря, закритого у 1823 році.",
+        "Подібні «романтичні руїни» були популярним елементом ландшафтних парків епохи романтизму по всій Європі.",
+        "Розташовані в нижній частині парку, ліворуч від алеї, що з'єднує нижню та верхню тераси, вище декоративного джерела.",
+        "Є одним із найзагадковіших і маловідомих об'єктів парку."
       ],
-      "narration_text": "Standing before you is a monument to Ivan Franko — Ukraine's literary titan. Born in 1856 in a small Galician village, Franko grew into one of the most prolific writers in European history: over 5,000 works in three languages. He was a poet, journalist, political activist, and was even nominated for the Nobel Prize in 1916. He loved Lviv, and Lviv loved him back. The city's main university carries his name to this day.",
+      "narration_idea_uk": "Пояснити парадокс: руїни, які ніколи не були замком. Їх збудували «старими» навмисно — щоб гуляючи парком, людина відчувала себе мандрівником у часі. Романтична епоха вірила в ілюзії.",
       "sources": [
-        "Ivan Franko: A Poet's Biography, Mykhailo Vozniak",
-        "Encyclopedia of Ukraine"
-      ]
+        {
+          "title": "Центр міської історії Львова — Стрийський парк",
+          "url": "https://lvivcenter.org"
+        },
+        {
+          "title": "Inlviv.in.ua — Штучні руїни",
+          "url": "https://inlviv.in.ua"
+        },
+        {
+          "title": "Wikimapia — Штучні руїни",
+          "url": "https://wikimapia.org"
+        }
+      ],
+      "confidence": "medium"
     },
     {
-      "id": "poi_005",
-      "name": "Rose Garden",
-      "latitude": 49.8270,
-      "longitude": 24.0200,
-      "trigger_radius": 55,
-      "short_description": "A fragrant rose garden established in the early 20th century.",
-      "facts": [
-        "The rose garden in Stryiskyi Park was established in the early 1900s.",
-        "At its peak, the garden contained over 100 varieties of roses.",
-        "Rose gardens were fashionable in Austro-Hungarian Lviv as symbols of civic culture.",
-        "The garden was carefully maintained by the city's horticultural department.",
-        "During Soviet times, the rose garden fell into neglect but was partially restored after Ukrainian independence.",
-        "The scent of the roses in early summer is a beloved sensory memory for Lviv residents."
+      "id": "sp_05_dytyacha_zaliznytsya",
+      "name_uk": "Львівська дитяча залізниця",
+      "latitude": 49.8222,
+      "longitude": 24.0299,
+      "trigger_radius_m": 90,
+      "short_description_uk": "Вузькоколійна залізниця для дітей, що діє з 1951 року. Дозволяє дітям самим керувати потягом під наглядом дорослих. Одна із небагатьох таких залізниць, що збереглися в Україні.",
+      "facts_uk": [
+        "Дитяча залізниця у Стрийському парку відкрита у 1951 році.",
+        "Колія — вузькоколійна (750 мм), довжина маршруту — близько 2,7 км.",
+        "Залізниця прокладена частково по колишніх вузькоколійних шляхах виставки «Східні торги» (Targi Wschodnie), яка проводилась у парку між світовими війнами.",
+        "Діти можуть виконувати ролі машиністів, провідників та диспетчерів під наглядом інструкторів.",
+        "Сезон роботи — зазвичай травень–вересень.",
+        "Адреса: вул. Івана Франка, 156."
       ],
-      "narration_text": "The air here tells you something before your eyes do. This is the rose garden, established over a century ago when Lviv was part of the Austro-Hungarian Empire. At its peak, more than a hundred varieties bloomed here — a deliberate symbol of civic pride and culture. The Soviets let it fall into neglect, but after independence, Lviv's gardeners brought it back. If you're here between June and August, you're in for a remarkable smell.",
+      "narration_idea_uk": "Розповісти, що ця залізниця існує вже понад 70 років. Дідусі, які зараз приводять онуків, самі колись їздили тут машиністами. Вузькоколійка — не атракціон, а справжня жива традиція.",
       "sources": [
-        "Lviv City Parks Historical Archive",
-        "Gardens of Galicia, botanical survey (1920s)"
-      ]
+        {
+          "title": "Укрзалізниця — Львівська дитяча залізниця",
+          "url": "https://uz.gov.ua"
+        },
+        {
+          "title": "Вікіпедія — Львівська дитяча залізниця",
+          "url": "https://uk.wikipedia.org/wiki/%D0%9B%D1%8C%D0%B2%D1%96%D0%B2%D1%81%D1%8C%D0%BA%D0%B0_%D0%B4%D0%B8%D1%82%D1%8F%D1%87%D0%B0_%D0%B7%D0%B0%D0%BB%D1%96%D0%B7%D0%BD%D0%B8%D1%86%D1%8F"
+        }
+      ],
+      "confidence": "high"
     },
     {
-      "id": "poi_006",
-      "name": "Amphitheatre (Open-Air Stage)",
-      "latitude": 49.8260,
-      "longitude": 24.0215,
-      "trigger_radius": 65,
-      "short_description": "An open-air performance space used across many eras.",
-      "facts": [
-        "The park's amphitheatre has been used for public performances since the late 19th century.",
-        "During the Austro-Hungarian era, military brass bands performed here on Sunday afternoons.",
-        "During the Soviet period, the venue hosted political rallies and approved cultural events.",
-        "After Ukrainian independence, the amphitheatre returned to cultural programming: concerts, theatre, and festivals.",
-        "The Lviv Jazz Festival has used open-air park venues including Stryiskyi Park.",
-        "The natural slope of the land makes the site ideal for an amphitheatre without heavy construction."
+      "id": "sp_06_fontan_ivasyk",
+      "name_uk": "Фонтан «Івасик-Телесик»",
+      "latitude": 49.8213,
+      "longitude": 24.0272,
+      "trigger_radius_m": 60,
+      "short_description_uk": "Світломузичний фонтан на центральній липовій алеї парку. Один із найвідоміших декоративних об'єктів нижньої тераси.",
+      "facts_uk": [
+        "Фонтан розташований на центральній липовій алеї Стрийського парку.",
+        "Назва «Івасик-Телесик» — відсилання до відомої української народної казки.",
+        "Фонтан є одним з популярних місць відпочинку і орієнтиром у нижній частині парку.",
+        "Центральна липова алея — одна з найстаріших алей парку, закладена ще при початковому проектуванні у XIX столітті."
       ],
-      "narration_text": "This open-air stage has heard music from very different worlds. In Austro-Hungarian times, Sunday afternoons brought brass bands and promenading families. The Soviets used it for rallies and approved performances. After 1991, music and theatre festivals reclaimed it. The gentle slope you see was shaped by the land itself — nature provided the perfect bowl for an audience long before architects showed up.",
+      "narration_idea_uk": "Розповісти про ліпову алею як про хребет парку — вісь, навколо якої все організовано. І про те, що лепехи тут цвітуть у червні й запах стає майже відчутним.",
       "sources": [
-        "Lviv Cultural Heritage records",
-        "Austro-Hungarian municipal gazette records"
-      ]
+        {
+          "title": "Karpaty.rocks — Стрийський парк: що подивитись",
+          "url": "https://karpaty.rocks"
+        },
+        {
+          "title": "Lvivpost.net — фонтан Івасик-Телесик",
+          "url": "https://lvivpost.net"
+        }
+      ],
+      "confidence": "medium"
     },
     {
-      "id": "poi_007",
-      "name": "Lovers' Alley (Lypova Alley)",
-      "latitude": 49.8290,
-      "longitude": 24.0230,
-      "trigger_radius": 60,
-      "short_description": "The linden tree avenue that has long been a romantic strolling path.",
-      "facts": [
-        "The linden-lined alley is one of the oldest sections of the park.",
-        "Linden trees (lypa in Ukrainian) were considered sacred in Slavic tradition — symbols of love and femininity.",
-        "The alley became informally known as Lovers' Alley in the 20th century.",
-        "The linden blossom in June fills the path with a distinctive honey-like fragrance.",
-        "Linden flowers are used in Ukrainian folk medicine to make calming herbal tea.",
-        "Many of the oldest linden trees in this alley are estimated to be over 100 years old."
+      "id": "sp_07_horischnya_terasa_vkhid",
+      "name_uk": "Верхня тераса — головна алея",
+      "latitude": 49.8196,
+      "longitude": 24.0298,
+      "trigger_radius_m": 80,
+      "short_description_uk": "Регулярна (верхня) частина парку — відкрита планувальна тераса, де у 1894 році стояли 130 павільйонів Крайової виставки.",
+      "facts_uk": [
+        "Стрийський парк поділяється на три частини: нижню (пейзажну), верхню (регулярну) та лісопаркову зону.",
+        "На верхній терасі у 1894 році розмістились павільйони Загальної крайової виставки.",
+        "Виставка 1894 року залучила понад 600 000 відвідувачів і стала найбільшою подією в Галичині на той час.",
+        "Саме під час цієї виставки у Львові вперше запустили електричний трамвай.",
+        "Серед 130 павільйонів були відділи промисловості, сільського господарства, мистецтва та народних ремесел.",
+        "Проєкт планування парку розробив ландшафтний архітектор Арнольд Рерінг (1840–1913)."
       ],
-      "narration_text": "You're walking through what locals call Lovers' Alley — a row of ancient linden trees whose branches arch overhead. In Slavic tradition, the linden is the tree of love. In June, these trees bloom and release a honey-like fragrance that drifts across the entire park. Some of these trees are over a hundred years old, which means they've silently witnessed two world wars, a Soviet occupation, and the rebirth of an independent Ukraine — all while quietly being beautiful.",
+      "narration_idea_uk": "Попросити уявити: там, де зараз трава і дерева, стояло 130 павільйонів. 600 000 людей пройшли тут за один сезон. Це більше, ніж населення тогочасного Львова разом із сусідніми містами.",
       "sources": [
-        "Ukrainian botanical and folklore traditions",
-        "Lviv dendrology survey (2010)"
-      ]
+        {
+          "title": "Стрийський парк — Вікіпедія (укр.)",
+          "url": "https://uk.wikipedia.org/wiki/%D0%A1%D1%82%D1%80%D0%B8%D0%B9%D1%81%D1%8C%D0%BA%D0%B8%D0%B9_%D0%BF%D0%B0%D1%80%D0%BA"
+        },
+        {
+          "title": "Kuladig — Stryiskyi Park history",
+          "url": "https://www.kuladig.de"
+        }
+      ],
+      "confidence": "high"
     },
     {
-      "id": "poi_008",
-      "name": "Historical Greenhouse (Оранжерея)",
-      "latitude": 49.8278,
-      "longitude": 24.0175,
-      "trigger_radius": 55,
-      "short_description": "The park's old greenhouse, once the centre of botanical cultivation.",
-      "facts": [
-        "Stryiskyi Park had a greenhouse (orangery) built in the late 19th century.",
-        "The greenhouse was used to cultivate tropical and subtropical plants for park decoration.",
-        "In winter, sensitive plants from across the park were moved inside to survive the Galician cold.",
-        "The greenhouse was considered a technological marvel when it was built — large glass structures were difficult to construct.",
-        "The park maintained exotic plants including palms and citrus trees as symbols of wealth and civic ambition.",
-        "The greenhouse fell into disrepair during the 20th century but remains part of the park's layout."
+      "id": "sp_08_pam_futbol",
+      "name_uk": "Пам'ятник «Львів — батьківщина українського футболу»",
+      "latitude": 49.8209,
+      "longitude": 24.0315,
+      "trigger_radius_m": 65,
+      "short_description_uk": "Пам'ятний знак на честь першого в Україні футбольного матчу, зіграного у 1894 році поруч із парком під час Крайової виставки.",
+      "facts_uk": [
+        "Перший задокументований футбольний матч на території України відбувся у Львові в 1894 році під час Крайової виставки.",
+        "Матч відбувся на майданчику, що знаходився на межі парку та ділянки, де зараз розташований Український католицький університет (УКУ).",
+        "Пам'ятник встановлено до 110-ї річниці цієї події.",
+        "Львів вважається колискою українського футболу."
       ],
-      "narration_text": "This is where the park's botanical ambitions were made possible. The greenhouse — or orangery — was built in the late 1800s so the park could cultivate plants that had no business surviving a Galician winter: palms, citrus trees, tropical ferns. In an era before modern climate control, a large heated glass structure like this was genuinely impressive engineering. Every autumn, gardeners would carry the park's most delicate plants inside to wait out the cold.",
+      "narration_idea_uk": "Пояснити, що футбол прийшов до України не через радянські спортивні клуби, а набагато раніше — через виставку 1894 року. І саме тут, у Стрийському парку, відбулась та перша гра.",
       "sources": [
-        "Lviv botanical heritage records",
-        "Municipal engineering archives, late 19th century"
-      ]
+        {
+          "title": "032.ua — пам'ятник футболу у Стрийському парку",
+          "url": "https://www.032.ua"
+        },
+        {
+          "title": "Lviv.travel — пам'ятник першому футбольному матчу",
+          "url": "https://lviv.travel"
+        }
+      ],
+      "confidence": "medium"
     },
     {
-      "id": "poi_009",
-      "name": "WWII Memorial Area",
-      "latitude": 49.8255,
-      "longitude": 24.0225,
-      "trigger_radius": 60,
-      "short_description": "An area of the park tied to the Second World War's devastating impact on Lviv.",
-      "facts": [
-        "Lviv was occupied first by the Soviet Union (1939–1941), then by Nazi Germany (1941–1944), then the Soviet Union again.",
-        "Stryiskyi Park was used during wartime for various purposes including troop gatherings.",
-        "The Jewish population of Lviv, which numbered over 100,000 before the war, was almost entirely murdered during the Nazi occupation.",
-        "The park area witnessed mass deportations and atrocities during both Soviet and Nazi occupations.",
-        "After the war, Soviet authorities built memorials to Soviet soldiers, erasing other histories.",
-        "Since independence, Lviv has gradually reclaimed and recontextualized its wartime memory."
+      "id": "sp_09_tsentralna_aleia_vkhid",
+      "name_uk": "Головний вхід — арка 1952 року",
+      "latitude": 49.8242,
+      "longitude": 24.0316,
+      "trigger_radius_m": 70,
+      "short_description_uk": "Головний вхід до парку з вулиці Паркової з характерною аркою, зведеною у 1952 році. Один із символічних входів до парку.",
+      "facts_uk": [
+        "Вхідна арка збудована у 1952 році — в радянський період.",
+        "Розташована біля вулиці Паркової (раніше — вул. Козельницька).",
+        "Є одним із найвідоміших і найфотографованіших елементів входу до парку.",
+        "Парк межує з вулицями Стрийською, Уласа Самчука, Івана Франка та Парковою."
       ],
-      "narration_text": "The ground beneath Stryiskyi Park carries difficult history. During World War II, Lviv was occupied twice — first by the Soviets, then by the Nazis. The city's Jewish community, over 100,000 people, was almost entirely destroyed during the Nazi occupation. The park itself was used by occupying forces. After the war, Soviet memorials shaped what was remembered and what was silenced. Today, Ukraine is still working through the painful layers of this history with honesty and courage.",
+      "narration_idea_uk": "Зазначити іронію: вхідна арка, що здається «класичною» і старовинною, зведена радянською владою у 1952 році — в час, коли радянська архітектура любила масштаб і монументальність. Парк старший за неї на 70 років.",
       "sources": [
-        "Lviv under Occupation, 1939–1944 — historical documentation",
-        "Yahad-In Unum research on the Holocaust in Eastern Galicia"
-      ]
+        {
+          "title": "Discover.ua — Стрийський парк",
+          "url": "https://discover.ua"
+        },
+        {
+          "title": "Стрийський парк — Вікіпедія (укр.)",
+          "url": "https://uk.wikipedia.org/wiki/%D0%A1%D1%82%D1%80%D0%B8%D0%B9%D1%81%D1%8C%D0%BA%D0%B8%D0%B9_%D0%BF%D0%B0%D1%80%D0%BA"
+        }
+      ],
+      "confidence": "high"
     },
     {
-      "id": "poi_010",
-      "name": "Children's Area & Carousel Zone",
-      "latitude": 49.8295,
-      "longitude": 24.0205,
-      "trigger_radius": 55,
-      "short_description": "The family area at the north end of the park.",
-      "facts": [
-        "Stryiskyi Park has always been a family park, welcoming children since its opening.",
-        "The northern section has historically been dedicated to children's activities.",
-        "During Soviet times, the park had a Pioneer Youth area with organized activities.",
-        "Today the area includes playgrounds and seasonal attractions popular with Lviv families.",
-        "The park is free to enter, making it one of the most democratic public spaces in Lviv.",
-        "On weekends, the park fills with multiple generations of Lviv families."
+      "id": "sp_10_lisoparkova_zona",
+      "name_uk": "Лісопаркова зона (природна частина)",
+      "latitude": 49.8162,
+      "longitude": 24.0275,
+      "trigger_radius_m": 100,
+      "short_description_uk": "Найбільш дика та природна частина парку — з вільно зростаючими деревами, зокрема рідкісними видами. Тут є тюльпанові дерева, гінкго та червоні дуби.",
+      "facts_uk": [
+        "Стрийський парк налічує понад 200 видів дерев та кущів.",
+        "Серед рідкісних видів — тюльпанове дерево (Liriodendron tulipifera), гінкго дволопатеве (Ginkgo biloba) та червоний дуб (Quercus rubra).",
+        "Лісопаркова зона — найменш облаштована частина парку, де природа домінує над плануванням.",
+        "Парк є пам'яткою садово-паркового мистецтва національного значення і перебуває під державною охороною.",
+        "Деякі дерева парку існували ще до його офіційного заснування у 1894 (або 1879 — існує розбіжність між джерелами) роках."
       ],
-      "narration_text": "The northern part of the park has always been for children. In Soviet times it was the Pioneer Zone with organized youth activities. Today it's a place where Lviv grandparents watch their grandchildren — the same benches, different decades. What makes Stryiskyi Park remarkable as a social institution is that it has always been free and open to everyone. In a city with deep class divisions in its history, this park belonged to all of Lviv.",
+      "narration_idea_uk": "Розповісти про гінкго — дерево-живу копалину, що пережило динозаврів. Тут, у Стрийському парку, воно зростає вже понад 100 років. Зупинись і послухай, як у цьому місці час рухається інакше.",
       "sources": [
-        "Soviet-era Lviv municipal records",
-        "Lviv social history documentation"
-      ]
+        {
+          "title": "Parky.lviv.ua — флора Стрийського парку",
+          "url": "https://parky.lviv.ua"
+        },
+        {
+          "title": "Lviv Center — Стрийський парк",
+          "url": "https://lvivcenter.org"
+        }
+      ],
+      "confidence": "high"
     },
     {
-      "id": "poi_011",
-      "name": "Oak Alley (Дубова алея)",
-      "latitude": 49.8268,
-      "longitude": 24.0240,
-      "trigger_radius": 65,
-      "short_description": "A majestic alley of centuries-old oak trees.",
-      "facts": [
-        "The oak alley contains some of the oldest trees in the park, estimated at 150–200 years old.",
-        "Some oaks predate the park itself, meaning they were already growing before the park was designed.",
-        "Oaks are a symbol of strength and endurance in Ukrainian culture.",
-        "The oak trees in Stryiskyi Park are protected as natural monuments.",
-        "An old Galician oak can live for over 500 years under the right conditions.",
-        "The oak root systems significantly contribute to the groundwater retention in the park area."
-      ],
-      "narration_text": "Look up. These oaks are not park decorations — some of them were already here before the park was designed. When Karl Bauer laid out Stryiskyi Park in the 1870s, he built the design around trees that were already ancient. In Ukrainian culture, the oak is a symbol of endurance and strength. These particular trees have lived through the Austro-Hungarian Empire, two world wars, Soviet occupation, and now stand in an independent Ukraine. They're protected as natural monuments — and deserve to be.",
-      "sources": [
-        "Lviv dendrology survey (2010)",
-        "Natural monument registry, Lviv Oblast"
-      ]
-    },
-    {
-      "id": "poi_012",
-      "name": "Eastern Boundary Path & City Views",
-      "latitude": 49.8275,
+      "id": "sp_11_istoriya_tsvyntar",
+      "name_uk": "Місце колишнього Стрийського цвинтаря",
+      "latitude": 49.8175,
       "longitude": 24.0255,
-      "trigger_radius": 60,
-      "short_description": "The park's eastern edge, with views toward the old city.",
-      "facts": [
-        "The eastern path runs along the park's boundary and offers elevated views of Lviv's skyline.",
-        "From here you can see the Old Town's church towers in the distance.",
-        "Lviv's historic centre is a UNESCO World Heritage Site, inscribed in 1998.",
-        "The city has over 2,000 historic buildings and monuments.",
-        "Lviv's skyline is dominated by the towers of the Latin Cathedral, Dominican Church, and Dormition Church.",
-        "The city was founded in the 13th century and named after Prince Lev (Leo) of Galicia."
+      "trigger_radius_m": 80,
+      "short_description_uk": "Парк закладено на місці Стрийського міського цвинтаря, що функціонував до 1823 року. Частина надгробків використана при будівництві штучних руїн.",
+      "facts_uk": [
+        "До появи парку тут знаходився Стрийський цвинтар — міський некрополь, закритий у 1823 році.",
+        "Після закриття цвинтаря ділянка поступово перетворювалась на міський зелений простір.",
+        "Частина надгробних каменів зі старого цвинтаря використана при будівництві декоративних «штучних руїн» у парку.",
+        "Парк офіційно закладено у 1879 або 1894 роках — різні джерела вказують різні дати (⚠ розбіжність між джерелами: укр. Вікіпедія вказує 1879, англомовні — 1894, що може відповідати різним етапам формування парку).",
+        "Ландшафтний архітектор Арнольд Рерінг (1840–1913) є автором загального планування парку."
       ],
-      "narration_text": "From this path, if the trees permit, you can see Lviv's skyline with its famous church towers. That skyline has been building for 700 years, since Prince Lev founded the city in the 13th century and named it after himself. Today Lviv's historic centre is a UNESCO World Heritage Site — one of the best-preserved medieval city centres in Eastern Europe. Every tower you see tells a different chapter: Catholic, Orthodox, Armenian, Jewish. Lviv has always been a city of many peoples and many faiths.",
+      "narration_idea_uk": "Ця земля пам'ятає більше, ніж показує. Під кожним деревом — шари часу. Цвинтар, що тут був до парку, не зник безслідно: його каміння вбудоване в «руїни». Парк буквально стоїть на своїй власній пам'яті.",
       "sources": [
-        "UNESCO World Heritage Site documentation, 1998",
-        "Lviv city founding historical records"
-      ]
+        {
+          "title": "Kuladig — Stryiskyi Park history and origins",
+          "url": "https://www.kuladig.de"
+        },
+        {
+          "title": "Стрийський парк — Вікіпедія (укр.)",
+          "url": "https://uk.wikipedia.org/wiki/%D0%A1%D1%82%D1%80%D0%B8%D0%B9%D1%81%D1%8C%D0%BA%D0%B8%D0%B9_%D0%BF%D0%B0%D1%80%D0%BA"
+        }
+      ],
+      "confidence": "high"
     },
     {
-      "id": "poi_013",
-      "name": "The Lower Pond (Duck Pond)",
-      "latitude": 49.8300,
-      "longitude": 24.0220,
-      "trigger_radius": 55,
-      "short_description": "The smaller lower pond, beloved by children for its ducks.",
-      "facts": [
-        "The lower pond has been informally called the Duck Pond by Lviv locals for generations.",
-        "Families have been bringing bread to feed the ducks here since at least the early 20th century.",
-        "The pond hosts mallard ducks year-round and receives migratory birds in spring and autumn.",
-        "In Soviet times, the park maintained a small zoo near the lower pond area.",
-        "The pond ecosystem supports aquatic plants, frogs, and small fish.",
-        "Feeding bread to waterfowl is now discouraged by wildlife experts, who recommend seeds or greens."
+      "id": "sp_12_targy_wschodnie",
+      "name_uk": "Місце «Східних торгів» (Targi Wschodnie)",
+      "latitude": 49.8230,
+      "longitude": 24.0270,
+      "trigger_radius_m": 90,
+      "short_description_uk": "У 1921–1939 роках на верхній терасі парку щороку проводились «Східні торги» — великий міжнародний торговий ярмарок. Сьогодні від них залишилась лише дитяча залізниця.",
+      "facts_uk": [
+        "«Східні торги» (Targi Wschodnie) — щорічний міжнародний торговий ярмарок, що проходив у Львові в 1921–1939 роках.",
+        "Ярмарок проводився у польський міжвоєнний період і мав на меті стимулювати торгівлю між Польщею та країнами Сходу.",
+        "Для потреб ярмарку на верхній терасі парку зводились тимчасові павільйони та споруди.",
+        "Вузькоколійна залізниця дитячої залізниці частково прокладена по колишніх коліях, що обслуговували «Східні торги».",
+        "Ярмарок припинив існування з початком Другої світової війни у 1939 році."
       ],
-      "narration_text": "Locals call this the Duck Pond, and for generations, Lviv children have come here with bread in their pockets. Mallards have lived here year-round for over a century — perhaps the most continuous residents of Stryiskyi Park. In Soviet times there was a small zoo nearby, but today the pond is simply a peaceful corner for wildlife. A small note: wildlife experts now recommend feeding ducks with seeds or greens rather than bread, which isn't great for their health.",
+      "narration_idea_uk": "Розповісти, що за одне сторіччя ця земля побачила три великих міжнародних події: виставку 1894 року, «Східні торги» 1921–1939 і — в іншому сенсі — сучасний Львів із туристами з усього світу. Деякі місця притягують людей знову і знову.",
       "sources": [
-        "Oral history — Lviv resident accounts",
-        "Lviv city parks maintenance records"
-      ]
+        {
+          "title": "Вікіпедія — Targi Wschodnie",
+          "url": "https://uk.wikipedia.org/wiki/%D0%A1%D1%85%D1%96%D0%B4%D0%BD%D1%96_%D1%82%D0%BE%D1%80%D0%B3%D0%B8"
+        },
+        {
+          "title": "Стрийський парк — Вікіпедія (укр.)",
+          "url": "https://uk.wikipedia.org/wiki/%D0%A1%D1%82%D1%80%D0%B8%D0%B9%D1%81%D1%8C%D0%BA%D0%B8%D0%B9_%D0%BF%D0%B0%D1%80%D0%BA"
+        }
+      ],
+      "confidence": "high"
     },
     {
-      "id": "poi_014",
-      "name": "Meteorological Station Site",
-      "latitude": 49.8262,
-      "longitude": 24.0200,
-      "trigger_radius": 50,
-      "short_description": "The site of Lviv's historic weather observation station.",
-      "facts": [
-        "Lviv has maintained weather records since the 1800s, making it one of the oldest meteorological data sources in the region.",
-        "Stryiskyi Park housed a meteorological observation point due to its elevated position and open land.",
-        "Historical weather data from Lviv is used by climate scientists studying Central European climate patterns.",
-        "The average temperature in Lviv has increased by approximately 1.5°C over the past century.",
-        "Lviv receives about 700mm of rainfall annually, primarily in summer.",
-        "The park itself acts as a microclimate buffer, keeping temperatures in the surrounding neighborhood slightly cooler."
+      "id": "sp_13_dekorativne_dzherelo",
+      "name_uk": "Декоративне джерело та грот",
+      "latitude": 49.8192,
+      "longitude": 24.0248,
+      "trigger_radius_m": 60,
+      "short_description_uk": "Декоративний грот з джерелом у нижній частині парку — елемент романтичного пейзажного планування XIX століття. Розташований нижче штучних руїн.",
+      "facts_uk": [
+        "Декоративне джерело знаходиться у нижній частині парку, нижче штучних руїн.",
+        "Є частиною романтичного пейзажного ансамблю нижньої тераси.",
+        "Подібні декоративні джерела та гроти були невід'ємним елементом пейзажних парків епохи романтизму XIX століття.",
+        "Об'єкт згадується в описах маршрутів нижньою частиною парку."
       ],
-      "narration_text": "This part of the park once hosted a weather observation point — one of the longest-running in the region. Lviv's meteorological records stretch back almost 200 years. Scientists use this historical data today to understand how the climate of Central Europe has changed. According to those records, Lviv is about 1.5 degrees warmer than it was a century ago. The park itself, with its trees and ponds, acts as a natural air conditioner for the surrounding city blocks — cooler in summer, slightly milder in winter.",
+      "narration_idea_uk": "Пояснити, що в XIX столітті парки проектували як «машини для емоцій»: кожен поворот стежки мав дивувати — несподіваним видом, звуком води, грою тіні. Цей грот — саме таке навмисне «відкриття».",
       "sources": [
-        "Ukrainian Hydrometeorological Center historical records",
-        "Central European climate research documentation"
-      ]
+        {
+          "title": "Центр міської історії Львова — Стрийський парк",
+          "url": "https://lvivcenter.org"
+        },
+        {
+          "title": "Inlviv.in.ua — нижня частина Стрийського парку",
+          "url": "https://inlviv.in.ua"
+        }
+      ],
+      "confidence": "medium"
     },
     {
-      "id": "poi_015",
-      "name": "Southern Wooded Area (Quiet Forest Path)",
-      "latitude": 49.8248,
-      "longitude": 24.0218,
-      "trigger_radius": 70,
-      "short_description": "The wild, wooded southern section of the park where nature takes over.",
-      "facts": [
-        "The southern section of Stryiskyi Park is less manicured and feels more like a natural forest.",
-        "This area was used by Lviv artists and writers as a retreat for creative thinking.",
-        "The forest paths in the south of the park were used during WWII as escape and movement routes.",
-        "The southern section connects to the broader green corridor leading out of the city.",
-        "Biodiversity in this section is higher than in the manicured northern areas.",
-        "Joggers and dog-walkers use these paths daily, and many Lviv residents consider it their personal 'forest' within the city."
+      "id": "sp_14_panorama_mista",
+      "name_uk": "Оглядова точка на Личаківській стороні",
+      "latitude": 49.8205,
+      "longitude": 24.0335,
+      "trigger_radius_m": 70,
+      "short_description_uk": "Підвищена точка на східній межі парку з краєвидом у бік центру Львова. Звідси відкривається вид на силует міста з церковними вежами.",
+      "facts_uk": [
+        "Стрийський парк розташований на підвищеній місцевості на півдні Львова.",
+        "З окремих точок вздовж вул. Івана Франка та у парку відкривається вид на силует Львова з характерними вежами.",
+        "Місто засноване у XIII столітті та названо на честь князя Лева Даниловича.",
+        "Історичний центр Львова внесено до Списку всесвітньої спадщини ЮНЕСКО у 1998 році.",
+        "Серед видимих орієнтирів — вежа Латинського собору, Успенська церква та інші визначні пам'ятки."
       ],
-      "narration_text": "The south of Stryiskyi Park is where the park stops pretending to be a garden and starts feeling like a real forest. The trees here grow more freely, the paths are less formal. Lviv artists, writers, and thinkers have always come to this part of the park when they needed to think clearly. During the Second World War, these paths served darker purposes — movement and escape through the trees. Today it's joggers, dogs, and people who need five minutes of something that feels like wilderness inside a city.",
+      "narration_idea_uk": "Запропонувати зупинитись і подивитись у бік міста. Ці вежі — 700 років архітектурної пам'яті. Там — латинський, там — вірменський, там — православний собор. Одне місто, кілька цивілізацій, один силует.",
       "sources": [
-        "Lviv literary tradition oral accounts",
-        "WWII Lviv urban history documentation"
-      ]
+        {
+          "title": "UNESCO World Heritage — Historic Centre of Lviv",
+          "url": "https://whc.unesco.org/en/list/865"
+        },
+        {
+          "title": "Lviv.travel — Стрийський парк",
+          "url": "https://lviv.travel"
+        }
+      ],
+      "confidence": "medium"
+    },
+    {
+      "id": "sp_15_zahidnyi_vkhid",
+      "name_uk": "Вхід із вулиці Уласа Самчука",
+      "latitude": 49.8178,
+      "longitude": 24.0230,
+      "trigger_radius_m": 70,
+      "short_description_uk": "Менш відвідуваний западний вхід до парку з тихої вулиці Уласа Самчука. Ця частина парку межує з лісопарковою зоною.",
+      "facts_uk": [
+        "Парк має кілька входів з різних вулиць: Стрийської, Паркової, Івана Франка та Уласа Самчука.",
+        "Вулиця Уласа Самчука названа на честь українського письменника Уласа Самчука (1905–1987).",
+        "Ця частина парку найближча до природньої лісопаркової зони і є тихішою та менш відвідуваною.",
+        "Від цього входу можна потрапити у найбільш нетронуту, «лісову» частину парку."
+      ],
+      "narration_idea_uk": "Пояснити, що у великому парку є «туристична» і «своя» частини. Ця — «своя». Сюди приходять мешканці сусідніх кварталів, пенсіонери з собаками, пари у будній день. Тут немає гідів — тільки парк.",
+      "sources": [
+        {
+          "title": "OpenStreetMap — Stryiskyi Park boundary",
+          "url": "https://www.openstreetmap.org/relation/1631215"
+        },
+        {
+          "title": "Oddviser.com — Стрийський парк",
+          "url": "https://oddviser.com"
+        }
+      ],
+      "confidence": "medium"
     }
   ]
 }
