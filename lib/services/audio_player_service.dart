@@ -1,19 +1,31 @@
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:just_audio/just_audio.dart';
 
-/// Plays audio files through the device speaker/headphones.
+/// Plays audio through the device speaker/headphones.
 ///
-/// Wraps just_audio with simple play/stop semantics.
+/// Accepts either:
+///   - A file path (native: iOS, Android, macOS) — uses setFilePath()
+///   - A data URI "data:audio/wav;base64,..." (web) — uses setUrl()
+///   - An https:// URL — uses setUrl()
 class AudioPlayerService {
   final AudioPlayer _player = AudioPlayer();
 
   bool get isPlaying => _player.playing;
 
-  /// Play the audio file at [filePath].
+  /// Play audio from [source].
   ///
-  /// Stops any currently playing audio first.
-  Future<void> play(String filePath) async {
+  /// [source] can be a file path or a data/https URI.
+  Future<void> play(String source) async {
     await _player.stop();
-    await _player.setFilePath(filePath);
+
+    if (kIsWeb || source.startsWith('data:') || source.startsWith('http')) {
+      // Web or URL: use setUrl (supports data URIs in just_audio_web)
+      await _player.setUrl(source);
+    } else {
+      // Native: use file path
+      await _player.setFilePath(source);
+    }
+
     await _player.play();
   }
 

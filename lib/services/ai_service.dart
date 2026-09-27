@@ -5,15 +5,17 @@ import 'content_service.dart';
 
 /// Generates narration text from POI facts using the Gemini API.
 ///
-/// Uses gemini-3.8-flash via REST (no backend required).
-/// Called in M4 to replace static [Poi.narrationText].
+/// Uses gemini-2.0-flash via REST (no backend required).
+/// Falls back to static [Poi.narrationText] on any error.
 class AiService {
   final String apiKey;
   final ContentService _contentService;
 
-  static const String _model = 'gemini-3.8-flash';
-  static const String _baseUrl =
-      'https://generativelanguage.googleapis.com/v1beta/interactions';
+  static const String _model = 'gemini-2.0-flash';
+
+  // Correct endpoint: /v1beta/models/{model}:generateContent
+  static String get _baseUrl =>
+      'https://generativelanguage.googleapis.com/v1beta/models/$_model:generateContent';
 
   AiService({required this.apiKey, ContentService? contentService})
       : _contentService = contentService ?? ContentService();
@@ -22,6 +24,11 @@ class AiService {
   ///
   /// Returns the generated text, or falls back to static narration on error.
   Future<String> generateNarration(Poi poi) async {
+    if (apiKey.isEmpty || apiKey == 'your_key_here') {
+      // No API key — skip AI, use static text immediately
+      return poi.narrationText;
+    }
+
     final prompt = _contentService.buildAiPrompt(poi);
 
     try {
@@ -33,9 +40,17 @@ class AiService {
               'x-goog-api-key': apiKey,
             },
             body: jsonEncode({
-              'model': _model,
-              'input': prompt,
-              'store': false,
+              'contents': [
+                {
+                  'parts': [
+                    {'text': prompt}
+                  ]
+                }
+              ],
+              'generationConfig': {
+                'temperature': 0.7,
+                'maxOutputTokens': 300,
+              },
             }),
           )
           .timeout(const Duration(seconds: 20));
@@ -46,7 +61,7 @@ class AiService {
         if (text != null && text.isNotEmpty) return text;
       }
 
-      // Fall back to static text
+      // Fall back to static narration idea
       return poi.narrationText;
     } catch (e) {
       // Network error, timeout, etc — fall back silently
@@ -56,20 +71,18 @@ class AiService {
 
   String? _extractText(Map<String, dynamic> json) {
     try {
-      final steps = json['steps'] as List?;
-      if (steps == null) return null;
+      final candidates = json['candidates'] as List?;
+      if (candidates == null || candidates.isEmpty) return null;
 
-      // Find the last model_output step
-      for (final step in steps.reversed) {
-        if (step['type'] == 'model_output') {
-          final content = step['content'] as List?;
-          if (content == null) continue;
-          for (final part in content) {
-            if (part['type'] == 'text') {
-              return (part['text'] as String?)?.trim();
-            }
-          }
-        }
+      final content = candidates[0]['content'] as Map<String, dynamic>?;
+      if (content == null) return null;
+
+      final parts = content['parts'] as List?;
+      if (parts == null) return null;
+
+      for (final part in parts) {
+        final text = part['text'] as String?;
+        if (text != null && text.isNotEmpty) return text.trim();
       }
     } catch (_) {}
     return null;
