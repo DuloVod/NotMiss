@@ -48,13 +48,25 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Future<void> _onStartWalk() async {
-    await widget.controller.startWalk();
-    if (widget.controller.status == WalkStatus.walking && mounted) {
-      Navigator.of(context).push(
-        MaterialPageRoute(
-          builder: (_) => WalkScreen(controller: widget.controller),
-        ),
-      );
+    try {
+      await widget.controller.startWalk();
+      if (widget.controller.status == WalkStatus.walking && mounted) {
+        Navigator.of(context).push(
+          MaterialPageRoute(
+            builder: (_) => WalkScreen(controller: widget.controller),
+          ),
+        );
+      } else if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Failed to start: ${widget.controller.statusMessage}')),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error starting walk: $e')),
+        );
+      }
     }
   }
 

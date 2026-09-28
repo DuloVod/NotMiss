@@ -79,6 +79,7 @@ class WalkController extends ChangeNotifier {
     _locationService.stop();
     _audioService.stop();
     _status = WalkStatus.stopped;
+    _isProcessing = false;
     _statusMessage = 'Walk ended. ${_poiEngine.triggeredPoiIds.length} place(s) visited.';
     notifyListeners();
   }
