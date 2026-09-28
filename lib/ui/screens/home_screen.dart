@@ -42,7 +42,8 @@ class _HomeScreenState extends State<HomeScreen> {
     // If walking has started and we have a position, center the map
     final pos = widget.controller.currentPosition;
     if (pos != null && widget.controller.status == WalkStatus.walking) {
-      _mapController.move(LatLng(pos.latitude, pos.longitude), 16.5);
+      _mapController.move(
+          LatLng(pos.latitude, pos.longitude), _mapController.camera.zoom);
     }
   }
 
@@ -160,13 +161,44 @@ class _HomeScreenState extends State<HomeScreen> {
               ),
             ),
 
+          // ── Zoom Controls ────────────────────────────────────────────────
+          Positioned(
+            right: 16,
+            bottom: 110,
+            child: Column(
+              children: [
+                FloatingActionButton(
+                  heroTag: 'homeZoomIn',
+                  mini: true,
+                  backgroundColor: Colors.white,
+                  onPressed: () {
+                    _mapController.move(
+                        _mapController.camera.center, _mapController.camera.zoom + 1);
+                  },
+                  child: const Icon(Icons.add, color: Colors.black87),
+                ),
+                const SizedBox(height: 8),
+                FloatingActionButton(
+                  heroTag: 'homeZoomOut',
+                  mini: true,
+                  backgroundColor: Colors.white,
+                  onPressed: () {
+                    _mapController.move(
+                        _mapController.camera.center, _mapController.camera.zoom - 1);
+                  },
+                  child: const Icon(Icons.remove, color: Colors.black87),
+                ),
+              ],
+            ),
+          ),
+
           // ── Start Walk button ────────────────────────────────────────────
           Positioned(
             bottom: 40,
             left: 32,
             right: 32,
             child: ElevatedButton(
-              onPressed: widget.controller.status == WalkStatus.idle
+              onPressed: widget.controller.status != WalkStatus.walking
                   ? _onStartWalk
                   : null,
               style: ElevatedButton.styleFrom(
@@ -253,23 +285,52 @@ class WalkScreen extends StatefulWidget {
 }
 
 class _WalkScreenState extends State<WalkScreen> {
+  final MapController _mapController = MapController();
+  LatLng? _lastPos;
+
   @override
   void initState() {
     super.initState();
     widget.controller.addListener(_update);
+    final pos = widget.controller.currentPosition;
+    if (pos != null) {
+      _lastPos = LatLng(pos.latitude, pos.longitude);
+    }
   }
 
   @override
   void dispose() {
     widget.controller.removeListener(_update);
+    _mapController.dispose();
     super.dispose();
   }
 
-  void _update() => setState(() {});
+  void _update() {
+    setState(() {});
+    // Auto-follow user on the map without snapping zoom
+    final pos = widget.controller.currentPosition;
+    if (pos != null) {
+      final newLatLng = LatLng(pos.latitude, pos.longitude);
+      if (_lastPos == null || _lastPos!.latitude != newLatLng.latitude || _lastPos!.longitude != newLatLng.longitude) {
+        _lastPos = newLatLng;
+        _mapController.move(newLatLng, _mapController.camera.zoom);
+      }
+    }
+  }
 
   void _onStop() {
     widget.controller.stopWalk();
     Navigator.of(context).pop();
+  }
+
+  void _zoomIn() {
+    final currentZoom = _mapController.camera.zoom;
+    _mapController.move(_mapController.camera.center, currentZoom + 1);
+  }
+
+  void _zoomOut() {
+    final currentZoom = _mapController.camera.zoom;
+    _mapController.move(_mapController.camera.center, currentZoom - 1);
   }
 
   @override
@@ -283,10 +344,9 @@ class _WalkScreenState extends State<WalkScreen> {
         children: [
           // ── Map ─────────────────────────────────────────────────────────
           FlutterMap(
+            mapController: _mapController,
             options: MapOptions(
-              initialCenter: pos != null
-                  ? LatLng(pos.latitude, pos.longitude)
-                  : LatLng(dest.centerLatitude, dest.centerLongitude),
+              initialCenter: _lastPos ?? LatLng(dest.centerLatitude, dest.centerLongitude),
               initialZoom: 16.5,
               minZoom: 12,
               maxZoom: 19,
@@ -346,6 +406,31 @@ class _WalkScreenState extends State<WalkScreen> {
                   ],
                 ),
             ],
+          ),
+
+          // ── Zoom Controls ────────────────────────────────────────────────
+          Positioned(
+            right: 16,
+            bottom: 230,
+            child: Column(
+              children: [
+                FloatingActionButton(
+                  heroTag: 'walkZoomIn',
+                  mini: true,
+                  backgroundColor: Colors.white,
+                  onPressed: _zoomIn,
+                  child: const Icon(Icons.add, color: Colors.black87),
+                ),
+                const SizedBox(height: 8),
+                FloatingActionButton(
+                  heroTag: 'walkZoomOut',
+                  mini: true,
+                  backgroundColor: Colors.white,
+                  onPressed: _zoomOut,
+                  child: const Icon(Icons.remove, color: Colors.black87),
+                ),
+              ],
+            ),
           ),
 
           // ── Walk HUD bottom panel ────────────────────────────────────────
