@@ -72,7 +72,6 @@ class LocationService {
       }
       _lastPosition = pos;
       _controller.add(pos);
-      print('📍 Position update: ${pos.latitude}, ${pos.longitude}');
     });
   }
 

@@ -13,27 +13,28 @@ class ContentService {
     return aiText ?? poi.narrationText;
   }
 
-  /// Builds the prompt string to send to the AI for generating narration.
+  /// Builds the Ukrainian prompt string to send to the AI for generating narration.
   String buildAiPrompt(Poi poi) {
     final factsList = poi.facts.map((f) => '- $f').join('\n');
     return '''
-You are an engaging audio guide for a walking tour.
+Ти — захопливий аудіогід для пішої екскурсії Стрийським парком у Львові.
 
-Location: ${poi.name}
+Місце: ${poi.name}
 
-Facts about this place:
+Відомі факти:
 $factsList
 
-Task:
-Write a 30–60 second spoken narration about this location.
-Rules:
-- Use only the facts provided above. Do NOT invent additional historical details.
-- Write in second person ("You are standing...") to make it immersive.
-- Keep it conversational — this will be read aloud, not read silently.
-- Use short sentences. Vary the rhythm.
-- End with something thought-provoking or memorable.
-- Do NOT use markdown, bullet points, or formatting.
-- Output ONLY the narration text, nothing else.
+Завдання:
+Напиши розповідь на 30–50 секунд усного мовлення про це місце.
+Правила:
+- Розповідай ТІЛЬКИ те, що підтверджено фактами вище. НЕ вигадуй нових деталей.
+- Пиши від другої особи ("Ви стоїте..."), щоб занурити слухача.
+- Розмовний стиль — цей текст буде прочитаний вголос, не для очей.
+- Короткі речення. Варіюй ритм.
+- Зверши чимось цікавим або несподіваним.
+- БЕЗ markdown, списків або форматування.
+- Виводь ТІЛЬКИ текст розповіді, нічого іншого.
+- Мова відповіді: УКРАЇНСЬКА.
 ''';
   }
 }

@@ -5,6 +5,10 @@ import '../../models/destination.dart';
 import '../../models/poi.dart';
 import '../walk_controller.dart';
 
+// ── Colour constants ──────────────────────────────────────────────────────────
+const _kGreen = Color(0xFF1B5E20);
+const _kGreenMarker = Color(0xFF2E7D32);
+
 /// The home screen: map + Start Walk button.
 ///
 /// Shows the destination map, all POI markers, and the user's current GPS dot.
@@ -34,37 +38,37 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   void dispose() {
     widget.controller.removeListener(_onControllerUpdate);
+    _mapController.dispose();
     super.dispose();
   }
 
   void _onControllerUpdate() {
+    if (!mounted) return;
     setState(() {});
-    // If walking has started and we have a position, center the map
-    final pos = widget.controller.currentPosition;
-    if (pos != null && widget.controller.status == WalkStatus.walking) {
-      _mapController.move(
-          LatLng(pos.latitude, pos.longitude), _mapController.camera.zoom);
-    }
   }
 
   Future<void> _onStartWalk() async {
     try {
       await widget.controller.startWalk();
-      if (widget.controller.status == WalkStatus.walking && mounted) {
+      if (!mounted) return;
+      if (widget.controller.status == WalkStatus.walking) {
         Navigator.of(context).push(
           MaterialPageRoute(
             builder: (_) => WalkScreen(controller: widget.controller),
           ),
         );
-      } else if (mounted) {
+      } else {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Failed to start: ${widget.controller.statusMessage}')),
+          SnackBar(
+            content: Text(
+                widget.controller.statusMessage ?? 'Could not start walk.'),
+          ),
         );
       }
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error starting walk: $e')),
+          SnackBar(content: Text('Error: $e')),
         );
       }
     }
@@ -74,6 +78,7 @@ class _HomeScreenState extends State<HomeScreen> {
   Widget build(BuildContext context) {
     final dest = widget.destination;
     final center = LatLng(dest.centerLatitude, dest.centerLongitude);
+    final pos = widget.controller.currentPosition;
 
     return Scaffold(
       body: Stack(
@@ -88,7 +93,7 @@ class _HomeScreenState extends State<HomeScreen> {
               maxZoom: 19,
               interactionOptions: const InteractionOptions(
                 flags: InteractiveFlag.all,
-                scrollWheelVelocity: 0.02, // increased to make trackpad zoom more noticeable
+                scrollWheelVelocity: 0.02,
               ),
             ),
             children: [
@@ -96,16 +101,16 @@ class _HomeScreenState extends State<HomeScreen> {
                 urlTemplate:
                     'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
                 userAgentPackageName: 'com.notmiss.app',
+                // Cache tiles in memory to reduce re-fetches on pan
+                tileProvider: NetworkTileProvider(),
               ),
               // POI markers
               MarkerLayer(
-                markers: dest.pois.map((poi) => _buildPoiMarker(poi)).toList(),
+                markers: dest.pois.map(_buildPoiMarker).toList(),
               ),
               // User location dot
-              if (widget.controller.currentPosition != null)
-                MarkerLayer(
-                  markers: [_buildUserMarker()],
-                ),
+              if (pos != null)
+                MarkerLayer(markers: [_buildUserMarker(pos)]),
             ],
           ),
 
@@ -120,11 +125,11 @@ class _HomeScreenState extends State<HomeScreen> {
                 padding:
                     const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
                 decoration: BoxDecoration(
-                  color: Colors.white.withOpacity(0.95),
+                  color: Colors.white.withValues(alpha: 0.95),
                   borderRadius: BorderRadius.circular(12),
                   boxShadow: [
                     BoxShadow(
-                      color: Colors.black.withOpacity(0.12),
+                      color: Colors.black.withValues(alpha: 0.12),
                       blurRadius: 8,
                       offset: const Offset(0, 2),
                     ),
@@ -144,7 +149,7 @@ class _HomeScreenState extends State<HomeScreen> {
                     ),
                     const SizedBox(height: 2),
                     Text(
-                      '${dest.pois.length} points of interest',
+                      '${dest.pois.length} точок інтересу',
                       style: TextStyle(
                         fontSize: 13,
                         color: Colors.grey[600],
@@ -156,7 +161,7 @@ class _HomeScreenState extends State<HomeScreen> {
             ),
           ),
 
-          // ── Status message (error/permission) ────────────────────────────
+          // ── Status message (permission error) ─────────────────────────────
           if (widget.controller.statusMessage != null &&
               widget.controller.status == WalkStatus.idle)
             Positioned(
@@ -183,32 +188,31 @@ class _HomeScreenState extends State<HomeScreen> {
             top: 100,
             child: Column(
               children: [
-                // Locate me button (like Google Maps)
+                // Locate me button
                 FloatingActionButton(
                   heroTag: 'homeLocateMe',
                   mini: true,
                   backgroundColor: Colors.white,
+                  elevation: 3,
                   onPressed: () {
-                    final pos = widget.controller.currentPosition;
                     if (pos != null) {
                       _mapController.move(
                           LatLng(pos.latitude, pos.longitude), 17);
                     } else {
                       ScaffoldMessenger.of(context).showSnackBar(
                         const SnackBar(
-                          content: Text('Локація ще невідома. Натисни "Start Walk" спочатку.'),
+                          content: Text(
+                              'Локація ще невідома. Натисни Start Walk спочатку.'),
                           duration: Duration(seconds: 2),
                         ),
                       );
                     }
                   },
                   child: Icon(
-                    widget.controller.currentPosition != null
+                    pos != null
                         ? Icons.my_location
                         : Icons.location_searching,
-                    color: widget.controller.currentPosition != null
-                        ? Colors.blue
-                        : Colors.grey,
+                    color: pos != null ? Colors.blue : Colors.grey,
                   ),
                 ),
                 const SizedBox(height: 8),
@@ -216,10 +220,10 @@ class _HomeScreenState extends State<HomeScreen> {
                   heroTag: 'homeZoomIn',
                   mini: true,
                   backgroundColor: Colors.white,
-                  onPressed: () {
-                    _mapController.move(
-                        _mapController.camera.center, _mapController.camera.zoom + 1);
-                  },
+                  elevation: 3,
+                  onPressed: () => _mapController.move(
+                      _mapController.camera.center,
+                      _mapController.camera.zoom + 1),
                   child: const Icon(Icons.add, color: Colors.black87),
                 ),
                 const SizedBox(height: 8),
@@ -227,10 +231,10 @@ class _HomeScreenState extends State<HomeScreen> {
                   heroTag: 'homeZoomOut',
                   mini: true,
                   backgroundColor: Colors.white,
-                  onPressed: () {
-                    _mapController.move(
-                        _mapController.camera.center, _mapController.camera.zoom - 1);
-                  },
+                  elevation: 3,
+                  onPressed: () => _mapController.move(
+                      _mapController.camera.center,
+                      _mapController.camera.zoom - 1),
                   child: const Icon(Icons.remove, color: Colors.black87),
                 ),
               ],
@@ -247,7 +251,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   ? _onStartWalk
                   : null,
               style: ElevatedButton.styleFrom(
-                backgroundColor: const Color(0xFF1B5E20),
+                backgroundColor: _kGreen,
                 foregroundColor: Colors.white,
                 padding: const EdgeInsets.symmetric(vertical: 18),
                 shape: RoundedRectangleBorder(
@@ -255,9 +259,11 @@ class _HomeScreenState extends State<HomeScreen> {
                 ),
                 elevation: 4,
               ),
-              child: const Text(
-                'START WALK',
-                style: TextStyle(
+              child: Text(
+                widget.controller.status == WalkStatus.stopped
+                    ? 'РОЗПОЧАТИ ЗНОВУ'
+                    : 'ПОЧАТИ ПРОГУЛЯНКУ',
+                style: const TextStyle(
                   fontSize: 16,
                   fontWeight: FontWeight.bold,
                   letterSpacing: 1.2,
@@ -279,12 +285,12 @@ class _HomeScreenState extends State<HomeScreen> {
         message: poi.name,
         child: Container(
           decoration: BoxDecoration(
-            color: const Color(0xFF2E7D32),
+            color: _kGreenMarker,
             shape: BoxShape.circle,
             border: Border.all(color: Colors.white, width: 2),
             boxShadow: [
               BoxShadow(
-                color: Colors.black.withOpacity(0.3),
+                color: Colors.black.withValues(alpha: 0.3),
                 blurRadius: 4,
               ),
             ],
@@ -295,8 +301,7 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  Marker _buildUserMarker() {
-    final pos = widget.controller.currentPosition!;
+  Marker _buildUserMarker(dynamic pos) {
     return Marker(
       point: LatLng(pos.latitude, pos.longitude),
       width: 24,
@@ -308,7 +313,7 @@ class _HomeScreenState extends State<HomeScreen> {
           border: Border.all(color: Colors.white, width: 3),
           boxShadow: [
             BoxShadow(
-              color: Colors.blue.withOpacity(0.4),
+              color: Colors.blue.withValues(alpha: 0.4),
               blurRadius: 8,
               spreadRadius: 2,
             ),
@@ -319,7 +324,9 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
 /// Inline walk HUD, pushed on top of HomeScreen when walk starts.
+// ─────────────────────────────────────────────────────────────────────────────
 class WalkScreen extends StatefulWidget {
   final WalkController controller;
 
@@ -332,6 +339,7 @@ class WalkScreen extends StatefulWidget {
 class _WalkScreenState extends State<WalkScreen> {
   final MapController _mapController = MapController();
   LatLng? _lastPos;
+  bool _followUser = true; // auto-follow; turns off if user pans manually
 
   @override
   void initState() {
@@ -351,17 +359,16 @@ class _WalkScreenState extends State<WalkScreen> {
   }
 
   void _update() {
+    if (!mounted) return;
     final pos = widget.controller.currentPosition;
-    if (pos != null) {
+    if (pos != null && _followUser) {
       final newLatLng = LatLng(pos.latitude, pos.longitude);
       if (_lastPos == null ||
           _lastPos!.latitude != newLatLng.latitude ||
           _lastPos!.longitude != newLatLng.longitude) {
         _lastPos = newLatLng;
-        // Move map after the current frame is built to avoid
-        // calling mapController.move during a build/setState cycle.
         WidgetsBinding.instance.addPostFrameCallback((_) {
-          if (mounted) {
+          if (mounted && _followUser) {
             _mapController.move(newLatLng, _mapController.camera.zoom);
           }
         });
@@ -375,14 +382,18 @@ class _WalkScreenState extends State<WalkScreen> {
     Navigator.of(context).pop();
   }
 
-  void _zoomIn() {
-    final currentZoom = _mapController.camera.zoom;
-    _mapController.move(_mapController.camera.center, currentZoom + 1);
-  }
+  void _zoomIn() => _mapController.move(
+      _mapController.camera.center, _mapController.camera.zoom + 1);
 
-  void _zoomOut() {
-    final currentZoom = _mapController.camera.zoom;
-    _mapController.move(_mapController.camera.center, currentZoom - 1);
+  void _zoomOut() => _mapController.move(
+      _mapController.camera.center, _mapController.camera.zoom - 1);
+
+  void _locateMe() {
+    final pos = widget.controller.currentPosition;
+    if (pos != null) {
+      _followUser = true;
+      _mapController.move(LatLng(pos.latitude, pos.longitude), 17);
+    }
   }
 
   @override
@@ -398,45 +409,67 @@ class _WalkScreenState extends State<WalkScreen> {
           FlutterMap(
             mapController: _mapController,
             options: MapOptions(
-              initialCenter: _lastPos ?? LatLng(dest.centerLatitude, dest.centerLongitude),
-              initialZoom: 16.5,
+              initialCenter:
+                  _lastPos ?? LatLng(dest.centerLatitude, dest.centerLongitude),
+              initialZoom: 17,
               minZoom: 12,
               maxZoom: 19,
               interactionOptions: const InteractionOptions(
                 flags: InteractiveFlag.all,
                 scrollWheelVelocity: 0.02,
               ),
+              onPositionChanged: (_, hasGesture) {
+                if (hasGesture) _followUser = false;
+              },
             ),
             children: [
               TileLayer(
                 urlTemplate:
                     'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
                 userAgentPackageName: 'com.notmiss.app',
+                tileProvider: NetworkTileProvider(),
               ),
+              // POI markers — visited ones turn grey with a checkmark
               MarkerLayer(
                 markers: dest.pois.map((poi) {
                   final triggered = ctrl.triggeredPoiIds.contains(poi.id);
+                  final isActive = ctrl.activePoi?.id == poi.id;
                   return Marker(
                     point: LatLng(poi.latitude, poi.longitude),
-                    width: 36,
-                    height: 36,
-                    child: Container(
-                      decoration: BoxDecoration(
-                        color: triggered
-                            ? Colors.grey[400]
-                            : const Color(0xFF2E7D32),
-                        shape: BoxShape.circle,
-                        border: Border.all(color: Colors.white, width: 2),
-                      ),
-                      child: Icon(
-                        triggered ? Icons.check : Icons.place,
-                        color: Colors.white,
-                        size: 18,
+                    width: isActive ? 42 : 36,
+                    height: isActive ? 42 : 36,
+                    child: Tooltip(
+                      message: poi.name,
+                      child: Container(
+                        decoration: BoxDecoration(
+                          color: triggered
+                              ? Colors.grey[400]
+                              : isActive
+                                  ? Colors.orange[700]
+                                  : _kGreenMarker,
+                          shape: BoxShape.circle,
+                          border: Border.all(
+                            color: Colors.white,
+                            width: isActive ? 3 : 2,
+                          ),
+                          boxShadow: [
+                            BoxShadow(
+                              color: Colors.black.withValues(alpha: 0.25),
+                              blurRadius: 4,
+                            ),
+                          ],
+                        ),
+                        child: Icon(
+                          triggered ? Icons.check : Icons.place,
+                          color: Colors.white,
+                          size: isActive ? 22 : 18,
+                        ),
                       ),
                     ),
                   );
                 }).toList(),
               ),
+              // User blue dot
               if (pos != null)
                 MarkerLayer(
                   markers: [
@@ -451,7 +484,7 @@ class _WalkScreenState extends State<WalkScreen> {
                           border: Border.all(color: Colors.white, width: 3),
                           boxShadow: [
                             BoxShadow(
-                              color: Colors.blue.withOpacity(0.4),
+                              color: Colors.blue.withValues(alpha: 0.4),
                               blurRadius: 8,
                               spreadRadius: 2,
                             ),
@@ -470,19 +503,17 @@ class _WalkScreenState extends State<WalkScreen> {
             top: 60,
             child: Column(
               children: [
-                // Locate me — centers map on user position
                 FloatingActionButton(
                   heroTag: 'walkLocateMe',
                   mini: true,
                   backgroundColor: Colors.white,
-                  onPressed: () {
-                    if (pos != null) {
-                      _mapController.move(LatLng(pos.latitude, pos.longitude), 17);
-                    }
-                  },
+                  elevation: 3,
+                  onPressed: _locateMe,
                   child: Icon(
-                    pos != null ? Icons.my_location : Icons.location_searching,
-                    color: pos != null ? Colors.blue : Colors.grey,
+                    pos != null && _followUser
+                        ? Icons.my_location
+                        : Icons.location_searching,
+                    color: _followUser ? Colors.blue : Colors.grey,
                   ),
                 ),
                 const SizedBox(height: 8),
@@ -490,6 +521,7 @@ class _WalkScreenState extends State<WalkScreen> {
                   heroTag: 'walkZoomIn',
                   mini: true,
                   backgroundColor: Colors.white,
+                  elevation: 3,
                   onPressed: _zoomIn,
                   child: const Icon(Icons.add, color: Colors.black87),
                 ),
@@ -498,6 +530,7 @@ class _WalkScreenState extends State<WalkScreen> {
                   heroTag: 'walkZoomOut',
                   mini: true,
                   backgroundColor: Colors.white,
+                  elevation: 3,
                   onPressed: _zoomOut,
                   child: const Icon(Icons.remove, color: Colors.black87),
                 ),
@@ -516,11 +549,11 @@ class _WalkScreenState extends State<WalkScreen> {
                 margin: const EdgeInsets.all(12),
                 padding: const EdgeInsets.all(16),
                 decoration: BoxDecoration(
-                  color: Colors.white.withOpacity(0.97),
+                  color: Colors.white.withValues(alpha: 0.97),
                   borderRadius: BorderRadius.circular(16),
                   boxShadow: [
                     BoxShadow(
-                      color: Colors.black.withOpacity(0.15),
+                      color: Colors.black.withValues(alpha: 0.15),
                       blurRadius: 12,
                       offset: const Offset(0, -2),
                     ),
@@ -537,7 +570,7 @@ class _WalkScreenState extends State<WalkScreen> {
                         const SizedBox(width: 8),
                         Expanded(
                           child: Text(
-                            ctrl.statusMessage ?? 'Walking…',
+                            ctrl.statusMessage ?? 'Прогулянка…',
                             style: const TextStyle(fontSize: 14),
                             maxLines: 2,
                             overflow: TextOverflow.ellipsis,
@@ -551,7 +584,7 @@ class _WalkScreenState extends State<WalkScreen> {
                       const Divider(height: 1),
                       const SizedBox(height: 12),
                       Text(
-                        '📍 ${ctrl.activePoi!.name}',
+                        ctrl.activePoi!.name,
                         style: const TextStyle(
                           fontWeight: FontWeight.bold,
                           fontSize: 15,
@@ -567,55 +600,62 @@ class _WalkScreenState extends State<WalkScreen> {
                       ),
                     ],
 
-                    const SizedBox(height: 16),
+                    const SizedBox(height: 12),
 
-                    // GPS info
+                    // GPS accuracy info
                     if (pos != null)
-                      Text(
-                        '🛰 ${pos.latitude.toStringAsFixed(5)}, '
-                        '${pos.longitude.toStringAsFixed(5)}  '
-                        '± ${pos.accuracy.toStringAsFixed(0)} m',
-                        style: TextStyle(
-                          fontSize: 11,
-                          color: Colors.grey[500],
-                          fontFamily: 'monospace',
-                        ),
-                      ),
-
-                    const SizedBox(height: 16),
-
-                    // Visited counter
-                    Text(
-                      '${ctrl.triggeredPoiIds.length} / ${dest.pois.length} places visited',
-                      style: TextStyle(
-                        fontSize: 12,
-                        color: Colors.grey[600],
-                      ),
-                    ),
-
-                    const SizedBox(height: 16),
-
-                    // Stop Walk button
-                    SizedBox(
-                      width: double.infinity,
-                      child: ElevatedButton(
-                        onPressed: _onStop,
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: Colors.red[700],
-                          foregroundColor: Colors.white,
-                          padding: const EdgeInsets.symmetric(vertical: 14),
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(12),
+                      Row(
+                        children: [
+                          Icon(Icons.gps_fixed,
+                              size: 12, color: Colors.grey[400]),
+                          const SizedBox(width: 4),
+                          Text(
+                            '${pos.latitude.toStringAsFixed(5)}, '
+                            '${pos.longitude.toStringAsFixed(5)}'
+                            '  ±${pos.accuracy.toStringAsFixed(0)} м',
+                            style: TextStyle(
+                              fontSize: 11,
+                              color: Colors.grey[500],
+                              fontFamily: 'monospace',
+                            ),
                           ),
-                        ),
-                        child: const Text(
-                          'STOP WALK',
+                        ],
+                      ),
+
+                    const SizedBox(height: 8),
+
+                    // Visited counter + stop button row
+                    Row(
+                      children: [
+                        Text(
+                          '${ctrl.triggeredPoiIds.length} / ${dest.pois.length} місць відвідано',
                           style: TextStyle(
-                            fontWeight: FontWeight.bold,
-                            letterSpacing: 1.0,
+                            fontSize: 12,
+                            color: Colors.grey[600],
                           ),
                         ),
-                      ),
+                        const Spacer(),
+                        ElevatedButton(
+                          onPressed: _onStop,
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: Colors.red[700],
+                            foregroundColor: Colors.white,
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 20, vertical: 10),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(10),
+                            ),
+                            elevation: 2,
+                          ),
+                          child: const Text(
+                            'ЗУПИНИТИ',
+                            style: TextStyle(
+                              fontWeight: FontWeight.bold,
+                              letterSpacing: 0.8,
+                            ),
+                          ),
+                        ),
+                      ],
                     ),
                   ],
                 ),
@@ -628,6 +668,7 @@ class _WalkScreenState extends State<WalkScreen> {
   }
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
 class _StatusDot extends StatelessWidget {
   final WalkStatus status;
   const _StatusDot({required this.status});

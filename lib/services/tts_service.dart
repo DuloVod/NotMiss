@@ -31,6 +31,10 @@ class TtsService {
   /// Returns a data URI on web (for use with AudioPlayer.setUrl),
   /// or a file path on native (for use with AudioPlayer.setFilePath).
   Future<String> synthesize(String text, String poiId) async {
+    if (apiKey.isEmpty || apiKey == 'your_key_here') {
+      throw Exception('Gemini API key not set — TTS unavailable.');
+    }
+
     final response = await http
         .post(
           Uri.parse(_baseUrl),
