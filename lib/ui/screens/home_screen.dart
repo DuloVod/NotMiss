@@ -86,6 +86,10 @@ class _HomeScreenState extends State<HomeScreen> {
               initialZoom: dest.defaultZoom,
               minZoom: 12,
               maxZoom: 19,
+              interactionOptions: const InteractionOptions(
+                flags: InteractiveFlag.all,
+                scrollWheelVelocity: 0.02, // increased to make trackpad zoom more noticeable
+              ),
             ),
             children: [
               TileLayer(
@@ -176,7 +180,7 @@ class _HomeScreenState extends State<HomeScreen> {
           // ── Zoom + Locate Controls ───────────────────────────────────────
           Positioned(
             right: 16,
-            bottom: 110,
+            top: 100,
             child: Column(
               children: [
                 // Locate me button (like Google Maps)
@@ -391,6 +395,10 @@ class _WalkScreenState extends State<WalkScreen> {
               initialZoom: 16.5,
               minZoom: 12,
               maxZoom: 19,
+              interactionOptions: const InteractionOptions(
+                flags: InteractiveFlag.all,
+                scrollWheelVelocity: 0.02,
+              ),
             ),
             children: [
               TileLayer(
@@ -452,7 +460,7 @@ class _WalkScreenState extends State<WalkScreen> {
           // ── Zoom + Locate Controls ───────────────────────────────────────
           Positioned(
             right: 16,
-            bottom: 230,
+            top: 60,
             child: Column(
               children: [
                 // Locate me — centers map on user position
