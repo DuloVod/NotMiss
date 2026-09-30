@@ -9,12 +9,15 @@ import '../services/content_service.dart';
 import '../services/ai_service.dart';
 import '../services/tts_service.dart';
 import '../services/audio_player_service.dart';
+import '../services/background_service.dart';
 
 enum WalkStatus { idle, walking, stopped }
 
 /// Central state for an active walk session.
 ///
 /// Coordinates all services: location → POI detection → narration → TTS → audio.
+/// On Android, starts a foreground service so the OS doesn't kill the app
+/// when the screen turns off.
 class WalkController extends ChangeNotifier {
   final Destination destination;
   final LocationService _locationService;
@@ -69,6 +72,9 @@ class WalkController extends ChangeNotifier {
     _statusMessage = 'Walking — listening for nearby places…';
     notifyListeners();
 
+    // Start Android foreground service (keeps GPS alive when screen is off)
+    await BackgroundService.start();
+
     _locationService.start();
     _positionSub = _locationService.positionStream.listen(_onPosition);
   }
@@ -82,6 +88,9 @@ class WalkController extends ChangeNotifier {
     _isProcessing = false;
     _statusMessage = 'Walk ended. ${_poiEngine.triggeredPoiIds.length} place(s) visited.';
     notifyListeners();
+
+    // Stop the foreground service
+    BackgroundService.stop();
   }
 
   Future<void> _onPosition(Position pos) async {
@@ -105,6 +114,12 @@ class WalkController extends ChangeNotifier {
     _statusMessage = '📍 ${poi.name} — generating narration…';
     notifyListeners();
 
+    // Update the persistent notification so the user knows what's happening
+    BackgroundService.updateNotification(
+      'NotMiss — ${poi.name}',
+      'Generating audio narration…',
+    );
+
     try {
       // M4: try AI narration, fall back to static
       final aiText = await _aiService.generateNarration(poi);
@@ -118,10 +133,26 @@ class WalkController extends ChangeNotifier {
       _statusMessage = '🎧 ${poi.name}';
       notifyListeners();
 
+      // Update notification when audio starts
+      BackgroundService.updateNotification(
+        'NotMiss — ${poi.name}',
+        'Now playing audio narration 🎧',
+      );
+
       await _audioService.play(audioPath);
+
+      // Restore default notification text after playback
+      BackgroundService.updateNotification(
+        'NotMiss — Walk in progress',
+        'Voice guide is active. You\'ll be notified near each point.',
+      );
     } catch (e) {
       _statusMessage = '⚠️ Could not play narration for ${poi.name}: $e';
       notifyListeners();
+      BackgroundService.updateNotification(
+        'NotMiss',
+        'Could not generate narration for ${poi.name}.',
+      );
     } finally {
       _isProcessing = false;
     }
@@ -132,6 +163,7 @@ class WalkController extends ChangeNotifier {
     _positionSub?.cancel();
     _locationService.dispose();
     _audioService.dispose();
+    BackgroundService.stop();
     super.dispose();
   }
 }

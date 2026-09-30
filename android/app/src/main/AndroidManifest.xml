@@ -2,7 +2,16 @@
     <uses-permission android:name="android.permission.INTERNET"/>
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION"/>
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION"/>
-    <!-- Add ACCESS_BACKGROUND_LOCATION only in Milestone 7 (background mode) -->
+    <!-- Background GPS: allows location tracking when screen is off -->
+    <uses-permission android:name="android.permission.ACCESS_BACKGROUND_LOCATION"/>
+    <!-- Required by Android 9+ to run a foreground service -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
+    <!-- Required by Android 14+ for location foreground services -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION"/>
+    <!-- Required to prevent the CPU from sleeping during the walk -->
+    <uses-permission android:name="android.permission.WAKE_LOCK"/>
+    <!-- Required for audio playback via foreground notification -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
 
     <application
         android:label="NotMiss"
@@ -25,6 +34,13 @@
                 <category android:name="android.intent.category.LAUNCHER"/>
             </intent-filter>
         </activity>
+
+        <!-- Flutter Foreground Task service (background GPS + POI detection) -->
+        <service
+            android:name="com.pravera.flutter_foreground_task.service.ForegroundTaskService"
+            android:foregroundServiceType="location"
+            android:exported="false"/>
+
         <meta-data
             android:name="flutterEmbedding"
             android:value="2" />

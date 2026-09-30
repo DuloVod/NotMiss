@@ -48,12 +48,15 @@
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>NotMiss needs your location to detect nearby points of interest and trigger audio narrations during your walk.</string>
 	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
-	<string>NotMiss needs your location in the background to continue detecting points of interest while your screen is off (optional — required for background mode only).</string>
+	<string>NotMiss needs your location in the background to continue detecting points of interest while your screen is off — so you never miss a place even with the phone in your pocket.</string>
+	<key>NSLocationAlwaysUsageDescription</key>
+	<string>NotMiss needs your location in the background to continue detecting points of interest while your screen is off — so you never miss a place even with the phone in your pocket.</string>
 
-	<!-- Audio session — play through silent mode -->
+	<!-- Background modes: location keeps GPS alive; audio keeps narration going; fetch allows processing -->
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>audio</string>
+		<string>location</string>
 	</array>
 </dict>
 </plist>

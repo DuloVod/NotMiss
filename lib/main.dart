@@ -3,11 +3,15 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'models/destination.dart';
+import 'services/background_service.dart';
 import 'ui/screens/home_screen.dart';
 import 'ui/walk_controller.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+
+  // Initialize background foreground-service (Android only; no-op on web/iOS)
+  BackgroundService.init();
 
   // Load .env for API key (silently ignore if missing — app still works without TTS/AI)
   try {
