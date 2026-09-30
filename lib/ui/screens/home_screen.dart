@@ -351,16 +351,23 @@ class _WalkScreenState extends State<WalkScreen> {
   }
 
   void _update() {
-    setState(() {});
-    // Auto-follow user on the map without snapping zoom
     final pos = widget.controller.currentPosition;
     if (pos != null) {
       final newLatLng = LatLng(pos.latitude, pos.longitude);
-      if (_lastPos == null || _lastPos!.latitude != newLatLng.latitude || _lastPos!.longitude != newLatLng.longitude) {
+      if (_lastPos == null ||
+          _lastPos!.latitude != newLatLng.latitude ||
+          _lastPos!.longitude != newLatLng.longitude) {
         _lastPos = newLatLng;
-        _mapController.move(newLatLng, _mapController.camera.zoom);
+        // Move map after the current frame is built to avoid
+        // calling mapController.move during a build/setState cycle.
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) {
+            _mapController.move(newLatLng, _mapController.camera.zoom);
+          }
+        });
       }
     }
+    setState(() {});
   }
 
   void _onStop() {

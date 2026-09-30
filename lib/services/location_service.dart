@@ -9,10 +9,19 @@ import 'package:geolocator/geolocator.dart';
 ///   - Emit a continuous stream of [Position] while the walk is active
 ///   - Expose the most recent known position
 class LocationService {
-  static const LocationSettings _settings = LocationSettings(
-    accuracy: LocationAccuracy.high,
-    distanceFilter: 5, // emit only if moved ≥5 m
-  );
+  /// On web: distanceFilter=0 because geolocator_web's skipWhile
+  /// implementation has a bug with Chrome DevTools sensor simulation
+  /// that silently drops all updates. We deduplicate manually instead.
+  /// On native: distanceFilter=5 saves battery by only emitting when moved ≥5 m.
+  static LocationSettings get _settings => kIsWeb
+      ? const LocationSettings(
+          accuracy: LocationAccuracy.high,
+          distanceFilter: 0,
+        )
+      : const LocationSettings(
+          accuracy: LocationAccuracy.high,
+          distanceFilter: 5,
+        );
 
   StreamSubscription<Position>? _subscription;
   final StreamController<Position> _controller =
@@ -54,8 +63,16 @@ class LocationService {
   void start() {
     _subscription ??= Geolocator.getPositionStream(locationSettings: _settings)
         .listen((pos) {
+      // Manual dedup on web (since distanceFilter=0 means every tick arrives)
+      if (kIsWeb && _lastPosition != null) {
+        if (_lastPosition!.latitude == pos.latitude &&
+            _lastPosition!.longitude == pos.longitude) {
+          return; // same coordinates, skip
+        }
+      }
       _lastPosition = pos;
       _controller.add(pos);
+      print('📍 Position update: ${pos.latitude}, ${pos.longitude}');
     });
   }
 
