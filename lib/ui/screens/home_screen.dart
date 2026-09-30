@@ -173,12 +173,41 @@ class _HomeScreenState extends State<HomeScreen> {
               ),
             ),
 
-          // ── Zoom Controls ────────────────────────────────────────────────
+          // ── Zoom + Locate Controls ───────────────────────────────────────
           Positioned(
             right: 16,
             bottom: 110,
             child: Column(
               children: [
+                // Locate me button (like Google Maps)
+                FloatingActionButton(
+                  heroTag: 'homeLocateMe',
+                  mini: true,
+                  backgroundColor: Colors.white,
+                  onPressed: () {
+                    final pos = widget.controller.currentPosition;
+                    if (pos != null) {
+                      _mapController.move(
+                          LatLng(pos.latitude, pos.longitude), 17);
+                    } else {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(
+                          content: Text('Локація ще невідома. Натисни "Start Walk" спочатку.'),
+                          duration: Duration(seconds: 2),
+                        ),
+                      );
+                    }
+                  },
+                  child: Icon(
+                    widget.controller.currentPosition != null
+                        ? Icons.my_location
+                        : Icons.location_searching,
+                    color: widget.controller.currentPosition != null
+                        ? Colors.blue
+                        : Colors.grey,
+                  ),
+                ),
+                const SizedBox(height: 8),
                 FloatingActionButton(
                   heroTag: 'homeZoomIn',
                   mini: true,
@@ -420,12 +449,28 @@ class _WalkScreenState extends State<WalkScreen> {
             ],
           ),
 
-          // ── Zoom Controls ────────────────────────────────────────────────
+          // ── Zoom + Locate Controls ───────────────────────────────────────
           Positioned(
             right: 16,
             bottom: 230,
             child: Column(
               children: [
+                // Locate me — centers map on user position
+                FloatingActionButton(
+                  heroTag: 'walkLocateMe',
+                  mini: true,
+                  backgroundColor: Colors.white,
+                  onPressed: () {
+                    if (pos != null) {
+                      _mapController.move(LatLng(pos.latitude, pos.longitude), 17);
+                    }
+                  },
+                  child: Icon(
+                    pos != null ? Icons.my_location : Icons.location_searching,
+                    color: pos != null ? Colors.blue : Colors.grey,
+                  ),
+                ),
+                const SizedBox(height: 8),
                 FloatingActionButton(
                   heroTag: 'walkZoomIn',
                   mini: true,
