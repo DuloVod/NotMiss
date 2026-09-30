@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:geolocator/geolocator.dart';
 
 /// Obtains GPS coordinates and exposes a stream of position updates.
@@ -24,15 +25,29 @@ class LocationService {
 
   /// Request permission and return true if granted.
   Future<bool> requestPermission() async {
-    bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
-    if (!serviceEnabled) return false;
+    try {
+      // isLocationServiceEnabled() always returns false on web (no OS GPS toggle).
+      // On web we skip it and go straight to checking browser permission.
+      if (!kIsWeb) {
+        final serviceEnabled = await Geolocator.isLocationServiceEnabled()
+            .timeout(const Duration(seconds: 3));
+        if (!serviceEnabled) return false;
+      }
 
-    LocationPermission permission = await Geolocator.checkPermission();
-    if (permission == LocationPermission.denied) {
-      permission = await Geolocator.requestPermission();
+      LocationPermission permission = await Geolocator.checkPermission()
+          .timeout(const Duration(seconds: 3));
+
+      if (permission == LocationPermission.denied) {
+        permission = await Geolocator.requestPermission()
+            .timeout(const Duration(seconds: 10));
+      }
+
+      return permission == LocationPermission.always ||
+          permission == LocationPermission.whileInUse;
+    } catch (e) {
+      print('Permission check error/timeout: $e');
+      return false;
     }
-    return permission == LocationPermission.always ||
-        permission == LocationPermission.whileInUse;
   }
 
   /// Start streaming position updates.
