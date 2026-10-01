@@ -32,6 +32,7 @@ dependencies:
   # Utilities
   uuid: ^4.4.0
   flutter_foreground_task: ^11.0.3
+  flutter_compass: ^0.8.1
 
 flutter:
   uses-material-design: true

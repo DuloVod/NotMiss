@@ -1,5 +1,7 @@
+import 'dart:math' show pi;
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
+import 'package:flutter_compass/flutter_compass.dart';
 import 'package:latlong2/latlong.dart';
 import '../../models/destination.dart';
 import '../../models/poi.dart';
@@ -108,7 +110,7 @@ class _HomeScreenState extends State<HomeScreen> {
               MarkerLayer(
                 markers: dest.pois.map(_buildPoiMarker).toList(),
               ),
-              // User location dot
+              // User location dot with compass
               if (pos != null)
                 MarkerLayer(markers: [_buildUserMarker(pos)]),
             ],
@@ -188,6 +190,28 @@ class _HomeScreenState extends State<HomeScreen> {
             top: 100,
             child: Column(
               children: [
+                // Reset North Button (shows only when rotated)
+                StreamBuilder<MapEvent>(
+                  stream: _mapController.mapEventStream,
+                  builder: (context, _) {
+                    final rotation = _mapController.camera.rotation;
+                    if (rotation == 0.0) return const SizedBox.shrink();
+                    return Padding(
+                      padding: const EdgeInsets.only(bottom: 8.0),
+                      child: FloatingActionButton(
+                        heroTag: 'homeResetNorth',
+                        mini: true,
+                        backgroundColor: Colors.white,
+                        elevation: 3,
+                        onPressed: () => _mapController.rotate(0),
+                        child: Transform.rotate(
+                          angle: -rotation * pi / 180,
+                          child: const Icon(Icons.explore, color: Colors.red),
+                        ),
+                      ),
+                    );
+                  },
+                ),
                 // Locate me button
                 FloatingActionButton(
                   heroTag: 'homeLocateMe',
@@ -304,21 +328,70 @@ class _HomeScreenState extends State<HomeScreen> {
   Marker _buildUserMarker(dynamic pos) {
     return Marker(
       point: LatLng(pos.latitude, pos.longitude),
-      width: 24,
-      height: 24,
-      child: Container(
-        decoration: BoxDecoration(
-          color: Colors.blue,
-          shape: BoxShape.circle,
-          border: Border.all(color: Colors.white, width: 3),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.blue.withValues(alpha: 0.4),
-              blurRadius: 8,
-              spreadRadius: 2,
+      width: 48,
+      height: 48,
+      rotate: true, // Align marker coordinate system with map (North is up)
+      child: StreamBuilder<CompassEvent>(
+        stream: FlutterCompass.events,
+        builder: (context, snapshot) {
+          final heading = snapshot.data?.heading;
+
+          if (heading == null) {
+            // Fallback if compass is unavailable or hasn't emitted yet
+            return Center(
+              child: Container(
+                width: 24,
+                height: 24,
+                decoration: BoxDecoration(
+                  color: Colors.blue,
+                  shape: BoxShape.circle,
+                  border: Border.all(color: Colors.white, width: 3),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.blue.withValues(alpha: 0.4),
+                      blurRadius: 8,
+                      spreadRadius: 2,
+                    ),
+                  ],
+                ),
+              ),
+            );
+          }
+
+          // We have a compass heading! Draw dot + direction arrow
+          return Transform.rotate(
+            angle: heading * pi / 180,
+            child: Stack(
+              alignment: Alignment.center,
+              children: [
+                Positioned(
+                  top: 0,
+                  child: Icon(
+                    Icons.navigation, // Arrow pointing UP
+                    color: Colors.blue.withValues(alpha: 0.8),
+                    size: 28,
+                  ),
+                ),
+                Container(
+                  width: 22,
+                  height: 22,
+                  decoration: BoxDecoration(
+                    color: Colors.blue,
+                    shape: BoxShape.circle,
+                    border: Border.all(color: Colors.white, width: 2),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.blue.withValues(alpha: 0.4),
+                        blurRadius: 8,
+                        spreadRadius: 2,
+                      ),
+                    ],
+                  ),
+                ),
+              ],
             ),
-          ],
-        ),
+          );
+        },
       ),
     );
   }
@@ -469,31 +542,9 @@ class _WalkScreenState extends State<WalkScreen> {
                   );
                 }).toList(),
               ),
-              // User blue dot
+              // User blue dot with compass
               if (pos != null)
-                MarkerLayer(
-                  markers: [
-                    Marker(
-                      point: LatLng(pos.latitude, pos.longitude),
-                      width: 24,
-                      height: 24,
-                      child: Container(
-                        decoration: BoxDecoration(
-                          color: Colors.blue,
-                          shape: BoxShape.circle,
-                          border: Border.all(color: Colors.white, width: 3),
-                          boxShadow: [
-                            BoxShadow(
-                              color: Colors.blue.withValues(alpha: 0.4),
-                              blurRadius: 8,
-                              spreadRadius: 2,
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
+                MarkerLayer(markers: [_buildUserMarker(pos)]),
             ],
           ),
 
@@ -503,6 +554,29 @@ class _WalkScreenState extends State<WalkScreen> {
             top: 60,
             child: Column(
               children: [
+                // Reset North Button (shows only when rotated)
+                StreamBuilder<MapEvent>(
+                  stream: _mapController.mapEventStream,
+                  builder: (context, _) {
+                    final rotation = _mapController.camera.rotation;
+                    if (rotation == 0.0) return const SizedBox.shrink();
+                    return Padding(
+                      padding: const EdgeInsets.only(bottom: 8.0),
+                      child: FloatingActionButton(
+                        heroTag: 'walkResetNorth',
+                        mini: true,
+                        backgroundColor: Colors.white,
+                        elevation: 3,
+                        onPressed: () => _mapController.rotate(0),
+                        child: Transform.rotate(
+                          angle: -rotation * pi / 180,
+                          child: const Icon(Icons.explore, color: Colors.red),
+                        ),
+                      ),
+                    );
+                  },
+                ),
+                // Locate User Button
                 FloatingActionButton(
                   heroTag: 'walkLocateMe',
                   mini: true,
@@ -663,6 +737,77 @@ class _WalkScreenState extends State<WalkScreen> {
             ),
           ),
         ],
+      ),
+    );
+  }
+
+  Marker _buildUserMarker(dynamic pos) {
+    return Marker(
+      point: LatLng(pos.latitude, pos.longitude),
+      width: 48,
+      height: 48,
+      rotate: true, // Align marker coordinate system with map (North is up)
+      child: StreamBuilder<CompassEvent>(
+        stream: FlutterCompass.events,
+        builder: (context, snapshot) {
+          final heading = snapshot.data?.heading;
+
+          if (heading == null) {
+            // Fallback if compass is unavailable or hasn't emitted yet
+            return Center(
+              child: Container(
+                width: 24,
+                height: 24,
+                decoration: BoxDecoration(
+                  color: Colors.blue,
+                  shape: BoxShape.circle,
+                  border: Border.all(color: Colors.white, width: 3),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.blue.withValues(alpha: 0.4),
+                      blurRadius: 8,
+                      spreadRadius: 2,
+                    ),
+                  ],
+                ),
+              ),
+            );
+          }
+
+          // We have a compass heading! Draw dot + direction arrow
+          return Transform.rotate(
+            angle: heading * pi / 180,
+            child: Stack(
+              alignment: Alignment.center,
+              children: [
+                Positioned(
+                  top: 0,
+                  child: Icon(
+                    Icons.navigation, // Arrow pointing UP
+                    color: Colors.blue.withValues(alpha: 0.8),
+                    size: 28,
+                  ),
+                ),
+                Container(
+                  width: 22,
+                  height: 22,
+                  decoration: BoxDecoration(
+                    color: Colors.blue,
+                    shape: BoxShape.circle,
+                    border: Border.all(color: Colors.white, width: 2),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.blue.withValues(alpha: 0.4),
+                        blurRadius: 8,
+                        spreadRadius: 2,
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          );
+        },
       ),
     );
   }
