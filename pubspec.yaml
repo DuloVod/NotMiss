@@ -39,3 +39,12 @@ flutter:
   assets:
     - .env
     - assets/data/stryiskyi_park.json
+dev_dependencies:
+  flutter_native_splash: ^2.4.8
+
+flutter_native_splash:
+  color: "#FFFFFF"
+  image: "assets/splash.png"
+  android_12:
+    image: "assets/splash.png"
+    color: "#FFFFFF"
