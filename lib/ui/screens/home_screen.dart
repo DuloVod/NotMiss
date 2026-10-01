@@ -2,6 +2,7 @@ import 'dart:math' show pi;
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:flutter_compass/flutter_compass.dart';
+import 'package:geolocator/geolocator.dart';
 import 'package:latlong2/latlong.dart';
 import '../../models/destination.dart';
 import '../../models/poi.dart';
@@ -116,68 +117,24 @@ class _HomeScreenState extends State<HomeScreen> {
             ],
           ),
 
-          // ── Top title bar ────────────────────────────────────────────────
+          // ── Nearby POIs chip ─────────────────────────────────────────────
           Positioned(
             top: 0,
             left: 0,
             right: 0,
             child: SafeArea(
-              child: Container(
-                margin: const EdgeInsets.all(12),
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-                decoration: BoxDecoration(
-                  color: Colors.white.withValues(alpha: 0.95),
-                  borderRadius: BorderRadius.circular(12),
-                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.black.withValues(alpha: 0.12),
-                      blurRadius: 8,
-                      offset: const Offset(0, 2),
-                    ),
-                  ],
-                ),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      children: [
-                        Text(
-                          dest.name,
-                          style: const TextStyle(
-                            fontSize: 18,
-                            fontWeight: FontWeight.bold,
-                            color: Colors.black87,
-                          ),
-                        ),
-                        const SizedBox(width: 8),
-                        Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                          decoration: BoxDecoration(
-                            color: Colors.grey[200],
-                            borderRadius: BorderRadius.circular(4),
-                          ),
-                          child: Text(
-                            'v0.0.0',
-                            style: TextStyle(
-                              fontSize: 10,
-                              fontWeight: FontWeight.bold,
-                              color: Colors.grey[700],
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 2),
-                    Text(
-                      '${dest.pois.length} точок інтересу',
-                      style: TextStyle(
-                        fontSize: 13,
-                        color: Colors.grey[600],
-                      ),
-                    ),
-                  ],
+              child: Padding(
+                padding: const EdgeInsets.all(12),
+                child: _NearbyPoiChip(
+                  pos: pos,
+                  pois: dest.pois,
+                  radiusM: 100,
+                  onPoiTap: (poi) {
+                    _mapController.move(
+                      LatLng(poi.latitude, poi.longitude),
+                      18,
+                    );
+                  },
                 ),
               ),
             ),
@@ -812,6 +769,169 @@ class _WalkScreenState extends State<WalkScreen> {
           );
         },
       ),
+    );
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+/// Chip displayed on the home screen showing how many POIs are within
+/// [radiusM] metres of the user. Tapping opens a bottom sheet list.
+class _NearbyPoiChip extends StatelessWidget {
+  final dynamic pos; // Position? from geolocator
+  final List<dynamic> pois; // List<Poi>
+  final double radiusM;
+  final void Function(dynamic poi) onPoiTap;
+
+  const _NearbyPoiChip({
+    required this.pos,
+    required this.pois,
+    required this.radiusM,
+    required this.onPoiTap,
+  });
+
+  List<dynamic> _nearbyPois() {
+    if (pos == null) return [];
+    return pois.where((poi) {
+      final dist = Geolocator.distanceBetween(
+        pos.latitude,
+        pos.longitude,
+        poi.latitude,
+        poi.longitude,
+      );
+      return dist <= radiusM;
+    }).toList();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final nearby = _nearbyPois();
+    final hasLocation = pos != null;
+    final count = nearby.length;
+
+    final Color chipColor;
+    final Color textColor;
+    if (!hasLocation) {
+      chipColor = Colors.black.withValues(alpha: 0.55);
+      textColor = Colors.white70;
+    } else if (count == 0) {
+      chipColor = Colors.black.withValues(alpha: 0.55);
+      textColor = Colors.white;
+    } else {
+      chipColor = const Color(0xFF1B5E20).withValues(alpha: 0.92);
+      textColor = Colors.white;
+    }
+
+    final label = !hasLocation
+        ? 'Локацію не визначено'
+        : count == 0
+            ? 'Жодної точки поруч'
+            : '$count ${_poiWord(count)} поряд';
+
+    return Align(
+      alignment: Alignment.centerLeft,
+      child: GestureDetector(
+        onTap: count == 0
+            ? null
+            : () => _showNearbySheet(context, nearby),
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 300),
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+          decoration: BoxDecoration(
+            color: chipColor,
+            borderRadius: BorderRadius.circular(24),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withValues(alpha: 0.25),
+                blurRadius: 6,
+                offset: const Offset(0, 2),
+              ),
+            ],
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(
+                count > 0 ? Icons.place : Icons.location_off,
+                color: textColor,
+                size: 16,
+              ),
+              const SizedBox(width: 6),
+              Text(
+                label,
+                style: TextStyle(
+                  color: textColor,
+                  fontSize: 13,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+              if (count > 0) ...[
+                const SizedBox(width: 4),
+                Icon(Icons.keyboard_arrow_down, color: textColor, size: 16),
+              ],
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  String _poiWord(int n) {
+    if (n == 1) return 'точка';
+    if (n >= 2 && n <= 4) return 'точки';
+    return 'точок';
+  }
+
+  void _showNearbySheet(BuildContext context, List<dynamic> nearby) {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (_) {
+        return SafeArea(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+                child: Text(
+                  'Поряд з вами (${radiusM.toInt()} м)',
+                  style: const TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ),
+              const Divider(height: 1),
+              ...nearby.map((poi) {
+                final dist = pos != null
+                    ? Geolocator.distanceBetween(
+                        pos.latitude,
+                        pos.longitude,
+                        poi.latitude,
+                        poi.longitude,
+                      ).round()
+                    : 0;
+                return ListTile(
+                  leading: const Icon(Icons.place, color: Color(0xFF2E7D32)),
+                  title: Text(poi.name),
+                  trailing: Text(
+                    '$dist м',
+                    style: TextStyle(color: Colors.grey[600], fontSize: 12),
+                  ),
+                  onTap: () {
+                    Navigator.pop(context);
+                    onPoiTap(poi);
+                  },
+                );
+              }),
+              const SizedBox(height: 8),
+            ],
+          ),
+        );
+      },
     );
   }
 }
