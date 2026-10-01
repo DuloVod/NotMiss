@@ -125,16 +125,38 @@ class _HomeScreenState extends State<HomeScreen> {
             child: SafeArea(
               child: Padding(
                 padding: const EdgeInsets.all(12),
-                child: _NearbyPoiChip(
-                  pos: pos,
-                  pois: dest.pois,
-                  radiusM: 100,
-                  onPoiTap: (poi) {
-                    _mapController.move(
-                      LatLng(poi.latitude, poi.longitude),
-                      18,
-                    );
-                  },
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Expanded(
+                      child: _NearbyPoiChip(
+                        pos: pos,
+                        pois: dest.pois,
+                        radiusM: 100,
+                        onPoiTap: (poi) {
+                          _mapController.move(
+                            LatLng(poi.latitude, poi.longitude),
+                            18,
+                          );
+                        },
+                      ),
+                    ),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                      decoration: BoxDecoration(
+                        color: Colors.white.withValues(alpha: 0.8),
+                        borderRadius: BorderRadius.circular(4),
+                      ),
+                      child: const Text(
+                        'v0.1.0',
+                        style: TextStyle(
+                          fontSize: 10,
+                          fontWeight: FontWeight.bold,
+                          color: Colors.black54,
+                        ),
+                      ),
+                    ),
+                  ],
                 ),
               ),
             ),
