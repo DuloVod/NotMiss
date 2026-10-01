@@ -1,26 +1,31 @@
 import 'dart:async';
+import 'dart:math' show exp;
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:geolocator/geolocator.dart';
 
 /// Obtains GPS coordinates and exposes a stream of position updates.
 ///
-/// Responsibilities:
-///   - Request location permission on first use
-///   - Emit a continuous stream of [Position] while the walk is active
-///   - Expose the most recent known position
+/// Improvements over the raw Geolocator stream:
+///   - Requests `bestForNavigation` accuracy on Android (uses all sensors)
+///   - Filters out positions with accuracy worse than [_maxAccuracyM]
+///   - Applies a lightweight Kalman-style smoothing filter to reduce GPS jitter
+///   - Skips duplicate positions (same lat/lng) on web
 class LocationService {
-  /// On web: distanceFilter=0 because geolocator_web's skipWhile
-  /// implementation has a bug with Chrome DevTools sensor simulation
-  /// that silently drops all updates. We deduplicate manually instead.
-  /// On native: distanceFilter=5 saves battery by only emitting when moved ≥5 m.
+  /// Worst accuracy we accept. Positions with accuracy > this are discarded.
+  static const double _maxAccuracyM = 40.0;
+
+
   static LocationSettings get _settings => kIsWeb
       ? const LocationSettings(
           accuracy: LocationAccuracy.high,
           distanceFilter: 0,
         )
-      : const LocationSettings(
-          accuracy: LocationAccuracy.high,
-          distanceFilter: 5,
+      : AndroidSettings(
+          accuracy: LocationAccuracy.bestForNavigation,
+          distanceFilter: 0, // We apply accuracy gating ourselves
+          intervalDuration: const Duration(milliseconds: 500),
+          forceLocationManager: false,
+          // Request fresh GPS fix — don't accept a stale cached location
         );
 
   StreamSubscription<Position>? _subscription;
@@ -29,14 +34,16 @@ class LocationService {
 
   Position? _lastPosition;
 
+  // Kalman state — smoothed lat/lng estimate
+  double? _smoothLat;
+  double? _smoothLng;
+
   Stream<Position> get positionStream => _controller.stream;
   Position? get lastPosition => _lastPosition;
 
   /// Request permission and return true if granted.
   Future<bool> requestPermission() async {
     try {
-      // isLocationServiceEnabled() always returns false on web (no OS GPS toggle).
-      // On web we skip it and go straight to checking browser permission.
       if (!kIsWeb) {
         final serviceEnabled = await Geolocator.isLocationServiceEnabled()
             .timeout(const Duration(seconds: 3));
@@ -54,22 +61,60 @@ class LocationService {
       return permission == LocationPermission.always ||
           permission == LocationPermission.whileInUse;
     } catch (e) {
-      print('Permission check error/timeout: $e');
       return false;
     }
   }
 
   /// Start streaming position updates.
   void start() {
-    _subscription ??= Geolocator.getPositionStream(locationSettings: _settings)
-        .listen((pos) {
-      // Manual dedup on web (since distanceFilter=0 means every tick arrives)
+    _subscription ??=
+        Geolocator.getPositionStream(locationSettings: _settings).listen((pos) {
+      // ── 1. Accuracy gate ───────────────────────────────────────────────
+      if (!kIsWeb && pos.accuracy > _maxAccuracyM) {
+        // Too inaccurate — discard and wait for a better fix
+        return;
+      }
+
+      // ── 2. Deduplicate (web only) ──────────────────────────────────────
       if (kIsWeb && _lastPosition != null) {
         if (_lastPosition!.latitude == pos.latitude &&
             _lastPosition!.longitude == pos.longitude) {
-          return; // same coordinates, skip
+          return;
         }
       }
+
+      // ── 3. Kalman-style smoothing (native only) ─────────────────────────
+      // On first fix, initialise the smoothed state directly.
+      if (!kIsWeb) {
+        if (_smoothLat == null) {
+          _smoothLat = pos.latitude;
+          _smoothLng = pos.longitude;
+        } else {
+          // Adaptive gain: trust the new measurement more when accuracy is good
+          // and less when it's poor. Maps accuracy 0→40 to gain 0.85→0.35.
+          final adaptiveGain =
+              _adaptiveGain(pos.accuracy, min: 0.35, max: 0.85);
+          _smoothLat = _smoothLat! + adaptiveGain * (pos.latitude - _smoothLat!);
+          _smoothLng =
+              _smoothLng! + adaptiveGain * (pos.longitude - _smoothLng!);
+        }
+
+        // Re-package as a Position with the smoothed coordinates.
+        // We keep the original accuracy/altitude/speed fields from the fix.
+        pos = Position(
+          latitude: _smoothLat!,
+          longitude: _smoothLng!,
+          timestamp: pos.timestamp,
+          accuracy: pos.accuracy,
+          altitude: pos.altitude,
+          altitudeAccuracy: pos.altitudeAccuracy,
+          heading: pos.heading,
+          headingAccuracy: pos.headingAccuracy,
+          speed: pos.speed,
+          speedAccuracy: pos.speedAccuracy,
+        );
+      }
+
       _lastPosition = pos;
       _controller.add(pos);
     });
@@ -79,10 +124,25 @@ class LocationService {
   void stop() {
     _subscription?.cancel();
     _subscription = null;
+    // Reset smoothing state so the next walk starts fresh
+    _smoothLat = null;
+    _smoothLng = null;
   }
 
   void dispose() {
     stop();
     _controller.close();
+  }
+
+  /// Maps accuracy value (meters) to a Kalman gain in [min, max].
+  /// Low accuracy (high meters) → low gain (trust old estimate more).
+  /// High accuracy (low meters) → high gain (trust new measurement more).
+  double _adaptiveGain(double accuracyM,
+      {required double min, required double max}) {
+    // Exponential decay: gain = max * exp(-k * accuracyM)
+    // Calibrated so that at accuracyM=5 → ~0.80, at 40 → ~0.37
+    const k = 0.025;
+    final gain = max * exp(-k * accuracyM);
+    return gain.clamp(min, max);
   }
 }

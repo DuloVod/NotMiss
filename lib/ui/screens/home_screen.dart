@@ -676,25 +676,8 @@ class _WalkScreenState extends State<WalkScreen> {
 
                     const SizedBox(height: 12),
 
-                    // GPS accuracy info
-                    if (pos != null)
-                      Row(
-                        children: [
-                          Icon(Icons.gps_fixed,
-                              size: 12, color: Colors.grey[400]),
-                          const SizedBox(width: 4),
-                          Text(
-                            '${pos.latitude.toStringAsFixed(5)}, '
-                            '${pos.longitude.toStringAsFixed(5)}'
-                            '  ±${pos.accuracy.toStringAsFixed(0)} м',
-                            style: TextStyle(
-                              fontSize: 11,
-                              color: Colors.grey[500],
-                              fontFamily: 'monospace',
-                            ),
-                          ),
-                        ],
-                      ),
+                    // GPS signal quality indicator
+                    if (pos != null) _GpsAccuracyBar(accuracy: pos.accuracy),
 
                     const SizedBox(height: 8),
 
@@ -833,6 +816,67 @@ class _StatusDot extends StatelessWidget {
       width: 10,
       height: 10,
       decoration: BoxDecoration(color: color, shape: BoxShape.circle),
+    );
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+/// GPS signal quality bar — like a phone signal indicator.
+/// Green bars = good accuracy, orange = ok, red = poor.
+class _GpsAccuracyBar extends StatelessWidget {
+  final double accuracy;
+  const _GpsAccuracyBar({required this.accuracy});
+
+  @override
+  Widget build(BuildContext context) {
+    // Determine colour and label based on accuracy
+    final Color color;
+    final String label;
+    final int bars; // 1-4
+
+    if (accuracy <= 8) {
+      color = Colors.green[600]!;
+      label = '±${accuracy.toStringAsFixed(0)} м — відмінно';
+      bars = 4;
+    } else if (accuracy <= 15) {
+      color = Colors.green[400]!;
+      label = '±${accuracy.toStringAsFixed(0)} м — добре';
+      bars = 3;
+    } else if (accuracy <= 25) {
+      color = Colors.orange[600]!;
+      label = '±${accuracy.toStringAsFixed(0)} м — задовільно';
+      bars = 2;
+    } else {
+      color = Colors.red[400]!;
+      label = '±${accuracy.toStringAsFixed(0)} м — слабкий сигнал';
+      bars = 1;
+    }
+
+    return Row(
+      children: [
+        // Bar chart (4 bars, like signal strength)
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.end,
+          children: List.generate(4, (i) {
+            final filled = i < bars;
+            final barHeight = 6.0 + i * 3.0; // 6, 9, 12, 15
+            return Container(
+              width: 4,
+              height: barHeight,
+              margin: const EdgeInsets.only(right: 2),
+              decoration: BoxDecoration(
+                color: filled ? color : Colors.grey[300],
+                borderRadius: BorderRadius.circular(1),
+              ),
+            );
+          }),
+        ),
+        const SizedBox(width: 6),
+        Text(
+          label,
+          style: TextStyle(fontSize: 11, color: color),
+        ),
+      ],
     );
   }
 }
