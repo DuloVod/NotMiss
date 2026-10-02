@@ -26,7 +26,12 @@ class AudioPlayerService {
       await _player.setFilePath(source);
     }
 
-    await _player.play();
+    _player.play(); // Do not await this future directly
+
+    // Wait for playback to complete (or stop)
+    await _player.playerStateStream.firstWhere((state) =>
+        state.processingState == ProcessingState.completed ||
+        state.processingState == ProcessingState.idle);
   }
 
   /// Stop playback.

@@ -155,6 +155,11 @@ class WalkController extends ChangeNotifier {
       );
     } finally {
       _isProcessing = false;
+      _activePoi = null;
+      if (_status == WalkStatus.walking) {
+        _statusMessage = 'Walking — listening for nearby places…';
+      }
+      notifyListeners();
     }
   }
 
