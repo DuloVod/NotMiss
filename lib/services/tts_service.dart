@@ -73,8 +73,11 @@ class TtsService {
     final audioBase64 = _extractAudio(json);
 
     if (audioBase64 == null || audioBase64.isEmpty) {
+      final preview = response.body.length > 300
+          ? response.body.substring(0, 300)
+          : response.body;
       throw Exception(
-          'No audio data in TTS response. Body: ${response.body.substring(0, 300)}');
+          'No audio data in TTS response. Body: $preview');
     }
 
     final pcmBytes = base64Decode(audioBase64);

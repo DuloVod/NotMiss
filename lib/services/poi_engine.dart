@@ -27,8 +27,14 @@ class PoiEngine {
   ///
   /// Returns the closest qualifying POI (in case multiple overlap).
   Poi? findTriggerablePoi(List<Poi> pois, double lat, double lng) {
-    Poi? closest;
-    double closestDistance = double.infinity;
+    final all = findAllTriggerablePois(pois, lat, lng);
+    if (all.isEmpty) return null;
+    return all.first;
+  }
+
+  /// Returns all POIs that should trigger, sorted by distance (closest first).
+  List<Poi> findAllTriggerablePois(List<Poi> pois, double lat, double lng) {
+    final results = <Map<String, dynamic>>[];
 
     for (final poi in pois) {
       if (_triggeredPoiIds.contains(poi.id)) continue;
@@ -40,13 +46,13 @@ class PoiEngine {
         poi.longitude,
       );
 
-      if (distance < poi.triggerRadius && distance < closestDistance) {
-        closest = poi;
-        closestDistance = distance;
+      if (distance < poi.triggerRadius) {
+        results.add({'poi': poi, 'distance': distance});
       }
     }
 
-    return closest;
+    results.sort((a, b) => (a['distance'] as double).compareTo(b['distance'] as double));
+    return results.map((m) => m['poi'] as Poi).toList();
   }
 
   /// Mark a POI as triggered so it won't fire again this session.

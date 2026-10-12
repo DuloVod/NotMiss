@@ -23,6 +23,8 @@ class Poi {
   final String narrationText; // narration_idea_uk or narration_text
   final List<PoiSource> sources;
   final String confidence;
+  final String? wikidataId;
+  final Map<String, String>? osmTags;
 
   const Poi({
     required this.id,
@@ -35,6 +37,8 @@ class Poi {
     required this.narrationText,
     required this.sources,
     this.confidence = 'high',
+    this.wikidataId,
+    this.osmTags,
   });
 
   factory Poi.fromJson(Map<String, dynamic> json) {
@@ -77,6 +81,35 @@ class Poi {
       narrationText: narrationText,
       sources: sources,
       confidence: (json['confidence'] as String?) ?? 'high',
+    );
+  }
+
+  Poi copyWith({
+    String? name,
+    double? latitude,
+    double? longitude,
+    double? triggerRadius,
+    String? shortDescription,
+    List<String>? facts,
+    String? narrationText,
+    List<PoiSource>? sources,
+    String? confidence,
+    String? wikidataId,
+    Map<String, String>? osmTags,
+  }) {
+    return Poi(
+      id: id,
+      name: name ?? this.name,
+      latitude: latitude ?? this.latitude,
+      longitude: longitude ?? this.longitude,
+      triggerRadius: triggerRadius ?? this.triggerRadius,
+      shortDescription: shortDescription ?? this.shortDescription,
+      facts: facts ?? this.facts,
+      narrationText: narrationText ?? this.narrationText,
+      sources: sources ?? this.sources,
+      confidence: confidence ?? this.confidence,
+      wikidataId: wikidataId ?? this.wikidataId,
+      osmTags: osmTags ?? this.osmTags,
     );
   }
 }

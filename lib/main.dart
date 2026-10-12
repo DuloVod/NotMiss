@@ -4,7 +4,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'models/destination.dart';
 import 'services/background_service.dart';
-import 'ui/screens/home_screen.dart';
+import 'ui/screens/main_screen.dart';
 import 'ui/walk_controller.dart';
 
 Future<void> main() async {
@@ -26,14 +26,23 @@ Future<void> main() async {
   try {
     final jsonStr =
         await rootBundle.loadString('assets/data/stryiskyi_park.json');
-    destination = Destination.fromJson(
-      jsonDecode(jsonStr) as Map<String, dynamic>,
+    final parsed = jsonDecode(jsonStr) as Map<String, dynamic>;
+    destination = Destination(
+      id: parsed['id'] as String,
+      name: parsed['name'] as String,
+      centerLatitude: (parsed['center_latitude'] as num).toDouble(),
+      centerLongitude: (parsed['center_longitude'] as num).toDouble(),
+      defaultZoom: (parsed['default_zoom'] as num? ?? 16).toDouble(),
+      pois: [], // Тимчасово відключено старі точки (json_pois)
     );
   } catch (e) {
     loadError = 'Помилка завантаження даних парку:\n$e';
   }
 
-  final apiKey = dotenv.maybeGet('GEMINI_API_KEY') ?? '';
+  final envKey = dotenv.maybeGet('GEMINI_API_KEY');
+  final apiKey = (envKey != null && envKey.trim().isNotEmpty)
+      ? envKey.trim()
+      : const String.fromEnvironment('GEMINI_API_KEY');
 
   runApp(NotMissApp(
     destination: destination,
@@ -68,8 +77,7 @@ class NotMissApp extends StatelessWidget {
       ),
       home: loadError != null || destination == null
           ? _ErrorScreen(message: loadError ?? 'Дані парку не завантажились.')
-          : HomeScreen(
-              destination: destination!,
+          : MainScreen(
               controller: WalkController(
                 destination: destination!,
                 apiKey: apiKey,

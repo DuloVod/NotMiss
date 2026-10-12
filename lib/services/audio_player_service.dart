@@ -12,6 +12,13 @@ class AudioPlayerService {
 
   bool get isPlaying => _player.playing;
 
+  bool get isPaused =>
+      !_player.playing &&
+      (_player.processingState == ProcessingState.ready ||
+          _player.processingState == ProcessingState.buffering);
+
+  Stream<PlayerState> get playerStateStream => _player.playerStateStream;
+
   /// Play audio from [source].
   ///
   /// [source] can be a file path or a data/https URI.
@@ -32,6 +39,16 @@ class AudioPlayerService {
     await _player.playerStateStream.firstWhere((state) =>
         state.processingState == ProcessingState.completed ||
         state.processingState == ProcessingState.idle);
+  }
+
+  /// Pause playback.
+  Future<void> pause() async {
+    await _player.pause();
+  }
+
+  /// Resume playback.
+  Future<void> resume() async {
+    await _player.play();
   }
 
   /// Stop playback.

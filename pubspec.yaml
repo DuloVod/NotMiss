@@ -1,7 +1,7 @@
 name: notmiss
 description: AI Voice Guide for Walking Tours
 publish_to: none
-version: 0.1.0
+version: 0.2.0
 
 environment:
   sdk: ">=3.3.0 <4.0.0"
@@ -40,6 +40,8 @@ flutter:
     - .env
     - assets/data/stryiskyi_park.json
 dev_dependencies:
+  flutter_test:
+    sdk: flutter
   flutter_launcher_icons: ^0.14.4
   flutter_native_splash: ^2.4.8
 
