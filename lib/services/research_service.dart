@@ -183,7 +183,7 @@ class ResearchService {
             );
             if (wikiArticle != null) {
               if (shortDesc == null || shortDesc.isEmpty) {
-                shortDesc = wikiArticle.description ?? wikiArticle.extract.split('. ').first;
+                shortDesc = wikiArticle.description ?? _firstSentence(wikiArticle.extract);
               }
               facts.add(KeyFact(
                 fact: _truncate(wikiArticle.extract, 150),
@@ -326,5 +326,17 @@ class ResearchService {
   String _truncate(String text, int maxLength) {
     if (text.length <= maxLength) return text;
     return '${text.substring(0, maxLength)}...';
+  }
+
+  String _firstSentence(String text) {
+    final match = RegExp(r'(?<!\b(вул|ім|р|м|с|див|напр|тис|млн|грн))\.\s+[А-ЯЄІЇA-Z]').firstMatch(text);
+    if (match != null) {
+      return text.substring(0, match.start + 1).trim();
+    }
+    final firstPeriod = text.indexOf('. ');
+    if (firstPeriod > 20) {
+      return text.substring(0, firstPeriod + 1).trim();
+    }
+    return text.length > 150 ? _truncate(text, 150) : text;
   }
 }

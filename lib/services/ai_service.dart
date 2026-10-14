@@ -10,9 +10,8 @@ class AiService {
   final ContentService _contentService;
 
   static const List<String> _models = [
-    'gemini-3.5-flash-lite',
-    'gemini-flash-latest',
-    'gemini-3.8-flash',
+    'gemini-2.0-flash',
+    'gemini-2.0-flash-lite',
   ];
 
   static String _endpoint(String model) =>
@@ -76,7 +75,7 @@ class AiService {
 
     final tagsContext = tags.entries.map((e) => '${e.key}=${e.value}').join(', ');
     final prompt = '''
-Ти — досвідчений, захопливий аудіогід по Львову та Україні.
+Ти — досвідчений, захопливий аудіогід для пішої прогулянки.
 Об'єкт на мапі:
 Назва: "$name"
 Категорія: "$category"
@@ -124,7 +123,9 @@ class AiService {
           final text = _extractText(json);
           if (text != null && text.isNotEmpty) {
             final cleaned = _cleanJson(text);
-            return jsonDecode(cleaned) as Map<String, dynamic>;
+            final decoded = jsonDecode(cleaned);
+            if (decoded is Map<String, dynamic>) return decoded;
+            return null; // Unexpected JSON type (e.g. array)
           }
         } else {
           debugPrint('[AiService] generateBackgroundFacts with $model failed: ${response.statusCode} -> ${response.body}');
@@ -182,7 +183,7 @@ class AiService {
     final narration = poi.narrationText.isNotEmpty ? 'Розповідь: ${poi.narrationText}\n' : '';
 
     final prompt = '''
-Ти — ерудований, доброзичливий гід-екскурсовод по Львову та Україні.
+Ти — ерудований, доброзичливий гід-екскурсовод.
 Користувач зараз знаходиться біля або запитує про це місце:
 Назва: "${poi.name}"
 $desc$narration${factsList.isNotEmpty ? 'Відомі факти:\n$factsList\n' : ''}

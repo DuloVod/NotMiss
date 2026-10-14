@@ -14,28 +14,28 @@ class AudioPlayerService {
 
   bool get isPaused =>
       !_player.playing &&
-      (_player.processingState == ProcessingState.ready ||
-          _player.processingState == ProcessingState.buffering);
+      _player.processingState == ProcessingState.ready;
 
   Stream<PlayerState> get playerStateStream => _player.playerStateStream;
 
   /// Play audio from [source].
   ///
   /// [source] can be a file path or a data/https URI.
+  /// Returns when playback completes, is stopped, or is interrupted by another play().
   Future<void> play(String source) async {
     await _player.stop();
 
     if (kIsWeb || source.startsWith('data:') || source.startsWith('http')) {
-      // Web or URL: use setUrl (supports data URIs in just_audio_web)
       await _player.setUrl(source);
     } else {
-      // Native: use file path
       await _player.setFilePath(source);
     }
 
     _player.play(); // Do not await this future directly
 
-    // Wait for playback to complete (or stop)
+    // Wait for playback to complete, stop, or idle.
+    // Also handles pause → stop scenario: when paused, processingState stays
+    // `ready`, so we don't hang. We complete on completed/idle only.
     await _player.playerStateStream.firstWhere((state) =>
         state.processingState == ProcessingState.completed ||
         state.processingState == ProcessingState.idle);

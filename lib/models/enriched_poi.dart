@@ -108,6 +108,9 @@ class EnrichedPoi {
 
   /// Create a copy with updated fields.
   EnrichedPoi copyWith({
+    String? name,
+    double? latitude,
+    double? longitude,
     ResearchStatus? researchStatus,
     String? shortDescription,
     String? narrationText,
@@ -115,6 +118,7 @@ class EnrichedPoi {
     String? interestingFact,
     List<ResearchSource>? sources,
     List<String>? uncertainties,
+    Map<String, String>? osmTags,
     String? wikidataId,
     ResearchPriority? priority,
     DateTime? lastResearchedAt,
@@ -122,10 +126,10 @@ class EnrichedPoi {
   }) {
     return EnrichedPoi(
       poiId: poiId,
-      name: name,
+      name: name ?? this.name,
       category: category ?? this.category,
-      latitude: latitude,
-      longitude: longitude,
+      latitude: latitude ?? this.latitude,
+      longitude: longitude ?? this.longitude,
       researchStatus: researchStatus ?? this.researchStatus,
       shortDescription: shortDescription ?? this.shortDescription,
       narrationText: narrationText ?? this.narrationText,
@@ -133,7 +137,7 @@ class EnrichedPoi {
       interestingFact: interestingFact ?? this.interestingFact,
       sources: sources ?? this.sources,
       uncertainties: uncertainties ?? this.uncertainties,
-      osmTags: osmTags,
+      osmTags: osmTags ?? this.osmTags,
       wikidataId: wikidataId ?? this.wikidataId,
       priority: priority ?? this.priority,
       lastResearchedAt: lastResearchedAt ?? this.lastResearchedAt,
@@ -196,7 +200,7 @@ class EnrichedPoi {
               .toList() ??
           [],
       uncertainties: (json['uncertainties'] as List<dynamic>?)
-              ?.map((u) => u as String)
+              ?.map((u) => u.toString())
               .toList() ??
           [],
       osmTags: (json['osm_tags'] as Map<String, dynamic>?)

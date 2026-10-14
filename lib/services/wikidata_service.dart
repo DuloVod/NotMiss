@@ -49,7 +49,7 @@ class WikidataService {
       final entity = entities[wikidataId] as Map<String, dynamic>;
       if (entity.containsKey('missing')) return null;
 
-      return _parseEntity(wikidataId, entity);
+      return await _parseEntity(wikidataId, entity);
     } catch (e) {
       debugPrint('[WikidataService] Error fetching $wikidataId: $e');
       return null;
@@ -88,7 +88,7 @@ class WikidataService {
         for (final id in batch) {
           final entity = entities[id] as Map<String, dynamic>?;
           if (entity == null || entity.containsKey('missing')) continue;
-          final result = _parseEntity(id, entity);
+          final result = await _parseEntity(id, entity);
           if (result != null) results[id] = result;
         }
       } catch (e) {
@@ -99,7 +99,7 @@ class WikidataService {
     return results;
   }
 
-  WikidataResult? _parseEntity(String id, Map<String, dynamic> entity) {
+  Future<WikidataResult?> _parseEntity(String id, Map<String, dynamic> entity) async {
     try {
       // Labels
       final labels = entity['labels'] as Map<String, dynamic>? ?? {};
@@ -119,9 +119,30 @@ class WikidataService {
       // Extract key claims
       final claims = entity['claims'] as Map<String, dynamic>? ?? {};
       final inception = _getClaimStringValue(claims, 'P571'); // inception date
-      final architect = _getClaimStringValue(claims, 'P84');  // architect
-      final creator = _getClaimStringValue(claims, 'P170');   // creator
       final heritage = _getClaimStringValue(claims, 'P1435'); // heritage status
+
+      // Resolve entity references (architect, creator) to human-readable labels
+      final architectId = _getClaimStringValue(claims, 'P84');
+      final creatorId = _getClaimStringValue(claims, 'P170');
+      
+      String? architect = architectId;
+      String? creator = creatorId;
+      
+      // Resolve Q-IDs to labels via batch fetch
+      final idsToResolve = <String>[
+        if (architectId != null && architectId.startsWith('Q')) architectId,
+        if (creatorId != null && creatorId.startsWith('Q')) creatorId,
+      ];
+      
+      if (idsToResolve.isNotEmpty) {
+        final resolved = await _resolveLabels(idsToResolve);
+        if (architectId != null && resolved.containsKey(architectId)) {
+          architect = resolved[architectId];
+        }
+        if (creatorId != null && resolved.containsKey(creatorId)) {
+          creator = resolved[creatorId];
+        }
+      }
 
       return WikidataResult(
         wikidataId: id,
@@ -139,6 +160,45 @@ class WikidataService {
     } catch (e) {
       debugPrint('[WikidataService] Parse error for $id: $e');
       return null;
+    }
+  }
+
+  /// Resolve a list of Wikidata entity IDs to their labels.
+  Future<Map<String, String>> _resolveLabels(List<String> ids) async {
+    if (ids.isEmpty) return {};
+    try {
+      await _rateLimit();
+      final uri = Uri.parse(_endpoint).replace(queryParameters: {
+        'action': 'wbgetentities',
+        'ids': ids.join('|'),
+        'props': 'labels',
+        'languages': 'uk|en',
+        'format': 'json',
+      });
+      final response = await http.get(uri, headers: {
+        'User-Agent': _userAgent,
+      }).timeout(const Duration(seconds: 10));
+      
+      if (response.statusCode != 200) return {};
+      
+      final json = jsonDecode(response.body) as Map<String, dynamic>;
+      final entities = json['entities'] as Map<String, dynamic>? ?? {};
+      final result = <String, String>{};
+      
+      for (final id in ids) {
+        final entity = entities[id] as Map<String, dynamic>?;
+        if (entity == null) continue;
+        final labels = entity['labels'] as Map<String, dynamic>? ?? {};
+        final uk = (labels['uk'] as Map<String, dynamic>?)?['value'] as String?;
+        final en = (labels['en'] as Map<String, dynamic>?)?['value'] as String?;
+        final label = uk ?? en;
+        if (label != null) result[id] = label;
+      }
+      
+      return result;
+    } catch (e) {
+      debugPrint('[WikidataService] Failed to resolve labels: $e');
+      return {};
     }
   }
 
@@ -160,14 +220,20 @@ class WikidataService {
     return null;
   }
 
-  Future<void> _rateLimit() async {
-    if (_lastRequest != null) {
-      final elapsed = DateTime.now().difference(_lastRequest!);
-      if (elapsed < _minInterval) {
-        await Future.delayed(_minInterval - elapsed);
+  Future<void>? _rateLimitQueue;
+
+  Future<void> _rateLimit() {
+    final next = (_rateLimitQueue ?? Future.value()).then((_) async {
+      if (_lastRequest != null) {
+        final elapsed = DateTime.now().difference(_lastRequest!);
+        if (elapsed < _minInterval) {
+          await Future.delayed(_minInterval - elapsed);
+        }
       }
-    }
-    _lastRequest = DateTime.now();
+      _lastRequest = DateTime.now();
+    });
+    _rateLimitQueue = next;
+    return next;
   }
 }
 

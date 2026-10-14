@@ -41,6 +41,12 @@ class WikipediaService {
       }
 
       final json = jsonDecode(response.body) as Map<String, dynamic>;
+      final type = json['type'] as String?;
+      if (type == 'disambiguation' || type == 'no-extract') {
+        debugPrint('[WikipediaService] Skipping $title: type=$type');
+        return null;
+      }
+
       return WikipediaArticle(
         title: json['title'] as String? ?? title,
         extract: json['extract'] as String? ?? '',
@@ -58,14 +64,20 @@ class WikipediaService {
     }
   }
 
-  Future<void> _rateLimit() async {
-    if (_lastRequest != null) {
-      final elapsed = DateTime.now().difference(_lastRequest!);
-      if (elapsed < _minInterval) {
-        await Future.delayed(_minInterval - elapsed);
+  Future<void>? _rateLimitQueue;
+
+  Future<void> _rateLimit() {
+    final next = (_rateLimitQueue ?? Future.value()).then((_) async {
+      if (_lastRequest != null) {
+        final elapsed = DateTime.now().difference(_lastRequest!);
+        if (elapsed < _minInterval) {
+          await Future.delayed(_minInterval - elapsed);
+        }
       }
-    }
-    _lastRequest = DateTime.now();
+      _lastRequest = DateTime.now();
+    });
+    _rateLimitQueue = next;
+    return next;
   }
 }
 

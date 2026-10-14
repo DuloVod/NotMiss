@@ -6,7 +6,9 @@ import 'package:path_provider/path_provider.dart';
 /// Returns the file path.
 Future<String> saveTempWav(Uint8List wavBytes, String poiId) async {
   final dir = await getTemporaryDirectory();
-  final file = File('${dir.path}/narration_$poiId.wav');
+  // Sanitize poiId: replace characters invalid in filenames (/ \ : etc.)
+  final safeId = poiId.replaceAll(RegExp(r'[/\\:*?"<>|]'), '_');
+  final file = File('${dir.path}/narration_$safeId.wav');
   await file.writeAsBytes(wavBytes);
   return file.path;
 }

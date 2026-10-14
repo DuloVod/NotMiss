@@ -32,6 +32,7 @@ class ResearchQueue {
   final Set<String> _activeIds = {};
   final Set<String> _queuedIds = {};
   int _runningCount = 0;
+  bool _disposed = false;
 
   /// Callback to execute when a task is ready to process.
   Future<void> Function(String poiId)? onProcess;
@@ -113,6 +114,11 @@ class ResearchQueue {
     _queuedIds.clear();
   }
 
+  void dispose() {
+    _disposed = true;
+    clear();
+  }
+
   void _processNext() {
     while (_runningCount < maxConcurrent && _queue.isNotEmpty) {
       final task = _queue.removeFirst();
@@ -141,13 +147,16 @@ class ResearchQueue {
             '(attempt ${task.retryCount + 1}/$maxRetries)');
 
         Future.delayed(delay, () {
+          if (_disposed) return;
           _queuedIds.add(task.poiId);
           _queue.addLast(task);
           _processNext();
         });
       } else {
         debugPrint('[ResearchQueue] Max retries reached for ${task.poiId}');
-        task.completer.completeError(e);
+        if (!task.completer.isCompleted) {
+          task.completer.complete(); // Complete normally — error already logged
+        }
       }
     } finally {
       _activeIds.remove(task.poiId);

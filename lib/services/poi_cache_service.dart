@@ -72,6 +72,14 @@ class PoiCacheService {
     if (cached == null) return true;
     if (cached.researchStatus == ResearchStatus.notStarted) return true;
     if (cached.researchStatus == ResearchStatus.queued) return true;
+    if (cached.researchStatus == ResearchStatus.inProgress) {
+      // If stuck in progress for over 5 minutes (e.g. app crashed), allow retry
+      if (cached.lastResearchedAt != null) {
+        final elapsed = DateTime.now().difference(cached.lastResearchedAt!);
+        return elapsed > const Duration(minutes: 5);
+      }
+      return true; // No timestamp = stuck, allow retry
+    }
     if (cached.researchStatus == ResearchStatus.failed) {
       // Allow retry if last attempt was more than 1 hour ago
       if (cached.lastResearchedAt != null) {
@@ -124,9 +132,23 @@ class PoiCacheService {
     });
   }
 
-  /// Cancel pending timers. Call when the service is no longer needed.
-  void dispose() {
+  /// Flush pending writes and cancel timers. Call when the service is no longer needed.
+  Future<void> dispose() async {
     _saveTimer?.cancel();
     _saveTimer = null;
+    // Flush any pending data to disk immediately
+    if (!kIsWeb && _cache.isNotEmpty) {
+      try {
+        final path = await _cachePath;
+        final data = {
+          'version': 1,
+          'updated_at': DateTime.now().toIso8601String(),
+          'pois': _cache.map((k, v) => MapEntry(k, v.toJson())),
+        };
+        await File(path).writeAsString(jsonEncode(data));
+      } catch (e) {
+        debugPrint('[PoiCacheService] Failed to flush cache on dispose: $e');
+      }
+    }
   }
 }

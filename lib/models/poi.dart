@@ -10,6 +10,11 @@ class PoiSource {
       url: json['url'] as String? ?? '',
     );
   }
+
+  Map<String, dynamic> toJson() => {
+        'title': title,
+        'url': url,
+      };
 }
 
 class Poi {
@@ -70,8 +75,15 @@ class Poi {
       }
     }
 
+    // Restore OSM tags if present
+    Map<String, String>? osmTags;
+    final rawTags = json['osmTags'] as Map<String, dynamic>?;
+    if (rawTags != null) {
+      osmTags = rawTags.map((k, v) => MapEntry(k, v.toString()));
+    }
+
     return Poi(
-      id: json['id'] as String,
+      id: json['id'].toString(), // Handle both String and int IDs (OSM uses int)
       name: name,
       latitude: (json['latitude'] as num).toDouble(),
       longitude: (json['longitude'] as num).toDouble(),
@@ -81,10 +93,28 @@ class Poi {
       narrationText: narrationText,
       sources: sources,
       confidence: (json['confidence'] as String?) ?? 'high',
+      wikidataId: json['wikidataId'] as String? ?? json['wikidata_id'] as String?,
+      osmTags: osmTags,
     );
   }
 
+  Map<String, dynamic> toJson() => {
+        'id': id,
+        'name': name,
+        'latitude': latitude,
+        'longitude': longitude,
+        'trigger_radius_m': triggerRadius,
+        'short_description_uk': shortDescription,
+        'facts_uk': facts,
+        'narration_idea_uk': narrationText,
+        'sources': sources.map((s) => s.toJson()).toList(),
+        'confidence': confidence,
+        'wikidata_id': wikidataId,
+        'osm_tags': osmTags,
+      };
+
   Poi copyWith({
+    String? id,
     String? name,
     double? latitude,
     double? longitude,
@@ -98,7 +128,7 @@ class Poi {
     Map<String, String>? osmTags,
   }) {
     return Poi(
-      id: id,
+      id: id ?? this.id,
       name: name ?? this.name,
       latitude: latitude ?? this.latitude,
       longitude: longitude ?? this.longitude,

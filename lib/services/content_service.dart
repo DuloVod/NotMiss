@@ -9,21 +9,30 @@ class ContentService {
   /// Returns the narration text for [poi].
   ///
   /// If [aiText] is supplied (by AiService), it is used instead of the static text.
+  /// Returns empty string only if both aiText and static text are missing.
   String getNarration(Poi poi, {String? aiText}) {
-    return aiText ?? poi.narrationText;
+    // Treat empty AI text as null (don't let empty string bypass fallback)
+    if (aiText != null && aiText.trim().isNotEmpty) return aiText;
+    return poi.narrationText;
   }
 
   /// Builds the Ukrainian prompt string to send to the AI for generating narration.
   String buildAiPrompt(Poi poi) {
-    final factsList = poi.facts.map((f) => '- $f').join('\n');
     final desc = poi.shortDescription.isNotEmpty ? 'Опис: ${poi.shortDescription}' : '';
+    
+    // Build facts section only if there are actual facts
+    String factsSection = '';
+    if (poi.facts.isNotEmpty) {
+      final factsList = poi.facts.map((f) => '- $f').join('\n');
+      factsSection = 'Відомі факти:\n$factsList';
+    }
+    
     return '''
-Ти — захопливий, ерудований аудіогід для пішої прогулянки містом (Львів, Україна).
+Ти — захопливий, ерудований аудіогід для пішої прогулянки.
 
 Об'єкт: ${poi.name}
 $desc
-Відомі факти:
-${factsList.isNotEmpty ? factsList : 'Об\'єкт міського простору / архітектури'}
+${factsSection.isNotEmpty ? factsSection : 'Об\'єкт міського простору / архітектури'}
 
 Завдання:
 Створи яскраву розповідь аудіогіда на 30–45 секунд усного мовлення про це місце.

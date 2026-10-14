@@ -34,7 +34,7 @@ class PoiEngine {
 
   /// Returns all POIs that should trigger, sorted by distance (closest first).
   List<Poi> findAllTriggerablePois(List<Poi> pois, double lat, double lng) {
-    final results = <Map<String, dynamic>>[];
+    final results = <(double distance, Poi poi)>[];
 
     for (final poi in pois) {
       if (_triggeredPoiIds.contains(poi.id)) continue;
@@ -47,17 +47,22 @@ class PoiEngine {
       );
 
       if (distance < poi.triggerRadius) {
-        results.add({'poi': poi, 'distance': distance});
+        results.add((distance, poi));
       }
     }
 
-    results.sort((a, b) => (a['distance'] as double).compareTo(b['distance'] as double));
-    return results.map((m) => m['poi'] as Poi).toList();
+    results.sort((a, b) => a.$1.compareTo(b.$1));
+    return results.map((r) => r.$2).toList();
   }
 
   /// Mark a POI as triggered so it won't fire again this session.
   void markTriggered(String poiId) {
     _triggeredPoiIds.add(poiId);
+  }
+
+  /// Unmark a POI if processing or playback failed, so it can be retried later.
+  void unmarkTriggered(String poiId) {
+    _triggeredPoiIds.remove(poiId);
   }
 
   /// Distance in metres from [lat],[lng] to [poi].

@@ -1,6 +1,7 @@
 import 'dart:async';
+import 'dart:io' show Platform;
 import 'dart:math' show exp;
-import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:flutter/foundation.dart' show kIsWeb, debugPrint;
 import 'package:geolocator/geolocator.dart';
 
 /// Obtains GPS coordinates and exposes a stream of position updates.
@@ -14,19 +15,37 @@ class LocationService {
   /// Worst accuracy we accept. Positions with accuracy > this are discarded.
   static const double _maxAccuracyM = 40.0;
 
-
-  static LocationSettings get _settings => kIsWeb
-      ? const LocationSettings(
-          accuracy: LocationAccuracy.high,
-          distanceFilter: 0,
-        )
-      : AndroidSettings(
-          accuracy: LocationAccuracy.bestForNavigation,
-          distanceFilter: 0, // We apply accuracy gating ourselves
-          intervalDuration: const Duration(milliseconds: 500),
-          forceLocationManager: false,
-          // Request fresh GPS fix — don't accept a stale cached location
-        );
+  static LocationSettings get _settings {
+    if (kIsWeb) {
+      return const LocationSettings(
+        accuracy: LocationAccuracy.high,
+        distanceFilter: 0,
+      );
+    }
+    if (Platform.isAndroid) {
+      return AndroidSettings(
+        accuracy: LocationAccuracy.bestForNavigation,
+        distanceFilter: 0,
+        intervalDuration: const Duration(milliseconds: 500),
+        forceLocationManager: false,
+      );
+    }
+    if (Platform.isIOS || Platform.isMacOS) {
+      return AppleSettings(
+        accuracy: LocationAccuracy.bestForNavigation,
+        distanceFilter: 0,
+        activityType: ActivityType.fitness,
+        allowBackgroundLocationUpdates: true,
+        showBackgroundLocationIndicator: true,
+        pauseLocationUpdatesAutomatically: false,
+      );
+    }
+    // Fallback for other platforms
+    return const LocationSettings(
+      accuracy: LocationAccuracy.high,
+      distanceFilter: 0,
+    );
+  }
 
   StreamSubscription<Position>? _subscription;
   final StreamController<Position> _controller =
@@ -117,6 +136,8 @@ class LocationService {
 
       _lastPosition = pos;
       _controller.add(pos);
+    }, onError: (error) {
+      debugPrint('[LocationService] Stream error: $error');
     });
   }
 
@@ -127,6 +148,7 @@ class LocationService {
     // Reset smoothing state so the next walk starts fresh
     _smoothLat = null;
     _smoothLng = null;
+    _lastPosition = null;
   }
 
   void dispose() {

@@ -15,7 +15,7 @@ import 'tts_service_io.dart' if (dart.library.html) 'tts_service_web.dart'
 class TtsService {
   final String apiKey;
 
-  static const String _model = 'gemini-3.1-flash-tts-preview';
+  static const String _model = 'gemini-2.5-flash-preview-tts';
 
   // Correct REST endpoint — models.generateContent, NOT /interactions
   static const String _baseUrl =
@@ -123,6 +123,10 @@ class TtsService {
     int channels = 1,
     int bitsPerSample = 16,
   }) {
+    // Ensure even length for 16-bit PCM (2 bytes per sample)
+    if (pcm.length.isOdd) {
+      pcm = pcm.sublist(0, pcm.length - 1);
+    }
     final byteRate = sampleRate * channels * (bitsPerSample ~/ 8);
     final blockAlign = channels * (bitsPerSample ~/ 8);
     final dataLength = pcm.length;

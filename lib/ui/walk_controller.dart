@@ -48,6 +48,7 @@ class WalkController extends ChangeNotifier {
   Poi? _activePoi;
   String? _statusMessage;
   bool _isProcessing = false; // prevents concurrent POI processing
+  bool _disposed = false;
 
   StreamSubscription<Position>? _positionSub;
   StreamSubscription? _playerStateSub;
@@ -183,9 +184,13 @@ class WalkController extends ChangeNotifier {
     }
 
     final gen = ++_manualPlayGen;
+    _processGen++; // Invalidate any running automated POI processing
+    await _audioService.stop();
+
     final updated = getUpdatedPoi(poi);
     _activePoi = updated;
     _statusMessage = '📍 ${updated.name} — підготовка розповіді…';
+    _isProcessing = true;
     notifyListeners();
 
     try {
@@ -210,6 +215,7 @@ class WalkController extends ChangeNotifier {
       debugPrint('[WalkController] Play narration error: $e');
     } finally {
       if (gen == _manualPlayGen && _activePoi?.id == updated.id) {
+        _isProcessing = false;
         _activePoi = null;
         if (_status == WalkStatus.walking) {
           _statusMessage = 'Прогулянка — слухаю (${_proximityEvents.length} зафіксовано)';
@@ -279,6 +285,7 @@ class WalkController extends ChangeNotifier {
   void Function(ProximityEvent event)? onProximityEvent;
 
   Future<void> startWalk() async {
+    if (_status == WalkStatus.walking) return;
     final granted = await _locationService.requestPermission();
     if (!granted) {
       _statusMessage = 'Location permission required to start a walk.';
@@ -356,8 +363,8 @@ class WalkController extends ChangeNotifier {
       _allPois.addAll(deduped);
       _osmLoaded = true;
 
-      // Queue the merged POIs for background research (Wikidata, Wikipedia)
-      _researchService.processDiscoveredPois(_allPois);
+      // Queue only the NEW POIs for background research (Wikidata, Wikipedia)
+      _researchService.processDiscoveredPois(deduped);
 
       if (_status == WalkStatus.walking) {
         _statusMessage =
@@ -380,6 +387,8 @@ class WalkController extends ChangeNotifier {
   }
 
   void stopWalk() {
+    _processGen++;
+    _manualPlayGen++;
     _uiTimer?.cancel();
     _uiTimer = null;
     _positionSub?.cancel();
@@ -403,9 +412,9 @@ class WalkController extends ChangeNotifier {
   Future<void> _onPosition(Position pos) async {
     _currentPosition = pos;
 
-    // Dynamically reload OSM POIs if user has moved significantly
-    if (!_isOsmLoading && _overpassService.shouldReload(pos.latitude, pos.longitude)) {
-      debugPrint('[WalkController] Reloading OSM POIs...');
+    // Dynamically reload OSM POIs if user has moved significantly or if initial load timed out
+    if (!_isOsmLoading && (!_osmLoaded || _overpassService.shouldReload(pos.latitude, pos.longitude))) {
+      debugPrint('[WalkController] Loading/reloading OSM POIs...');
       _loadOsmPoisAsync();
     }
     // Завчасно піднімаємо пріоритет для точок, до яких наближається користувач (150 метрів)
@@ -443,6 +452,7 @@ class WalkController extends ChangeNotifier {
   }
 
   void switchToPoi(Poi poi) {
+    if (_status != WalkStatus.walking) return;
     _audioService.stop(); // Зупиняємо поточне аудіо
     if (_currentPosition != null) {
       _processPoi(poi, _currentPosition!);
@@ -524,6 +534,7 @@ class WalkController extends ChangeNotifier {
       );
     } catch (e) {
       if (gen == _processGen) {
+        _poiEngine.unmarkTriggered(poi.id); // Allow retry later if transient error occurred
         _statusMessage = '⚠️ Помилка озвучення ${activePoi.name}: $e';
         notifyListeners();
         BackgroundService.updateNotification(
@@ -540,10 +551,9 @@ class WalkController extends ChangeNotifier {
         }
         notifyListeners();
         
-        // Якщо після завершення ми все ще поруч з іншими точками — запустимо наступну.
-        // Використовуємо microtask, щоб не вкладати виклик у поточний стек.
-        Future.microtask(() {
-          if (_currentPosition != null && _status == WalkStatus.walking) {
+        // Natural 2-second pause before checking for the next triggerable POI
+        Future.delayed(const Duration(seconds: 2), () {
+          if (!_disposed && _currentPosition != null && _status == WalkStatus.walking && !_isProcessing) {
             _onPosition(_currentPosition!);
           }
         });
@@ -552,7 +562,15 @@ class WalkController extends ChangeNotifier {
   }
 
   @override
+  void notifyListeners() {
+    if (_disposed) return;
+    super.notifyListeners();
+  }
+
+  @override
   void dispose() {
+    _disposed = true;
+    _uiTimer?.cancel();
     _playerStateSub?.cancel();
     _positionSub?.cancel();
     _locationService.dispose();

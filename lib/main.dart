@@ -27,14 +27,7 @@ Future<void> main() async {
     final jsonStr =
         await rootBundle.loadString('assets/data/stryiskyi_park.json');
     final parsed = jsonDecode(jsonStr) as Map<String, dynamic>;
-    destination = Destination(
-      id: parsed['id'] as String,
-      name: parsed['name'] as String,
-      centerLatitude: (parsed['center_latitude'] as num).toDouble(),
-      centerLongitude: (parsed['center_longitude'] as num).toDouble(),
-      defaultZoom: (parsed['default_zoom'] as num? ?? 16).toDouble(),
-      pois: [], // Тимчасово відключено старі точки (json_pois)
-    );
+    destination = Destination.fromJson(parsed);
   } catch (e) {
     loadError = 'Помилка завантаження даних парку:\n$e';
   }
@@ -51,7 +44,9 @@ Future<void> main() async {
   ));
 }
 
-class NotMissApp extends StatelessWidget {
+/// Root widget. Uses StatefulWidget to ensure WalkController is created once
+/// and survives rebuilds (MediaQuery changes, keyboard, rotation, etc.).
+class NotMissApp extends StatefulWidget {
   final Destination? destination;
   final String apiKey;
   final String? loadError;
@@ -62,6 +57,30 @@ class NotMissApp extends StatelessWidget {
     required this.apiKey,
     this.loadError,
   });
+
+  @override
+  State<NotMissApp> createState() => _NotMissAppState();
+}
+
+class _NotMissAppState extends State<NotMissApp> {
+  WalkController? _controller;
+
+  @override
+  void initState() {
+    super.initState();
+    if (widget.destination != null && widget.loadError == null) {
+      _controller = WalkController(
+        destination: widget.destination!,
+        apiKey: widget.apiKey,
+      );
+    }
+  }
+
+  @override
+  void dispose() {
+    _controller?.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -75,14 +94,9 @@ class NotMissApp extends StatelessWidget {
         ),
         useMaterial3: true,
       ),
-      home: loadError != null || destination == null
-          ? _ErrorScreen(message: loadError ?? 'Дані парку не завантажились.')
-          : MainScreen(
-              controller: WalkController(
-                destination: destination!,
-                apiKey: apiKey,
-              ),
-            ),
+      home: _controller == null
+          ? _ErrorScreen(message: widget.loadError ?? 'Дані парку не завантажились.')
+          : MainScreen(controller: _controller!),
     );
   }
 }

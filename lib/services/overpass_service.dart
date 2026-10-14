@@ -93,7 +93,8 @@ class OverpassService {
         debugPrint('[OverpassService] Rate limited, using cache');
         if (_cachedPois != null) return _cachedPois!;
         if (diskPois != null) return diskPois;
-        throw Exception('Rate limited and no cache available');
+        debugPrint('[OverpassService] Rate limited and no cache available, returning empty list');
+        return [];
       }
     }
 
@@ -115,7 +116,7 @@ class OverpassService {
       // Fall back to any existing cache
       if (_cachedPois != null) return _cachedPois!;
       if (diskPois != null) return diskPois;
-      rethrow;
+      return []; // Return empty list rather than crashing on network outage
     }
   }
 
@@ -125,7 +126,7 @@ class OverpassService {
     final bodyStr = 'data=${Uri.encodeComponent(query)}';
     final headers = {
       'Content-Type': 'application/x-www-form-urlencoded',
-      'User-Agent': 'NotMiss/0.3.0 (vladislavvasilcenko7@gmail.com)',
+      'User-Agent': 'NotMiss/0.3.0 (walking tour guide app)',
     };
 
     // Prioritize the server that succeeded last time
@@ -147,7 +148,7 @@ class OverpassService {
               headers: headers,
               body: bodyStr,
             )
-            .timeout(const Duration(seconds: 8)); // 8s timeout for snappy failover
+            .timeout(const Duration(seconds: 12)); // 12s timeout for Overpass 10s query
 
         if (response.statusCode == 200) {
           final json = jsonDecode(response.body) as Map<String, dynamic>;
@@ -159,10 +160,12 @@ class OverpassService {
           final err = 'HTTP ${response.statusCode}: ${response.reasonPhrase}';
           debugPrint('[OverpassService] Endpoint failed ($endpoint): $err');
           errors.add('$endpoint: $err');
+          if (endpoint == _preferredEndpoint) _preferredEndpoint = null;
         }
       } catch (e) {
         debugPrint('[OverpassService] Endpoint error ($endpoint): $e');
         errors.add('$endpoint: $e');
+        if (endpoint == _preferredEndpoint) _preferredEndpoint = null;
       }
     }
 
@@ -306,7 +309,7 @@ out center;
         'center_lat': lat,
         'center_lng': lng,
         'timestamp': DateTime.now().toIso8601String(),
-        'pois': pois.map((p) => {
+        'pois': pois.map((p) => <String, dynamic>{
           'id': p.id,
           'name': p.name,
           'latitude': p.latitude,
@@ -316,7 +319,7 @@ out center;
           'confidence': p.confidence,
           'wikidataId': p.wikidataId,
           'osmTags': p.osmTags,
-          'sources': p.sources.map((s) => {
+          'sources': p.sources.map((s) => <String, dynamic>{
             'title': s.title,
             'url': s.url,
           }).toList(),

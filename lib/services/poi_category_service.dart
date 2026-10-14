@@ -51,14 +51,17 @@ class PoiCategoryService {
   /// Determine research priority based on tags and category.
   ResearchPriority determinePriority(Map<String, String> tags, String category) {
     // HIGH: objects with wikidata ID, historic landmarks, major attractions
-    if (tags.containsKey('wikidata')) return ResearchPriority.high;
-    if (tags.containsKey('wikipedia')) return ResearchPriority.high;
+    final wikidata = tags['wikidata'];
+    if (wikidata != null && wikidata.isNotEmpty) return ResearchPriority.high;
+    final wikipedia = tags['wikipedia'];
+    if (wikipedia != null && wikipedia.isNotEmpty) return ResearchPriority.high;
     if (category == historicalBuilding) return ResearchPriority.high;
     if (tags['tourism'] == 'attraction') return ResearchPriority.high;
     if (tags['historic'] == 'castle' ||
         tags['historic'] == 'palace' ||
         tags['historic'] == 'monument') return ResearchPriority.high;
-    if (tags['heritage'] != null) return ResearchPriority.high;
+    final heritage = tags['heritage'];
+    if (heritage != null && heritage.isNotEmpty && heritage != 'no') return ResearchPriority.high;
 
     // MEDIUM: sculptures, viewpoints, named features
     if (category == sculptureMemorial) return ResearchPriority.medium;
@@ -91,11 +94,12 @@ class PoiCategoryService {
     const historicBuildings = {
       'castle', 'palace', 'manor', 'fort', 'city_gate',
       'ruins', 'archaeological_site', 'building', 'tower',
-      'church', 'monastery', 'convent', 'cathedral',
+      'church', 'monastery', 'convent', 'cathedral', 'yes',
     };
     if (historic != null && historicBuildings.contains(historic)) return true;
     if (tourism == 'museum') return true;
-    if (amenity == 'place_of_worship' && building != null) return true;
+    // place_of_worship can be a node without building tag
+    if (amenity == 'place_of_worship') return true;
     const historicBuilding = {
       'church', 'cathedral', 'synagogue', 'mosque', 'castle',
       'palace', 'manor',
@@ -121,8 +125,9 @@ class PoiCategoryService {
       String? amenity, String? tourism, String? manMade,
       Map<String, String> tags) {
     if (amenity == 'fountain') return true;
+    if (tags['historic'] == 'fountain') return true;
     if (tourism == 'viewpoint') return true;
-    if (manMade == 'tower' && tourism == 'viewpoint') return true;
+    if (manMade == 'tower') return true; // observation towers
     if (tags['building'] == 'gazebo') return true;
     if (tags['leisure'] == 'bandstand') return true;
     return false;

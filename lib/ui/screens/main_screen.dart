@@ -29,9 +29,9 @@ class _MainScreenState extends State<MainScreen> {
   void initState() {
     super.initState();
     widget.controller.addListener(_update);
-    // Start walk automatically on load
+    // Start walk automatically on first load only (not after user stopped)
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (widget.controller.status == WalkStatus.idle || widget.controller.status == WalkStatus.stopped) {
+      if (widget.controller.status == WalkStatus.idle) {
         widget.controller.startWalk();
       }
     });
@@ -58,7 +58,11 @@ class _MainScreenState extends State<MainScreen> {
               ) >
               2) {
         _lastPos = newLatLng;
-        _mapController.move(newLatLng, _mapController.camera.zoom);
+        double zoom = widget.controller.destination.defaultZoom;
+        try {
+          zoom = _mapController.camera.zoom;
+        } catch (_) {}
+        _mapController.move(newLatLng, zoom);
       }
     }
     setState(() {});
@@ -160,7 +164,7 @@ class _MainScreenState extends State<MainScreen> {
 
           // ── Map Controls (Compass & Locate Me) ───────────────────────────
           Positioned(
-            bottom: 280, // Safe distance to avoid overlapping large active POI cards
+            bottom: widget.controller.activePoi != null ? 310 : 170,
             right: 16,
             child: Column(
               mainAxisSize: MainAxisSize.min,
@@ -169,7 +173,10 @@ class _MainScreenState extends State<MainScreen> {
                 StreamBuilder<MapEvent>(
                   stream: _mapController.mapEventStream,
                   builder: (ctx, snap) {
-                    final rotation = _mapController.camera.rotation;
+                    double rotation = 0.0;
+                    try {
+                      rotation = _mapController.camera.rotation;
+                    } catch (_) {}
                     if (rotation == 0.0) return const SizedBox.shrink();
                     return Padding(
                       padding: const EdgeInsets.only(bottom: 12.0),
@@ -1269,6 +1276,9 @@ class _AiChatSheetState extends State<_AiChatSheet> {
 
   @override
   void dispose() {
+    if (_currentlySpeakingText != null) {
+      widget.controller.stopAudio();
+    }
     _textController.dispose();
     _scrollController.dispose();
     super.dispose();
@@ -1349,11 +1359,14 @@ class _AiChatSheetState extends State<_AiChatSheet> {
   Widget build(BuildContext context) {
     final bottomInset = MediaQuery.of(context).viewInsets.bottom;
     final screenHeight = MediaQuery.of(context).size.height;
+    final modalHeight = (screenHeight * 0.85)
+        .clamp(280.0, math.max(280.0, screenHeight - bottomInset - 40))
+        .toDouble();
 
     return Padding(
       padding: EdgeInsets.only(bottom: bottomInset),
       child: Container(
-        height: screenHeight * 0.85,
+        height: modalHeight,
         decoration: const BoxDecoration(
           color: Colors.white,
           borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
