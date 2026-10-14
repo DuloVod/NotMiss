@@ -162,56 +162,7 @@ class _MainScreenState extends State<MainScreen> {
               ),
             ),
 
-          // ── Map Controls (Compass & Locate Me) ───────────────────────────
-          Positioned(
-            bottom: widget.controller.activePoi != null ? 310 : 170,
-            right: 16,
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                // Compass reset (only shows if map is rotated)
-                StreamBuilder<MapEvent>(
-                  stream: _mapController.mapEventStream,
-                  builder: (ctx, snap) {
-                    double rotation = 0.0;
-                    try {
-                      rotation = _mapController.camera.rotation;
-                    } catch (_) {}
-                    if (rotation == 0.0) return const SizedBox.shrink();
-                    return Padding(
-                      padding: const EdgeInsets.only(bottom: 12.0),
-                      child: FloatingActionButton(
-                        heroTag: 'walkResetNorth',
-                        backgroundColor: Colors.white,
-                        elevation: 4,
-                        onPressed: () => _mapController.rotate(0),
-                        child: Transform.rotate(
-                          angle: -rotation * (3.14159 / 180),
-                          child: const Icon(Icons.explore, color: Colors.red, size: 28),
-                        ),
-                      ),
-                    );
-                  },
-                ),
-                // Locate User Button
-                FloatingActionButton(
-                  heroTag: 'walkLocateMe',
-                  backgroundColor: Colors.white,
-                  elevation: 4,
-                  onPressed: _locateMe,
-                  child: Icon(
-                    pos != null && _followUser
-                        ? Icons.my_location
-                        : Icons.location_searching,
-                    color: _followUser ? Colors.blue : Colors.grey.shade600,
-                    size: 28,
-                  ),
-                ),
-              ],
-            ),
-          ),
-
-          // ── Walk HUD bottom panel ────────────────────────────────────────
+          // ── Map Controls & Walk HUD bottom panel ────────────────────────
           Positioned(
             bottom: 0,
             left: 0,
@@ -222,8 +173,60 @@ class _MainScreenState extends State<MainScreen> {
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
+                  // Floating controls anchored directly above the card
+                  Padding(
+                    padding: const EdgeInsets.only(right: 16, bottom: 12),
+                    child: Align(
+                      alignment: Alignment.centerRight,
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          // Compass reset (only shows if map is rotated)
+                          StreamBuilder<MapEvent>(
+                            stream: _mapController.mapEventStream,
+                            builder: (ctx, snap) {
+                              double rotation = 0.0;
+                              try {
+                                rotation = _mapController.camera.rotation;
+                              } catch (_) {}
+                              if (rotation == 0.0) return const SizedBox.shrink();
+                              return Padding(
+                                padding: const EdgeInsets.only(bottom: 12.0),
+                                child: FloatingActionButton(
+                                  heroTag: 'walkResetNorth',
+                                  backgroundColor: Colors.white,
+                                  elevation: 4,
+                                  onPressed: () => _mapController.rotate(0),
+                                  child: Transform.rotate(
+                                    angle: -rotation * (3.14159 / 180),
+                                    child: const Icon(Icons.explore, color: Colors.red, size: 28),
+                                  ),
+                                ),
+                              );
+                            },
+                          ),
+                          // Locate User Button
+                          FloatingActionButton(
+                            heroTag: 'walkLocateMe',
+                            backgroundColor: Colors.white,
+                            elevation: 4,
+                            onPressed: _locateMe,
+                            child: Icon(
+                              pos != null && _followUser
+                                  ? Icons.my_location
+                                  : Icons.location_searching,
+                              color: _followUser ? Colors.blue : Colors.grey.shade600,
+                              size: 28,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+
+                  // Bottom card
                   Container(
-                    margin: const EdgeInsets.all(16),
+                    margin: const EdgeInsets.fromLTRB(16, 0, 16, 16),
                     decoration: BoxDecoration(
                       color: Colors.white,
                       borderRadius: BorderRadius.circular(24),
