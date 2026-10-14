@@ -1072,6 +1072,67 @@ class _PoiDetailsSheetState extends State<_PoiDetailsSheet> {
                               ],
                             ),
                           ),
+                        ] else if (!isProcessing) ...[
+                          Container(
+                            margin: const EdgeInsets.only(bottom: 18),
+                            padding: const EdgeInsets.all(16),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFFF1F8E9),
+                              borderRadius: BorderRadius.circular(16),
+                              border: Border.all(color: const Color(0xFFA5D6A7)),
+                            ),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                const Row(
+                                  children: [
+                                    Icon(Icons.headphones, color: Color(0xFF2E7D32), size: 22),
+                                    SizedBox(width: 8),
+                                    Text(
+                                      'Аудіогід від ШІ:',
+                                      style: TextStyle(
+                                        fontSize: 16,
+                                        fontWeight: FontWeight.bold,
+                                        color: Color(0xFF1B5E20),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                                const SizedBox(height: 8),
+                                const Text(
+                                  'ШІ може озвучити розповідь про це місце для вас прямо зараз.',
+                                  style: TextStyle(fontSize: 14, color: Color(0xFF1B3B1B)),
+                                ),
+                                const SizedBox(height: 12),
+                                SizedBox(
+                                  width: double.infinity,
+                                  child: ElevatedButton.icon(
+                                    onPressed: widget.controller.isAudioActive
+                                        ? null
+                                        : () {
+                                            widget.controller.playNarrationForPoi(widget.poi);
+                                          },
+                                    icon: const Icon(Icons.volume_up, size: 20),
+                                    label: const Text(
+                                      'Прослухати розповідь ШІ',
+                                      style: TextStyle(
+                                        fontWeight: FontWeight.bold,
+                                        fontSize: 15,
+                                      ),
+                                    ),
+                                    style: ElevatedButton.styleFrom(
+                                      backgroundColor: const Color(0xFF2E7D32),
+                                      foregroundColor: Colors.white,
+                                      padding: const EdgeInsets.symmetric(vertical: 12),
+                                      shape: RoundedRectangleBorder(
+                                        borderRadius: BorderRadius.circular(12),
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
                         ],
 
                         // 🏛 Description Section
@@ -1138,9 +1199,50 @@ class _PoiDetailsSheetState extends State<_PoiDetailsSheet> {
 
                         // Fallback message if no data at all yet
                         if (!isProcessing && narration.isEmpty && description.isEmpty && facts.isEmpty) ...[
-                          Text(
-                            'Цей об\'єкт щойно знайдено на мапі. Детальні історичні відомості відсутні, проте ШІ озвучить розповідь при наближенні.',
-                            style: TextStyle(fontSize: 15, color: Colors.grey.shade700),
+                          Container(
+                            padding: const EdgeInsets.all(14),
+                            decoration: BoxDecoration(
+                              color: Colors.grey.shade50,
+                              borderRadius: BorderRadius.circular(14),
+                              border: Border.all(color: Colors.grey.shade300),
+                            ),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Row(
+                                  children: [
+                                    Icon(Icons.info_outline, size: 20, color: Colors.grey.shade700),
+                                    const SizedBox(width: 8),
+                                    Expanded(
+                                      child: Text(
+                                        'Цей об\'єкт знайдено на карті',
+                                        style: TextStyle(
+                                          fontSize: 15,
+                                          fontWeight: FontWeight.bold,
+                                          color: Colors.grey.shade800,
+                                        ),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                                const SizedBox(height: 6),
+                                Text(
+                                  'У відкритих реєстрах стаття відсутня, проте ШІ може підготувати опис та розповідь прямо зараз.',
+                                  style: TextStyle(fontSize: 14, color: Colors.grey.shade600, height: 1.35),
+                                ),
+                                const SizedBox(height: 12),
+                                OutlinedButton.icon(
+                                  onPressed: () {
+                                    setState(() => _isRequesting = true);
+                                    widget.controller.researchPoiNow(widget.poi).whenComplete(() {
+                                      if (mounted) setState(() => _isRequesting = false);
+                                    });
+                                  },
+                                  icon: const Icon(Icons.auto_awesome, size: 18),
+                                  label: const Text('Згенерувати опис ШІ зараз'),
+                                ),
+                              ],
+                            ),
                           ),
                           const SizedBox(height: 16),
                         ],

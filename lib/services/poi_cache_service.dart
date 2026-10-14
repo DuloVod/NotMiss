@@ -88,6 +88,13 @@ class PoiCacheService {
       }
       return true;
     }
+    if (cached.researchStatus == ResearchStatus.insufficientInformation) {
+      if (cached.lastResearchedAt != null) {
+        final elapsed = DateTime.now().difference(cached.lastResearchedAt!);
+        return elapsed > const Duration(hours: 1);
+      }
+      return false;
+    }
     return false;
   }
 

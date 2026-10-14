@@ -323,6 +323,20 @@ class ResearchService {
     }
   }
 
+  /// Update narration text for a POI directly and notify listeners.
+  Future<void> updateNarration(String poiId, String narration) async {
+    final enriched = _cacheService.get(poiId);
+    if (enriched != null) {
+      final updated = enriched.copyWith(
+        narrationText: narration,
+        researchStatus: ResearchStatus.complete,
+        lastResearchedAt: DateTime.now(),
+      );
+      await _cacheService.put(updated);
+      onPoiUpdated?.call(updated);
+    }
+  }
+
   String _truncate(String text, int maxLength) {
     if (text.length <= maxLength) return text;
     return '${text.substring(0, maxLength)}...';

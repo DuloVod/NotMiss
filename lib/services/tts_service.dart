@@ -15,11 +15,14 @@ import 'tts_service_io.dart' if (dart.library.html) 'tts_service_web.dart'
 class TtsService {
   final String apiKey;
 
-  static const String _model = 'gemini-2.5-flash-preview-tts';
+  static const List<String> _models = [
+    'gemini-3.8-flash-lite-tts',
+    'gemini-3.8-flash-tts',
+    'gemini-3.1-flash-tts-preview',
+  ];
 
-  // Correct REST endpoint — models.generateContent, NOT /interactions
-  static const String _baseUrl =
-      'https://generativelanguage.googleapis.com/v1beta/models/$_model:generateContent';
+  static String _endpoint(String model) =>
+      'https://generativelanguage.googleapis.com/v1beta/models/$model:generateContent';
 
   // A warm, clear voice suitable for an audio guide
   static const String _voice = 'Kore';
@@ -35,62 +38,71 @@ class TtsService {
       throw Exception('Gemini API key not set — TTS unavailable.');
     }
 
-    final response = await http
-        .post(
-          Uri.parse(_baseUrl),
-          headers: {
-            'Content-Type': 'application/json',
-            'x-goog-api-key': apiKey,
-          },
-          body: jsonEncode({
-            'contents': [
-              {
-                'parts': [
-                  {'text': text}
-                ]
-              }
-            ],
-            'generationConfig': {
-              'responseModalities': ['AUDIO'],
-              'speechConfig': {
-                'voiceConfig': {
-                  'prebuiltVoiceConfig': {
-                    'voiceName': _voice,
+    http.Response? lastResponse;
+    String? lastError;
+
+    for (final model in _models) {
+      try {
+        final response = await http
+            .post(
+              Uri.parse(_endpoint(model)),
+              headers: {
+                'Content-Type': 'application/json',
+                'x-goog-api-key': apiKey,
+              },
+              body: jsonEncode({
+                'contents': [
+                  {
+                    'parts': [
+                      {'text': text}
+                    ]
                   }
-                }
-              }
-            },
-          }),
-        )
-        .timeout(const Duration(seconds: 60));
+                ],
+                'generationConfig': {
+                  'responseModalities': ['AUDIO'],
+                  'speechConfig': {
+                    'voiceConfig': {
+                      'prebuiltVoiceConfig': {
+                        'voiceName': _voice,
+                      }
+                    }
+                  }
+                },
+              }),
+            )
+            .timeout(const Duration(seconds: 40));
 
-    if (response.statusCode != 200) {
+        lastResponse = response;
+        if (response.statusCode == 200) {
+          final json = jsonDecode(response.body) as Map<String, dynamic>;
+          final audioBase64 = _extractAudio(json);
+
+          if (audioBase64 == null || audioBase64.isEmpty) {
+            continue;
+          }
+
+          final pcmBytes = base64Decode(audioBase64);
+          final wavBytes = _wrapPcmInWav(pcmBytes);
+
+          if (kIsWeb) {
+            final base64Wav = base64Encode(wavBytes);
+            return 'data:audio/wav;base64,$base64Wav';
+          } else {
+            return await platform.saveTempWav(wavBytes, poiId);
+          }
+        } else {
+          lastError = 'TTS API error with $model ${response.statusCode}: ${response.body}';
+        }
+      } catch (e) {
+        lastError = 'TTS exception with $model: $e';
+      }
+    }
+
+    if (lastResponse != null) {
       throw Exception(
-          'TTS API error ${response.statusCode}: ${response.body}');
+          'TTS API error ${lastResponse.statusCode}: ${lastResponse.body}');
     }
-
-    final json = jsonDecode(response.body) as Map<String, dynamic>;
-    final audioBase64 = _extractAudio(json);
-
-    if (audioBase64 == null || audioBase64.isEmpty) {
-      final preview = response.body.length > 300
-          ? response.body.substring(0, 300)
-          : response.body;
-      throw Exception(
-          'No audio data in TTS response. Body: $preview');
-    }
-
-    final pcmBytes = base64Decode(audioBase64);
-    final wavBytes = _wrapPcmInWav(pcmBytes);
-
-    if (kIsWeb) {
-      // On web: return a data URI — no file system available
-      final base64Wav = base64Encode(wavBytes);
-      return 'data:audio/wav;base64,$base64Wav';
-    } else {
-      // On native: save to temp file
-      return platform.saveTempWav(wavBytes, poiId);
-    }
+    throw Exception(lastError ?? 'TTS synthesis failed.');
   }
 
   String? _extractAudio(Map<String, dynamic> json) {

@@ -197,6 +197,9 @@ class WalkController extends ChangeNotifier {
       String narration = updated.narrationText;
       if (narration.isEmpty) {
         narration = await _aiService.generateNarration(updated);
+        if (narration.isNotEmpty) {
+          await _researchService.updateNarration(updated.id, narration);
+        }
         if (gen != _manualPlayGen) return;
       }
 
