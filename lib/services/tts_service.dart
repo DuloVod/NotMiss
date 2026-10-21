@@ -1,6 +1,6 @@
 import 'dart:convert';
 import 'dart:typed_data';
-import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:flutter/foundation.dart' show debugPrint, kIsWeb;
 import 'package:http/http.dart' as http;
 
 
@@ -16,8 +16,9 @@ class TtsService {
   final String apiKey;
 
   static const List<String> _models = [
+    'gemini-3.8-flash-lite-tts',
+    'gemini-3.8-flash-tts',
     'gemini-2.5-flash-preview-tts',
-    'gemini-2.0-flash',
   ];
 
   static String _endpoint(String model) =>
