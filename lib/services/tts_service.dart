@@ -33,6 +33,15 @@ class TtsService {
   /// Returns a data URI on web (for use with AudioPlayer.setUrl),
   /// or a file path on native (for use with AudioPlayer.setFilePath).
   Future<String> synthesize(String text, String poiId) async {
+    // Check disk cache first to avoid redundant API calls and enable offline / instant playback
+    if (!kIsWeb) {
+      final cached = await platform.getCachedTempWav(poiId);
+      if (cached != null) {
+        debugPrint('[TtsService] Using cached audio for $poiId: $cached');
+        return cached;
+      }
+    }
+
     if (apiKey.isEmpty || apiKey == 'your_key_here') {
       throw Exception('Gemini API key not set — TTS unavailable.');
     }

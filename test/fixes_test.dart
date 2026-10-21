@@ -332,5 +332,34 @@ void main() {
       expect(updated.narrationText, 'Updated narration');
       expect(updated.facts.length, 1);
     });
+
+    test('Stryiskyi park destination contains 15 curated points with 35m radius', () {
+      final jsonPois = List.generate(
+        15,
+        (i) => {
+          'id': 'sp_${i + 1}',
+          'name_uk': 'Point $i',
+          'latitude': 49.82 + i * 0.001,
+          'longitude': 24.02 + i * 0.001,
+          'trigger_radius_m': 35,
+          'short_description_uk': 'Desc',
+          'facts_uk': ['Fact'],
+          'narration_idea_uk': 'Narration idea',
+        },
+      );
+      final dest = Destination.fromJson({
+        'id': 'stryiskyi_park',
+        'name': 'Стрийський парк',
+        'center_latitude': 49.8228,
+        'center_longitude': 24.0264,
+        'pois': jsonPois,
+      });
+
+      expect(dest.pois.length, 15);
+      for (final p in dest.pois) {
+        expect(p.triggerRadius, 35.0);
+        expect(p.narrationText.isNotEmpty, true);
+      }
+    });
   });
 }

@@ -12,3 +12,18 @@ Future<String> saveTempWav(Uint8List wavBytes, String poiId) async {
   await file.writeAsBytes(wavBytes);
   return file.path;
 }
+
+/// Check if a cached WAV file already exists on disk for this [poiId].
+/// Returns the file path if valid (> 1000 bytes), otherwise null.
+Future<String?> getCachedTempWav(String poiId) async {
+  try {
+    final dir = await getTemporaryDirectory();
+    final safeId = poiId.replaceAll(RegExp(r'[/\\:*?"<>|]'), '_');
+    final file = File('${dir.path}/narration_$safeId.wav');
+    if (await file.exists()) {
+      final len = await file.length();
+      if (len > 1000) return file.path;
+    }
+  } catch (_) {}
+  return null;
+}

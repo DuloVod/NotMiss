@@ -123,10 +123,64 @@ class _MainScreenState extends State<MainScreen> {
             ],
           ),
 
+          // ── Stryiskyi Park Testing / Activation Button ──────────────
+          Positioned(
+            top: MediaQuery.of(context).padding.top + 16,
+            right: 16,
+            child: Material(
+              elevation: 4,
+              borderRadius: BorderRadius.circular(20),
+              color: Colors.white,
+              child: InkWell(
+                borderRadius: BorderRadius.circular(20),
+                onTap: () => _showStryiskyiParkTestDialog(context),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(20),
+                    border: Border.all(
+                      color: widget.controller.isSimulating
+                          ? Colors.orange.shade800
+                          : const Color(0xFF2E7D32),
+                      width: 1.5,
+                    ),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(
+                        widget.controller.isSimulating
+                            ? Icons.play_circle_fill
+                            : Icons.park_rounded,
+                        color: widget.controller.isSimulating
+                            ? Colors.orange.shade800
+                            : const Color(0xFF2E7D32),
+                        size: 20,
+                      ),
+                      const SizedBox(width: 6),
+                      Text(
+                        widget.controller.isSimulating
+                            ? 'Симуляція...'
+                            : 'Стрийський парк (тест)',
+                        style: TextStyle(
+                          fontSize: 13,
+                          fontWeight: FontWeight.bold,
+                          color: widget.controller.isSimulating
+                              ? Colors.orange.shade900
+                              : const Color(0xFF1B5E20),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
+
           // ── Status/Error Message Banner ─────────────────────────
           if (widget.controller.statusMessage != null && widget.controller.status != WalkStatus.walking)
             Positioned(
-              top: MediaQuery.of(context).padding.top + 16,
+              top: MediaQuery.of(context).padding.top + 68,
               left: 16,
               right: 16,
               child: Container(
@@ -659,6 +713,132 @@ class _MainScreenState extends State<MainScreen> {
           ],
         ],
       ),
+    );
+  }
+
+  void _showStryiskyiParkTestDialog(BuildContext context) {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) {
+        return Container(
+          padding: const EdgeInsets.fromLTRB(24, 16, 24, 28),
+          decoration: const BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Center(
+                child: Container(
+                  width: 40,
+                  height: 4,
+                  margin: const EdgeInsets.only(bottom: 16),
+                  decoration: BoxDecoration(
+                    color: Colors.grey.shade300,
+                    borderRadius: BorderRadius.circular(2),
+                  ),
+                ),
+              ),
+              Row(
+                children: [
+                  Container(
+                    padding: const EdgeInsets.all(10),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF2E7D32).withValues(alpha: 0.1),
+                      shape: BoxShape.circle,
+                    ),
+                    child: const Icon(Icons.park, color: Color(0xFF2E7D32), size: 28),
+                  ),
+                  const SizedBox(width: 14),
+                  const Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'Стрийський парк',
+                          style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+                        ),
+                        SizedBox(height: 2),
+                        Text(
+                          '15 авторських точок з розповідями',
+                          style: TextStyle(fontSize: 13, color: Colors.black54),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 20),
+              // Option 1: Move map to park
+              ListTile(
+                contentPadding: EdgeInsets.zero,
+                leading: const CircleAvatar(
+                  backgroundColor: Color(0xFFE8F5E9),
+                  child: Icon(Icons.map, color: Color(0xFF2E7D32)),
+                ),
+                title: const Text('Показати парк на карті', style: TextStyle(fontWeight: FontWeight.w600)),
+                subtitle: const Text('Центрувати карту на парку (49.8228, 24.0264)'),
+                onTap: () {
+                  Navigator.pop(ctx);
+                  _mapController.move(
+                    LatLng(widget.controller.destination.centerLatitude, widget.controller.destination.centerLongitude),
+                    16.0,
+                  );
+                },
+              ),
+              const Divider(height: 16),
+              // Option 2: Reset / enable points
+              ListTile(
+                contentPadding: EdgeInsets.zero,
+                leading: const CircleAvatar(
+                  backgroundColor: Color(0xFFE8F5E9),
+                  child: Icon(Icons.refresh, color: Color(0xFF2E7D32)),
+                ),
+                title: const Text('Увімкнути / скинути всі 15 точок', style: TextStyle(fontWeight: FontWeight.w600)),
+                subtitle: const Text('Скидає статус відвіданих, робить усі точки активними'),
+                onTap: () {
+                  Navigator.pop(ctx);
+                  widget.controller.resetStryiskyiParkPois();
+                },
+              ),
+              const Divider(height: 16),
+              // Option 3: Simulation for background test
+              if (!widget.controller.isSimulating) ...[
+                ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  leading: CircleAvatar(
+                    backgroundColor: Colors.orange.shade50,
+                    child: Icon(Icons.play_circle_fill, color: Colors.orange.shade800),
+                  ),
+                  title: const Text('Запустити тест фонового режиму (симуляція)', style: TextStyle(fontWeight: FontWeight.w600)),
+                  subtitle: const Text('Покроково переміщує між точками кожні 12 сек. Можна вимкнути екран і слухати!'),
+                  onTap: () {
+                    Navigator.pop(ctx);
+                    widget.controller.startStryiskyiParkSimulation(stepIntervalSeconds: 12);
+                  },
+                ),
+              ] else ...[
+                ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  leading: CircleAvatar(
+                    backgroundColor: Colors.red.shade50,
+                    child: Icon(Icons.stop_circle, color: Colors.red.shade700),
+                  ),
+                  title: const Text('Зупинити симуляцію', style: TextStyle(fontWeight: FontWeight.w600)),
+                  subtitle: const Text('Повернутися до реального сигналу GPS'),
+                  onTap: () {
+                    Navigator.pop(ctx);
+                    widget.controller.stopSimulation();
+                  },
+                ),
+              ],
+            ],
+          ),
+        );
+      },
     );
   }
 

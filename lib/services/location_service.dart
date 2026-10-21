@@ -34,7 +34,7 @@ class LocationService {
       return AppleSettings(
         accuracy: LocationAccuracy.bestForNavigation,
         distanceFilter: 0,
-        activityType: ActivityType.fitness,
+        activityType: ActivityType.otherNavigation,
         allowBackgroundLocationUpdates: true,
         showBackgroundLocationIndicator: true,
         pauseLocationUpdatesAutomatically: false,

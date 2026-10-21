@@ -6,3 +6,5 @@ import 'dart:typed_data';
 Future<String> saveTempWav(Uint8List wavBytes, String poiId) async {
   throw UnsupportedError('saveTempWav is not supported on web');
 }
+
+Future<String?> getCachedTempWav(String poiId) async => null;

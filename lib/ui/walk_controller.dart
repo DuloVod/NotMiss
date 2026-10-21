@@ -63,6 +63,10 @@ class WalkController extends ChangeNotifier {
   bool _osmLoaded = false;
   
   Timer? _uiTimer;
+  Timer? _simulationTimer;
+  bool _isSimulating = false;
+  bool get isSimulating => _isSimulating;
+  final Set<String> _preSynthesizedIds = {};
 
   /// Dynamic string representing current background activity
   String get backgroundActivity {
@@ -413,6 +417,9 @@ class WalkController extends ChangeNotifier {
     _manualPlayGen++;
     _uiTimer?.cancel();
     _uiTimer = null;
+    _simulationTimer?.cancel();
+    _simulationTimer = null;
+    _isSimulating = false;
     _positionSub?.cancel();
     _positionSub = null;
     _locationService.stop();
@@ -425,6 +432,100 @@ class WalkController extends ChangeNotifier {
 
     // Stop the foreground service
     BackgroundService.stop();
+  }
+
+  /// Pre-synthesizes audio for an approaching POI in the background,
+  /// so that when the user enters the trigger zone with the screen locked,
+  /// audio starts playing immediately with zero network latency.
+  void _preSynthesizePoi(Poi poi) {
+    if (_preSynthesizedIds.contains(poi.id)) return;
+    final updated = getUpdatedPoi(poi);
+    final narration = updated.narrationText;
+    if (narration.isNotEmpty) {
+      _preSynthesizedIds.add(poi.id);
+      _ttsService.synthesize(narration, poi.id).catchError((e) {
+        _preSynthesizedIds.remove(poi.id);
+        debugPrint('[WalkController] Pre-synthesis failed for ${poi.name}: $e');
+        return '';
+      });
+    }
+  }
+
+  /// Start a simulated walk through Stryiskyi Park points for testing.
+  /// Emits a position near each POI sequentially every [stepIntervalSeconds] seconds.
+  /// Allows testing background audio triggering on physical iOS device even with screen off!
+  void startStryiskyiParkSimulation({int stepIntervalSeconds = 12}) {
+    if (_status != WalkStatus.walking) {
+      _status = WalkStatus.walking;
+      _locationService.start();
+    }
+    _simulationTimer?.cancel();
+    _isSimulating = true;
+    int index = 0;
+
+    // Filter Stryiskyi park points
+    var parkPois = _allPois.where((p) => p.id.startsWith('sp_')).toList();
+    if (parkPois.isEmpty) {
+      _allPois = List<Poi>.from(destination.pois);
+      parkPois = _allPois.where((p) => p.id.startsWith('sp_')).toList();
+    }
+    if (parkPois.isEmpty) return;
+
+    _statusMessage = '🚀 Запущено симуляцію Стрийського парку (${parkPois.length} точок)...';
+    notifyListeners();
+
+    // First step immediately
+    _simulateStep(parkPois[0]);
+
+    _simulationTimer = Timer.periodic(Duration(seconds: stepIntervalSeconds), (timer) {
+      if (!_isSimulating || _status != WalkStatus.walking) {
+        timer.cancel();
+        return;
+      }
+      index++;
+      if (index >= parkPois.length) {
+        _isSimulating = false;
+        timer.cancel();
+        _statusMessage = '✅ Тестову симуляцію Стрийського парку завершено.';
+        notifyListeners();
+        return;
+      }
+      _simulateStep(parkPois[index]);
+    });
+    notifyListeners();
+  }
+
+  void _simulateStep(Poi target) {
+    final pos = Position(
+      latitude: target.latitude,
+      longitude: target.longitude,
+      timestamp: DateTime.now(),
+      accuracy: 5.0,
+      altitude: 300.0,
+      altitudeAccuracy: 5.0,
+      heading: 0.0,
+      headingAccuracy: 0.0,
+      speed: 1.2,
+      speedAccuracy: 0.5,
+    );
+    _onPosition(pos);
+  }
+
+  void stopSimulation() {
+    _simulationTimer?.cancel();
+    _simulationTimer = null;
+    _isSimulating = false;
+    _statusMessage = 'Симуляцію зупинено.';
+    notifyListeners();
+  }
+
+  /// Reset / force reload Stryiskyi Park curated points as active and unvisited.
+  void resetStryiskyiParkPois() {
+    _poiEngine.resetSession();
+    _allPois = List<Poi>.from(destination.pois);
+    _nearbyUnplayedPois = List<Poi>.from(destination.pois);
+    _statusMessage = 'Точки Стрийського парку увімкнено (${destination.pois.length} точок).';
+    notifyListeners();
   }
 
   int _processGen = 0;
@@ -448,6 +549,11 @@ class WalkController extends ChangeNotifier {
         );
         if (dist < 150) {
           _researchService.prioritizePoi(p.id);
+        }
+        // Заздалегідь синтезуємо аудіо для найближчої точки (до 100м),
+        // щоб у фоновому режимі при вимкненому екрані відтворення почалося миттєво
+        if (dist <= 100 && dist > p.triggerRadius && !_isProcessing) {
+          _preSynthesizePoi(p);
         }
       }
     }
@@ -593,6 +699,7 @@ class WalkController extends ChangeNotifier {
   void dispose() {
     _disposed = true;
     _uiTimer?.cancel();
+    _simulationTimer?.cancel();
     _playerStateSub?.cancel();
     _positionSub?.cancel();
     _locationService.dispose();
