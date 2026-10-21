@@ -472,6 +472,16 @@ class _MainScreenState extends State<MainScreen> {
     final isPlaying = widget.controller.isPlaying;
     final isPaused = widget.controller.isAudioPaused;
     final isAudioActive = isPlaying || isPaused;
+    final isWalking = widget.controller.status == WalkStatus.walking;
+
+    // Build visited POIs list — all triggered POIs that are not currently active
+    final visitedPois = isWalking
+        ? widget.controller.allPois
+            .where((p) =>
+                widget.controller.triggeredPoiIds.contains(p.id) &&
+                p.id != widget.controller.activePoi?.id)
+            .toList()
+        : <Poi>[];
 
     return Padding(
       padding: const EdgeInsets.all(24),
@@ -601,6 +611,50 @@ class _MainScreenState extends State<MainScreen> {
                   ),
                 ),
               ],
+            ),
+          ],
+
+          // ── Visited POIs — horizontal scrollable list ────────────────────
+          if (visitedPois.isNotEmpty) ...[
+            const SizedBox(height: 16),
+            Row(
+              children: [
+                Icon(Icons.check_circle_outline, size: 16, color: Colors.grey.shade600),
+                const SizedBox(width: 6),
+                Text(
+                  'Відвідані місця (${visitedPois.length}):',
+                  style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                    color: Colors.grey.shade700,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            SizedBox(
+              height: 42,
+              child: ListView.separated(
+                scrollDirection: Axis.horizontal,
+                itemCount: visitedPois.length,
+                separatorBuilder: (_, __) => const SizedBox(width: 8),
+                itemBuilder: (context, index) {
+                  final poi = visitedPois[index];
+                  return ActionChip(
+                    avatar: const Icon(Icons.place, size: 16),
+                    label: Text(
+                      poi.name,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    onPressed: () => _showPoiDetails(context, poi),
+                    backgroundColor: Colors.grey.shade100,
+                    side: BorderSide(color: Colors.grey.shade300),
+                    labelStyle: const TextStyle(fontSize: 13),
+                    padding: const EdgeInsets.symmetric(horizontal: 4),
+                  );
+                },
+              ),
             ),
           ],
         ],
@@ -811,6 +865,8 @@ class _PoiDetailsSheetState extends State<_PoiDetailsSheet> {
         final isPausedThisPoi = widget.controller.isAudioPaused &&
             widget.controller.activePoi?.id == widget.poi.id;
         final isAudioActiveThisPoi = isPlayingThisPoi || isPausedThisPoi;
+        final isAlreadyTriggered =
+            widget.controller.triggeredPoiIds.contains(widget.poi.id);
 
         final isProcessing = _isRequesting ||
             queuePos == 0 ||
@@ -1053,10 +1109,17 @@ class _PoiDetailsSheetState extends State<_PoiDetailsSheet> {
                                       onPressed: () {
                                         widget.controller.playNarrationForPoi(widget.poi);
                                       },
-                                      icon: const Icon(Icons.volume_up, size: 20),
-                                      label: const Text(
-                                        'Прослухати зараз',
-                                        style: TextStyle(
+                                      icon: Icon(
+                                        isAlreadyTriggered
+                                            ? Icons.replay_rounded
+                                            : Icons.volume_up,
+                                        size: 20,
+                                      ),
+                                      label: Text(
+                                        isAlreadyTriggered
+                                            ? 'Прослухати знову'
+                                            : 'Прослухати зараз',
+                                        style: const TextStyle(
                                           fontWeight: FontWeight.bold,
                                           fontSize: 15,
                                         ),

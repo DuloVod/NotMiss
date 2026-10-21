@@ -94,6 +94,10 @@ class ResearchService {
 
   final Set<String> _bumpedPois = {};
 
+  /// Tracks POI IDs currently being researched via [researchImmediately]
+  /// to prevent concurrent duplicate execution for the same POI.
+  final Set<String> _inFlightImmediateIds = {};
+
   /// Bumps a specific POI to the highest priority in the research queue.
   /// Used when the user physically approaches an unresearched POI.
   void prioritizePoi(String poiId) {
@@ -104,7 +108,14 @@ class ResearchService {
   }
 
   /// Forces immediate research of a POI, executing it right away.
+  ///
+  /// Guards against concurrent execution: if research is already in-flight for
+  /// this POI (e.g. the background queue started it simultaneously), this call
+  /// waits until the in-flight one finishes rather than running a duplicate.
   Future<void> researchImmediately(String poiId, {Poi? poi}) async {
+    // If already being researched immediately, skip duplicate call
+    if (_inFlightImmediateIds.contains(poiId)) return;
+
     var enriched = _cacheService.get(poiId);
     if (enriched == null && poi != null) {
       final category = _categoryService.categorize(poi.osmTags ?? {});
@@ -122,7 +133,13 @@ class ResearchService {
       await _cacheService.put(enriched);
       onPoiUpdated?.call(enriched);
     }
-    await _processResearchTask(poiId);
+
+    _inFlightImmediateIds.add(poiId);
+    try {
+      await _processResearchTask(poiId);
+    } finally {
+      _inFlightImmediateIds.remove(poiId);
+    }
   }
 
   /// The core research workflow executed by the queue.

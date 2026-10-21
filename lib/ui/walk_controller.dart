@@ -188,6 +188,25 @@ class WalkController extends ChangeNotifier {
     await _audioService.stop();
 
     final updated = getUpdatedPoi(poi);
+    _poiEngine.markTriggered(updated.id);
+    _nearbyUnplayedPois.removeWhere((p) => p.id == updated.id);
+    if (_currentPosition != null && !_proximityEvents.any((e) => e.poiId == updated.id)) {
+      final distance = Geolocator.distanceBetween(
+        _currentPosition!.latitude, _currentPosition!.longitude, updated.latitude, updated.longitude,
+      );
+      final event = ProximityEvent(
+        poiId: updated.id,
+        poiName: updated.name,
+        poiLat: updated.latitude,
+        poiLng: updated.longitude,
+        userLat: _currentPosition!.latitude,
+        userLng: _currentPosition!.longitude,
+        distanceM: distance,
+        timestamp: DateTime.now(),
+      );
+      _proximityEvents.add(event);
+      onProximityEvent?.call(event);
+    }
     _activePoi = updated;
     _statusMessage = '📍 ${updated.name} — підготовка розповіді…';
     _isProcessing = true;

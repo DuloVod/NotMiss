@@ -44,9 +44,24 @@ class WikidataService {
 
       final json = jsonDecode(response.body) as Map<String, dynamic>;
       final entities = json['entities'] as Map<String, dynamic>?;
-      if (entities == null || !entities.containsKey(wikidataId)) return null;
+      if (entities == null) return null;
 
-      final entity = entities[wikidataId] as Map<String, dynamic>;
+      // Handle entity redirects (e.g. {"redirects": [{"from": "Q123", "to": "Q456"}]})
+      String targetId = wikidataId;
+      final redirects = json['redirects'] as List<dynamic>?;
+      if (redirects != null) {
+        for (final r in redirects) {
+          if (r is Map<String, dynamic> && r['from'] == wikidataId) {
+            final to = r['to'] as String?;
+            if (to != null) targetId = to;
+            break;
+          }
+        }
+      }
+
+      if (!entities.containsKey(targetId)) return null;
+
+      final entity = entities[targetId] as Map<String, dynamic>;
       if (entity.containsKey('missing')) return null;
 
       return await _parseEntity(wikidataId, entity);
@@ -85,8 +100,24 @@ class WikidataService {
         final json = jsonDecode(response.body) as Map<String, dynamic>;
         final entities = json['entities'] as Map<String, dynamic>? ?? {};
 
+        // Build redirect mapping
+        final redirectMap = <String, String>{};
+        final redirects = json['redirects'] as List<dynamic>?;
+        if (redirects != null) {
+          for (final r in redirects) {
+            if (r is Map<String, dynamic>) {
+              final from = r['from'] as String?;
+              final to = r['to'] as String?;
+              if (from != null && to != null) {
+                redirectMap[from] = to;
+              }
+            }
+          }
+        }
+
         for (final id in batch) {
-          final entity = entities[id] as Map<String, dynamic>?;
+          final targetId = redirectMap[id] ?? id;
+          final entity = entities[targetId] as Map<String, dynamic>?;
           if (entity == null || entity.containsKey('missing')) continue;
           final result = await _parseEntity(id, entity);
           if (result != null) results[id] = result;

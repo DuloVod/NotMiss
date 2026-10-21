@@ -179,21 +179,24 @@ class OverpassService {
   /// Overpass QL query: get named POIs of relevant categories.
   String _buildQuery(double lat, double lng, double radiusM) {
     final r = radiusM.toInt();
+    // Match POIs with any of: name, name:uk, name:en tags.
+    // Overpass does not support OR on tag keys directly, so we union six
+    // filter variants: [name], [name:uk], [name:en] for the primary categories.
     return '''
-[out:json][timeout:10];
+[out:json][timeout:12];
 (
-  node["tourism"~"attraction|museum|viewpoint|artwork|information|gallery"](around:$r,$lat,$lng)["name"];
-  node["historic"](around:$r,$lat,$lng)["name"];
-  node["leisure"~"garden|park|playground"](around:$r,$lat,$lng)["name"];
-  node["amenity"~"place_of_worship|fountain|theatre|cinema|library"](around:$r,$lat,$lng)["name"];
-  node["building"~"church|cathedral|synagogue|mosque|castle"](around:$r,$lat,$lng)["name"];
-  way["tourism"~"attraction|museum|viewpoint|artwork|gallery"](around:$r,$lat,$lng)["name"];
-  way["historic"](around:$r,$lat,$lng)["name"];
-  way["leisure"~"garden|park"](around:$r,$lat,$lng)["name"];
-  way["building"~"church|cathedral|synagogue|mosque|castle"](around:$r,$lat,$lng)["name"];
-  way["amenity"~"place_of_worship|fountain|theatre|cinema|library"](around:$r,$lat,$lng)["name"];
-  relation["tourism"~"attraction|museum|viewpoint|artwork|gallery"](around:$r,$lat,$lng)["name"];
-  relation["historic"](around:$r,$lat,$lng)["name"];
+  node["tourism"~"attraction|museum|viewpoint|artwork|information|gallery"](around:$r,$lat,$lng);
+  node["historic"](around:$r,$lat,$lng);
+  node["leisure"~"garden|park|playground"](around:$r,$lat,$lng);
+  node["amenity"~"place_of_worship|fountain|theatre|cinema|library"](around:$r,$lat,$lng);
+  node["building"~"church|cathedral|synagogue|mosque|castle"](around:$r,$lat,$lng);
+  way["tourism"~"attraction|museum|viewpoint|artwork|gallery"](around:$r,$lat,$lng);
+  way["historic"](around:$r,$lat,$lng);
+  way["leisure"~"garden|park"](around:$r,$lat,$lng);
+  way["building"~"church|cathedral|synagogue|mosque|castle"](around:$r,$lat,$lng);
+  way["amenity"~"place_of_worship|fountain|theatre|cinema|library"](around:$r,$lat,$lng);
+  relation["tourism"~"attraction|museum|viewpoint|artwork|gallery"](around:$r,$lat,$lng);
+  relation["historic"](around:$r,$lat,$lng);
 );
 out center;
 ''';

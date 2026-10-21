@@ -294,4 +294,43 @@ void main() {
       expect(cs.getNarration(poi, aiText: 'AI Narration'), 'AI Narration');
     });
   });
+
+  group('New UX & Service Fixes', () {
+    test('PoiEngine session management preserves triggered set', () {
+      final engine = PoiEngine();
+      engine.markTriggered('poi_1');
+      engine.markTriggered('poi_2');
+      expect(engine.triggeredPoiIds.length, 2);
+      expect(engine.triggeredPoiIds.contains('poi_1'), true);
+      expect(engine.triggeredPoiIds.contains('poi_2'), true);
+
+      engine.resetSession();
+      expect(engine.triggeredPoiIds.isEmpty, true);
+    });
+
+    test('Poi.copyWith retains osmTags and confidence', () {
+      const poi = Poi(
+        id: 'osm_node_123',
+        name: 'Stryiskyi Lake',
+        latitude: 49.82,
+        longitude: 24.03,
+        triggerRadius: 35,
+        shortDescription: 'Lake description',
+        facts: ['Fact 1'],
+        narrationText: 'Lake narration',
+        sources: [],
+        confidence: 'osm',
+        wikidataId: 'Q54321',
+        osmTags: {'natural': 'water', 'water': 'lake'},
+      );
+
+      final updated = poi.copyWith(narrationText: 'Updated narration');
+      expect(updated.id, 'osm_node_123');
+      expect(updated.confidence, 'osm');
+      expect(updated.wikidataId, 'Q54321');
+      expect(updated.osmTags?['natural'], 'water');
+      expect(updated.narrationText, 'Updated narration');
+      expect(updated.facts.length, 1);
+    });
+  });
 }

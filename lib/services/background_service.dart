@@ -54,10 +54,6 @@ class BackgroundService {
       serviceId: 256,
       notificationTitle: 'NotMiss — Walk in progress',
       notificationText: 'Voice guide is active. You\'ll be notified near each point.',
-      notificationIcon: null,
-      notificationButtons: [
-        const NotificationButton(id: 'stop', text: 'Stop Walk'),
-      ],
     );
   }
 
