@@ -396,6 +396,12 @@ void main() {
         apiKey: '',
       );
 
+      // By default hardcoded park points are disabled
+      expect(controller.stryiskyiParkPoisEnabled, isFalse);
+      expect(controller.allPois.isEmpty, isTrue);
+
+      // Enable points
+      controller.setStryiskyiParkPoisEnabled(true);
       expect(controller.stryiskyiParkPoisEnabled, isTrue);
       expect(controller.allPois.length, 1);
       expect(controller.allPois.first.id, 'sp_01');
@@ -404,12 +410,6 @@ void main() {
       controller.setStryiskyiParkPoisEnabled(false);
       expect(controller.stryiskyiParkPoisEnabled, isFalse);
       expect(controller.allPois.isEmpty, isTrue);
-
-      // Re-enable points
-      controller.setStryiskyiParkPoisEnabled(true);
-      expect(controller.stryiskyiParkPoisEnabled, isTrue);
-      expect(controller.allPois.length, 1);
-      expect(controller.allPois.first.id, 'sp_01');
 
       controller.dispose();
     });

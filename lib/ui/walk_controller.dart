@@ -57,8 +57,8 @@ class WalkController extends ChangeNotifier {
   /// All POIs available for this walk (static + dynamic, deduplicated).
   List<Poi> _allPois = [];
 
-  /// Whether static Stryiskyi Park points are enabled.
-  bool _stryiskyiParkPoisEnabled = true;
+  /// Whether static Stryiskyi Park points are enabled (default: false).
+  bool _stryiskyiParkPoisEnabled = false;
   bool get stryiskyiParkPoisEnabled => _stryiskyiParkPoisEnabled;
 
   /// Proximity events recorded during the current walk.
@@ -136,7 +136,7 @@ class WalkController extends ChangeNotifier {
     _playerStateSub = _audioService.playerStateStream.listen((_) {
       notifyListeners();
     });
-    _allPois = List<Poi>.from(destination.pois);
+    _allPois = _stryiskyiParkPoisEnabled ? List<Poi>.from(destination.pois) : [];
   }
 
   WalkStatus get status => _status;
@@ -401,8 +401,15 @@ class WalkController extends ChangeNotifier {
 
   bool _isOsmLoading = false;
 
+  /// Force a clean refresh of OSM POIs from Overpass, bypassing cache.
+  Future<void> reloadOsmPois() async {
+    await _overpassService.clearCache();
+    _osmLoaded = false;
+    await _loadOsmPoisAsync(force: true);
+  }
+
   /// Load OSM POIs in the background, without blocking the walk start.
-  Future<void> _loadOsmPoisAsync() async {
+  Future<void> _loadOsmPoisAsync({bool force = false}) async {
     if (_isOsmLoading) return;
     _isOsmLoading = true;
     try {
@@ -415,27 +422,37 @@ class WalkController extends ChangeNotifier {
       }
 
       final osmPois =
-          await _overpassService.loadPois(pos.latitude, pos.longitude);
+          await _overpassService.loadPois(pos.latitude, pos.longitude, force: force);
 
       // Перевіряємо статус одразу після await — між await та мутацією
       // міг виконатися stopWalk(), тому перевіряємо тут, а не раніше.
       if (_status != WalkStatus.walking) return;
 
-      // Merge: add OSM POIs that don't duplicate static ones
+      // Merge: add OSM POIs that don't duplicate existing ones
       final existingIds = _allPois.map((p) => p.id).toSet();
       final newPois = osmPois.where((p) => !existingIds.contains(p.id)).toList();
 
-      // Also deduplicate by proximity (within 30m of an existing static POI)
       final deduped = <Poi>[];
       for (final osmPoi in newPois) {
-        final tooClose = _allPois.any((existing) {
-          final dist = Geolocator.distanceBetween(
-            existing.latitude, existing.longitude,
-            osmPoi.latitude, osmPoi.longitude,
-          );
-          return dist < 30;
-        });
-        if (!tooClose) deduped.add(osmPoi);
+        // 1. If static park points are enabled, skip OSM points that duplicate them (within 25m)
+        if (_stryiskyiParkPoisEnabled) {
+          final isNearStatic = destination.pois.any((sp) {
+            final dist = Geolocator.distanceBetween(
+              sp.latitude, sp.longitude,
+              osmPoi.latitude, osmPoi.longitude,
+            );
+            return dist < 25;
+          });
+          if (isNearStatic) continue;
+        }
+
+        // 2. Prevent duplicate entries for the exact same object from OSM (identical name within 15m)
+        final isExactDuplicate = deduped.any((d) =>
+            d.name.trim().toLowerCase() == osmPoi.name.trim().toLowerCase() &&
+            Geolocator.distanceBetween(d.latitude, d.longitude, osmPoi.latitude, osmPoi.longitude) < 15);
+        if (!isExactDuplicate) {
+          deduped.add(osmPoi);
+        }
       }
 
       _allPois.addAll(deduped);
@@ -451,7 +468,7 @@ class WalkController extends ChangeNotifier {
       }
 
       debugPrint('[WalkController] Merged POIs: ${_allPois.length} total '
-          '(${destination.pois.length} static + ${deduped.length} OSM)');
+          '(${_stryiskyiParkPoisEnabled ? destination.pois.length : 0} static + ${deduped.length} OSM)');
     } catch (e) {
       debugPrint('[WalkController] OSM load failed: $e');
       _osmLoaded = false;

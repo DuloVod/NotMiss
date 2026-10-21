@@ -17,7 +17,7 @@ import '../models/poi.dart';
 ///   - Graceful fallback to cache on network failure.
 class OverpassService {
   /// Radius around the user's position to search for POIs (metres).
-  static const double searchRadiusM = 500.0;
+  static const double searchRadiusM = 1000.0;
 
   /// Trigger radius for OSM POIs (metres).
   static const double defaultTriggerRadiusM = 40.0;
@@ -63,22 +63,25 @@ class OverpassService {
   /// Load POIs near [lat], [lng].
   ///
   /// Returns cached POIs if available and user hasn't moved too far.
-  /// Otherwise fetches from Overpass and caches the result.
-  Future<List<Poi>> loadPois(double lat, double lng) async {
+  /// If [force] is true, ignores local caches and queries Overpass directly.
+  Future<List<Poi>> loadPois(double lat, double lng, {bool force = false}) async {
     // 1. Check in-memory cache
-    if (_cachedPois != null && !shouldReload(lat, lng)) {
+    if (!force && _cachedPois != null && !shouldReload(lat, lng)) {
       debugPrint('[OverpassService] Using in-memory cache: '
           '${_cachedPois!.length} POIs');
       return _cachedPois!;
     }
 
     // 2. Check disk cache
-    final diskPois = await _loadFromDisk();
-    if (diskPois != null && !shouldReload(lat, lng)) {
-      _cachedPois = diskPois;
-      debugPrint('[OverpassService] Using disk cache: '
-          '${diskPois.length} POIs');
-      return diskPois;
+    List<Poi>? diskPois;
+    if (!force) {
+      diskPois = await _loadFromDisk();
+      if (diskPois != null && !shouldReload(lat, lng)) {
+        _cachedPois = diskPois;
+        debugPrint('[OverpassService] Using disk cache: '
+            '${diskPois.length} POIs');
+        return diskPois;
+      }
     }
 
     // 3. Rate limiting check
@@ -176,27 +179,43 @@ class OverpassService {
     return _parseElements(elements);
   }
 
-  /// Overpass QL query: get named POIs of relevant categories.
+  /// Overpass QL query: get named POIs of relevant categories within search radius.
   String _buildQuery(double lat, double lng, double radiusM) {
     final r = radiusM.toInt();
-    // Match POIs with any of: name, name:uk, name:en tags.
-    // Overpass does not support OR on tag keys directly, so we union six
-    // filter variants: [name], [name:uk], [name:en] for the primary categories.
     return '''
-[out:json][timeout:12];
+[out:json][timeout:15];
 (
-  node["tourism"~"attraction|museum|viewpoint|artwork|information|gallery"](around:$r,$lat,$lng);
+  // Tourism & Attractions
+  node["tourism"~"attraction|museum|viewpoint|artwork|information|gallery|theme_park|zoo"](around:$r,$lat,$lng);
+  way["tourism"~"attraction|museum|viewpoint|artwork|information|gallery|theme_park|zoo"](around:$r,$lat,$lng);
+  relation["tourism"~"attraction|museum|viewpoint|artwork|information|gallery|theme_park|zoo"](around:$r,$lat,$lng);
+
+  // Historic & Heritage
   node["historic"](around:$r,$lat,$lng);
-  node["leisure"~"garden|park|playground"](around:$r,$lat,$lng);
-  node["amenity"~"place_of_worship|fountain|theatre|cinema|library"](around:$r,$lat,$lng);
-  node["building"~"church|cathedral|synagogue|mosque|castle"](around:$r,$lat,$lng);
-  way["tourism"~"attraction|museum|viewpoint|artwork|gallery"](around:$r,$lat,$lng);
   way["historic"](around:$r,$lat,$lng);
-  way["leisure"~"garden|park"](around:$r,$lat,$lng);
-  way["building"~"church|cathedral|synagogue|mosque|castle"](around:$r,$lat,$lng);
-  way["amenity"~"place_of_worship|fountain|theatre|cinema|library"](around:$r,$lat,$lng);
-  relation["tourism"~"attraction|museum|viewpoint|artwork|gallery"](around:$r,$lat,$lng);
   relation["historic"](around:$r,$lat,$lng);
+  node["heritage"](around:$r,$lat,$lng);
+  way["heritage"](around:$r,$lat,$lng);
+
+  // Leisure & Nature
+  node["leisure"~"garden|park|nature_reserve"](around:$r,$lat,$lng);
+  way["leisure"~"garden|park|nature_reserve"](around:$r,$lat,$lng);
+  node["natural"~"tree|spring|peak|cave_entrance|rock|cliff|water"](around:$r,$lat,$lng);
+  way["natural"~"water|wood"](around:$r,$lat,$lng);
+
+  // Amenities & Cultural Places
+  node["amenity"~"place_of_worship|fountain|theatre|cinema|library|monastery|arts_centre|community_centre|planetarium|public_art"](around:$r,$lat,$lng);
+  way["amenity"~"place_of_worship|fountain|theatre|cinema|library|monastery|arts_centre|community_centre|planetarium|public_art"](around:$r,$lat,$lng);
+
+  // Architecture & Man-made Monuments/Towers
+  node["man_made"~"tower|water_tower|obelisk|windmill|cross|lighthouse|monument"](around:$r,$lat,$lng);
+  way["man_made"~"tower|water_tower|obelisk|windmill|cross|lighthouse|monument"](around:$r,$lat,$lng);
+  node["building"~"church|cathedral|synagogue|mosque|castle|palace|manor|tower|ruins|historic|chapel|bell_tower"](around:$r,$lat,$lng);
+  way["building"~"church|cathedral|synagogue|mosque|castle|palace|manor|tower|ruins|historic|chapel|bell_tower"](around:$r,$lat,$lng);
+
+  // Railway heritage / miniature park trains
+  node["railway"~"station|halt|miniature"](around:$r,$lat,$lng);
+  way["railway"~"station|halt|miniature"](around:$r,$lat,$lng);
 );
 out center;
 ''';
@@ -239,7 +258,12 @@ out center;
 
       final name = tags['name'] ??
           tags['name:uk'] ??
-          tags['name:en'];
+          tags['name:en'] ??
+          tags['official_name'] ??
+          tags['int_name'] ??
+          tags['alt_name'] ??
+          tags['loc_name'] ??
+          tags['name:ru'];
 
       // Skip unnamed POIs
       if (name == null || name.isEmpty) continue;
@@ -342,10 +366,29 @@ out center;
       if (!await file.exists()) return null;
 
       final data = jsonDecode(await file.readAsString()) as Map<String, dynamic>;
-      _cacheCenterLat = (data['center_lat'] as num?)?.toDouble();
-      _cacheCenterLng = (data['center_lng'] as num?)?.toDouble();
+
+      // Check cache age — expire disk cache after 24 hours
+      final timestampStr = data['timestamp'] as String?;
+      if (timestampStr != null) {
+        final timestamp = DateTime.tryParse(timestampStr);
+        if (timestamp != null) {
+          final age = DateTime.now().difference(timestamp);
+          if (age > const Duration(hours: 24)) {
+            debugPrint('[OverpassService] Disk cache expired (${age.inHours}h old), fetching fresh POIs');
+            return null;
+          }
+        }
+      }
 
       final rawPois = data['pois'] as List<dynamic>? ?? [];
+      // If disk cache has fewer than 3 POIs, don't rely on it
+      if (rawPois.length < 3) {
+        debugPrint('[OverpassService] Disk cache has too few POIs (${rawPois.length}), re-fetching');
+        return null;
+      }
+
+      _cacheCenterLat = (data['center_lat'] as num?)?.toDouble();
+      _cacheCenterLng = (data['center_lng'] as num?)?.toDouble();
       return rawPois.map((p) {
         final m = p as Map<String, dynamic>;
         List<PoiSource> sources = [];
@@ -385,6 +428,26 @@ out center;
     } catch (e) {
       debugPrint('[OverpassService] Failed to load cache: $e');
       return null;
+    }
+  }
+
+  /// Invalidate both in-memory and disk cache to force a clean Overpass search.
+  Future<void> clearCache() async {
+    _cachedPois = null;
+    _cacheCenterLat = null;
+    _cacheCenterLng = null;
+    _lastRequestTime = null;
+    _consecutiveErrors = 0;
+    if (!kIsWeb) {
+      try {
+        final path = await _cachePath;
+        final file = File(path);
+        if (await file.exists()) {
+          await file.delete();
+        }
+      } catch (e) {
+        debugPrint('[OverpassService] Failed to delete disk cache: $e');
+      }
     }
   }
 }
