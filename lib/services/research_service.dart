@@ -112,9 +112,17 @@ class ResearchService {
   /// Guards against concurrent execution: if research is already in-flight for
   /// this POI (e.g. the background queue started it simultaneously), this call
   /// waits until the in-flight one finishes rather than running a duplicate.
-  Future<void> researchImmediately(String poiId, {Poi? poi}) async {
+  ///
+  /// If [force] is false and the POI is already researched, skips redundant network/AI requests.
+  Future<void> researchImmediately(String poiId, {Poi? poi, bool force = false}) async {
     // If already being researched immediately, skip duplicate call
     if (_inFlightImmediateIds.contains(poiId)) return;
+
+    // Session cache check: if already researched and not forced, return immediately
+    if (!force && !_cacheService.needsResearch(poiId)) {
+      debugPrint('[ResearchService] POI $poiId already has completed research in cache, skipping duplicate research');
+      return;
+    }
 
     var enriched = _cacheService.get(poiId);
     if (enriched == null && poi != null) {
@@ -162,23 +170,26 @@ class ResearchService {
       String? shortDesc = enriched.shortDescription;
       String? wikidataId = enriched.wikidataId;
 
+      void addFact(String factText, String? sourceUrl, String confidence) {
+        final trimmed = factText.trim();
+        if (trimmed.isNotEmpty && !facts.any((f) => f.fact.trim() == trimmed)) {
+          facts.add(KeyFact(
+            fact: trimmed,
+            sourceUrl: sourceUrl,
+            confidence: confidence,
+          ));
+        }
+      }
+
       // STEP 1: Wikidata
       if (wikidataId != null && wikidataId.isNotEmpty) {
         final wikiData = await _wikidataService.fetchById(wikidataId);
         if (wikiData != null) {
           if (wikiData.inception != null) {
-            facts.add(KeyFact(
-              fact: 'Створено/засновано: ${wikiData.inception}',
-              sourceUrl: 'https://www.wikidata.org/wiki/$wikidataId',
-              confidence: 'high',
-            ));
+            addFact('Створено/засновано: ${wikiData.inception}', 'https://www.wikidata.org/wiki/$wikidataId', 'high');
           }
           if (wikiData.architect != null) {
-            facts.add(KeyFact(
-              fact: 'Архітектор/творець: ${wikiData.architect}',
-              sourceUrl: 'https://www.wikidata.org/wiki/$wikidataId',
-              confidence: 'high',
-            ));
+            addFact('Архітектор/творець: ${wikiData.architect}', 'https://www.wikidata.org/wiki/$wikidataId', 'high');
           }
           if (shortDesc == null || shortDesc.isEmpty) {
             shortDesc = wikiData.description;
@@ -202,11 +213,7 @@ class ResearchService {
               if (shortDesc == null || shortDesc.isEmpty) {
                 shortDesc = wikiArticle.description ?? _firstSentence(wikiArticle.extract);
               }
-              facts.add(KeyFact(
-                fact: _truncate(wikiArticle.extract, 150),
-                sourceUrl: wikiArticle.url,
-                confidence: 'high',
-              ));
+              addFact(_truncate(wikiArticle.extract, 150), wikiArticle.url, 'high');
               
               if (!sources.any((s) => s.type == 'wikipedia')) {
                 sources.add(ResearchSource(
@@ -258,10 +265,7 @@ class ResearchService {
             for (final f in aiFacts) {
               final str = f.toString().trim();
               if (str.isNotEmpty) {
-                facts.add(KeyFact(
-                  fact: str,
-                  confidence: 'high',
-                ));
+                addFact(str, null, 'high');
               }
             }
           }
@@ -341,8 +345,28 @@ class ResearchService {
   }
 
   /// Update narration text for a POI directly and notify listeners.
-  Future<void> updateNarration(String poiId, String narration) async {
-    final enriched = _cacheService.get(poiId);
+  /// If the POI is not in cache yet, creates an EnrichedPoi entry using [poi].
+  Future<void> updateNarration(String poiId, String narration, {Poi? poi}) async {
+    var enriched = _cacheService.get(poiId);
+    if (enriched == null && poi != null) {
+      final category = _categoryService.categorize(poi.osmTags ?? {});
+      enriched = EnrichedPoi(
+        poiId: poi.id,
+        name: poi.name,
+        category: category,
+        latitude: poi.latitude,
+        longitude: poi.longitude,
+        researchStatus: ResearchStatus.complete,
+        narrationText: narration,
+        osmTags: poi.osmTags ?? {},
+        wikidataId: poi.wikidataId,
+        lastResearchedAt: DateTime.now(),
+      );
+      await _cacheService.put(enriched);
+      onPoiUpdated?.call(enriched);
+      return;
+    }
+
     if (enriched != null) {
       final updated = enriched.copyWith(
         narrationText: narration,

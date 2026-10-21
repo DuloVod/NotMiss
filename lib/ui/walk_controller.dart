@@ -5,6 +5,7 @@ import '../models/destination.dart';
 import '../models/poi.dart';
 import '../models/enriched_poi.dart';
 import '../models/proximity_event.dart';
+import '../models/chat_message.dart';
 import '../services/location_service.dart';
 import '../services/poi_engine.dart';
 import '../services/content_service.dart';
@@ -112,6 +113,23 @@ class WalkController extends ChangeNotifier {
           aiService: aiService ?? AiService(apiKey: apiKey),
         ) {
     _researchService.onPoiUpdated = (enriched) {
+      final idx = _allPois.indexWhere((p) => p.id == enriched.poiId);
+      if (idx != -1) {
+        final old = _allPois[idx];
+        final facts = enriched.keyFacts.map((f) => f.fact).toList();
+        _allPois[idx] = old.copyWith(
+          shortDescription: (enriched.shortDescription?.isNotEmpty == true)
+              ? enriched.shortDescription!
+              : old.shortDescription,
+          facts: facts.isNotEmpty ? facts : old.facts,
+          narrationText: (enriched.narrationText?.isNotEmpty == true)
+              ? enriched.narrationText!
+              : old.narrationText,
+        );
+      }
+      if (_activePoi?.id == enriched.poiId) {
+        _activePoi = getUpdatedPoi(_activePoi!);
+      }
       notifyListeners();
     };
     _researchService.init();
@@ -146,7 +164,8 @@ class WalkController extends ChangeNotifier {
   int getQueuePosition(String id) => _researchService.getQueuePosition(id);
 
   /// Trigger immediate priority research for a specific POI (e.g. when user taps on it).
-  Future<void> researchPoiNow(dynamic poiOrId) async {
+  /// If [force] is true, ignores cached completion status and re-runs research.
+  Future<void> researchPoiNow(dynamic poiOrId, {bool force = false}) async {
     Poi? poi;
     String id;
     if (poiOrId is Poi) {
@@ -161,9 +180,26 @@ class WalkController extends ChangeNotifier {
         }
       }
     }
-    await _researchService.researchImmediately(id, poi: poi);
+    await _researchService.researchImmediately(id, poi: poi, force: force);
     notifyListeners();
   }
+
+  /// Session cache of AI chat messages per POI id.
+  final Map<String, List<ChatMessage>> _chatHistoryByPoi = {};
+
+  /// Retrieve the chat history for a POI during the current session.
+  List<ChatMessage> getChatHistory(String poiId) {
+    return _chatHistoryByPoi.putIfAbsent(poiId, () => []);
+  }
+
+  /// Add a chat message to the session history for a POI.
+  void addChatMessage(String poiId, ChatMessage message) {
+    _chatHistoryByPoi.putIfAbsent(poiId, () => []).add(message);
+    notifyListeners();
+  }
+
+  /// In-memory cache of answers to specific questions per POI: [poiId][normalizedQuestion] -> answer
+  final Map<String, Map<String, String>> _qaCache = {};
 
   /// Returns a POI populated with real-time research facts and narration.
   Poi getUpdatedPoi(Poi poi) {
@@ -226,7 +262,7 @@ class WalkController extends ChangeNotifier {
       if (narration.isEmpty) {
         narration = await _aiService.generateNarration(updated);
         if (narration.isNotEmpty) {
-          await _researchService.updateNarration(updated.id, narration);
+          await _researchService.updateNarration(updated.id, narration, poi: updated);
         }
         if (gen != _manualPlayGen) return;
       }
@@ -291,10 +327,21 @@ class WalkController extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// Ask Gemini a question about a POI.
+  /// Ask Gemini a question about a POI, using in-memory cache for repeated questions during the session.
   Future<String> askAiAboutPoi(Poi poi, String question) async {
+    final normalized = question.trim().toLowerCase();
+    final poiQa = _qaCache.putIfAbsent(poi.id, () => {});
+    if (poiQa.containsKey(normalized) && poiQa[normalized]!.isNotEmpty) {
+      debugPrint('[WalkController] Returning cached session AI answer for "$question" on ${poi.name}');
+      return poiQa[normalized]!;
+    }
+
     final updated = getUpdatedPoi(poi);
-    return await _aiService.answerQuestionAboutPoi(updated, question);
+    final answer = await _aiService.answerQuestionAboutPoi(updated, question);
+    if (answer.isNotEmpty) {
+      poiQa[normalized] = answer;
+    }
+    return answer;
   }
 
   /// Synthesize and play speech for a text response.
@@ -672,6 +719,9 @@ class WalkController extends ChangeNotifier {
         final aiText = await _aiService.generateNarration(activePoi);
         if (gen != _processGen) return; // Відмінено
         narration = _contentService.getNarration(activePoi, aiText: aiText);
+        if (narration.isNotEmpty) {
+          await _researchService.updateNarration(activePoi.id, narration, poi: activePoi);
+        }
       }
 
       if (narration.isNotEmpty) {

@@ -5,6 +5,7 @@ import 'package:flutter_compass/flutter_compass.dart';
 import 'package:latlong2/latlong.dart';
 import '../../models/poi.dart';
 import '../../models/enriched_poi.dart';
+import '../../models/chat_message.dart';
 import '../walk_controller.dart';
 import 'package:geolocator/geolocator.dart'; // For Position
 
@@ -1059,6 +1060,16 @@ class _PoiDetailsSheetState extends State<_PoiDetailsSheet> {
     final updatedPoi = widget.controller.getUpdatedPoi(widget.poi);
     final enriched = widget.controller.getEnrichedPoi(widget.poi.id);
 
+    // If AI or background research already ran or is running for this POI, don't repeat the search
+    if (enriched != null &&
+        (enriched.isResearchComplete ||
+         enriched.researchStatus == ResearchStatus.complete ||
+         enriched.researchStatus == ResearchStatus.partial ||
+         enriched.researchStatus == ResearchStatus.insufficientInformation ||
+         enriched.researchStatus == ResearchStatus.inProgress)) {
+      return;
+    }
+
     final hasNarration = (enriched?.narrationText?.isNotEmpty == true || updatedPoi.narrationText.isNotEmpty);
     final rawDesc = (enriched?.shortDescription?.isNotEmpty == true)
         ? enriched!.shortDescription!
@@ -1540,7 +1551,7 @@ class _PoiDetailsSheetState extends State<_PoiDetailsSheet> {
                                 OutlinedButton.icon(
                                   onPressed: () {
                                     setState(() => _isRequesting = true);
-                                    widget.controller.researchPoiNow(widget.poi).whenComplete(() {
+                                    widget.controller.researchPoiNow(widget.poi, force: true).whenComplete(() {
                                       if (mounted) setState(() => _isRequesting = false);
                                     });
                                   },
@@ -1629,19 +1640,6 @@ void _showAiChatModal(BuildContext context, WalkController controller, Poi poi) 
   );
 }
 
-/// Single chat message model.
-class _ChatMessage {
-  final String text;
-  final bool isUser;
-  final DateTime timestamp;
-
-  _ChatMessage({
-    required this.text,
-    required this.isUser,
-    DateTime? timestamp,
-  }) : timestamp = timestamp ?? DateTime.now();
-}
-
 /// Interactive AI Chat Bottom Sheet for querying Gemini about a POI.
 class _AiChatSheet extends StatefulWidget {
   final WalkController controller;
@@ -1659,7 +1657,7 @@ class _AiChatSheet extends StatefulWidget {
 class _AiChatSheetState extends State<_AiChatSheet> {
   final TextEditingController _textController = TextEditingController();
   final ScrollController _scrollController = ScrollController();
-  final List<_ChatMessage> _messages = [];
+  List<ChatMessage> get _messages => widget.controller.getChatHistory(widget.poi.id);
   bool _isLoading = false;
   String? _currentlySpeakingText;
 
@@ -1674,12 +1672,16 @@ class _AiChatSheetState extends State<_AiChatSheet> {
   @override
   void initState() {
     super.initState();
-    _messages.add(
-      _ChatMessage(
-        text: 'Вітаю! Я ваш ШІ-гід. Запитайте мене будь-що про «${widget.poi.name}»!',
-        isUser: false,
-      ),
-    );
+    final history = widget.controller.getChatHistory(widget.poi.id);
+    if (history.isEmpty) {
+      widget.controller.addChatMessage(
+        widget.poi.id,
+        ChatMessage(
+          text: 'Вітаю! Я ваш ШІ-гід. Запитайте мене будь-що про «${widget.poi.name}»!',
+          isUser: false,
+        ),
+      );
+    }
   }
 
   @override
@@ -1697,8 +1699,11 @@ class _AiChatSheetState extends State<_AiChatSheet> {
     if (query.isEmpty || _isLoading) return;
 
     _textController.clear();
+    widget.controller.addChatMessage(
+      widget.poi.id,
+      ChatMessage(text: query, isUser: true),
+    );
     setState(() {
-      _messages.add(_ChatMessage(text: query, isUser: true));
       _isLoading = true;
     });
 
@@ -1707,20 +1712,24 @@ class _AiChatSheetState extends State<_AiChatSheet> {
     try {
       final answer = await widget.controller.askAiAboutPoi(widget.poi, query);
       if (!mounted) return;
+      widget.controller.addChatMessage(
+        widget.poi.id,
+        ChatMessage(text: answer, isUser: false),
+      );
       setState(() {
-        _messages.add(_ChatMessage(text: answer, isUser: false));
         _isLoading = false;
       });
       _scrollToBottom();
     } catch (e) {
       if (!mounted) return;
+      widget.controller.addChatMessage(
+        widget.poi.id,
+        ChatMessage(
+          text: 'Вибачте, виникла помилка зв\'язку з ШІ: $e',
+          isUser: false,
+        ),
+      );
       setState(() {
-        _messages.add(
-          _ChatMessage(
-            text: 'Вибачте, виникла помилка зв\'язку з ШІ: $e',
-            isUser: false,
-          ),
-        );
         _isLoading = false;
       });
       _scrollToBottom();
@@ -1990,7 +1999,7 @@ class _AiChatSheetState extends State<_AiChatSheet> {
     );
   }
 
-  Widget _buildMessageBubble(_ChatMessage msg) {
+  Widget _buildMessageBubble(ChatMessage msg) {
     if (msg.isUser) {
       return Padding(
         padding: const EdgeInsets.only(bottom: 12),

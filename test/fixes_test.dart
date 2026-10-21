@@ -1,4 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:notmiss/models/chat_message.dart';
 import 'package:notmiss/models/destination.dart';
 import 'package:notmiss/models/enriched_poi.dart';
 import 'package:notmiss/models/poi.dart';
@@ -9,6 +10,11 @@ import 'package:notmiss/services/poi_cache_service.dart';
 import 'package:notmiss/services/poi_category_service.dart';
 import 'package:notmiss/services/poi_engine.dart';
 import 'package:notmiss/services/tts_service.dart';
+import 'package:notmiss/services/ai_service.dart';
+import 'package:notmiss/services/research_queue.dart';
+import 'package:notmiss/services/research_service.dart';
+import 'package:notmiss/services/wikidata_service.dart';
+import 'package:notmiss/services/wikipedia_service.dart';
 import 'package:notmiss/ui/walk_controller.dart';
 
 void main() {
@@ -406,6 +412,96 @@ void main() {
       expect(controller.allPois.first.id, 'sp_01');
 
       controller.dispose();
+    });
+
+    test('WalkController caches chat messages across user session', () async {
+      final dest = Destination(
+        id: 'dest_test',
+        name: 'Test Destination',
+        centerLatitude: 49.82,
+        centerLongitude: 24.02,
+        defaultZoom: 16.0,
+        pois: const [
+          Poi(
+            id: 'poi_qa',
+            name: 'QA Test POI',
+            latitude: 49.82,
+            longitude: 24.02,
+            triggerRadius: 35,
+            shortDescription: 'Desc',
+            facts: ['Fact 1'],
+            narrationText: 'Narration',
+            sources: [],
+          ),
+        ],
+      );
+
+      final controller = WalkController(
+        destination: dest,
+        apiKey: '',
+      );
+
+      // Verify chat history per POI
+      expect(controller.getChatHistory('poi_qa'), isEmpty);
+
+      controller.addChatMessage(
+        'poi_qa',
+        ChatMessage(text: 'Hello, what is this place?', isUser: true),
+      );
+      controller.addChatMessage(
+        'poi_qa',
+        ChatMessage(text: 'This is QA Test POI.', isUser: false),
+      );
+
+      final history = controller.getChatHistory('poi_qa');
+      expect(history.length, 2);
+      expect(history[0].text, 'Hello, what is this place?');
+      expect(history[0].isUser, isTrue);
+      expect(history[1].text, 'This is QA Test POI.');
+      expect(history[1].isUser, isFalse);
+
+      controller.dispose();
+    });
+
+    test('ResearchService skips duplicate research immediately if already complete in cache', () async {
+      final cache = PoiCacheService();
+      final category = PoiCategoryService();
+      final queue = ResearchQueue(maxConcurrent: 1);
+
+      final service = ResearchService(
+        categoryService: category,
+        cacheService: cache,
+        queue: queue,
+        wikidataService: WikidataService(),
+        wikipediaService: WikipediaService(),
+        aiService: AiService(apiKey: ''),
+      );
+
+      // Seed cache with completed research
+      final completed = EnrichedPoi(
+        poiId: 'cached_poi',
+        name: 'Cached Landmark',
+        category: 'monument',
+        latitude: 49.82,
+        longitude: 24.02,
+        researchStatus: ResearchStatus.complete,
+        shortDescription: 'Full historical description',
+        keyFacts: const [KeyFact(fact: 'Built in 1900')],
+        lastResearchedAt: DateTime.now(),
+      );
+      await cache.put(completed);
+
+      // Call researchImmediately without force
+      await service.researchImmediately('cached_poi');
+
+      // Verify that cache was respected and no duplicate research was triggered
+      final result = service.getEnrichedData('cached_poi');
+      expect(result, isNotNull);
+      expect(result!.shortDescription, 'Full historical description');
+      expect(result.keyFacts.length, 1);
+      expect(result.researchStatus, ResearchStatus.complete);
+
+      service.dispose();
     });
   });
 }
