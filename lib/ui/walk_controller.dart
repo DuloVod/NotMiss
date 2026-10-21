@@ -56,6 +56,10 @@ class WalkController extends ChangeNotifier {
   /// All POIs available for this walk (static + dynamic, deduplicated).
   List<Poi> _allPois = [];
 
+  /// Whether static Stryiskyi Park points are enabled.
+  bool _stryiskyiParkPoisEnabled = true;
+  bool get stryiskyiParkPoisEnabled => _stryiskyiParkPoisEnabled;
+
   /// Proximity events recorded during the current walk.
   final List<ProximityEvent> _proximityEvents = [];
 
@@ -114,6 +118,7 @@ class WalkController extends ChangeNotifier {
     _playerStateSub = _audioService.playerStateStream.listen((_) {
       notifyListeners();
     });
+    _allPois = List<Poi>.from(destination.pois);
   }
 
   WalkStatus get status => _status;
@@ -325,8 +330,8 @@ class WalkController extends ChangeNotifier {
     _status = WalkStatus.walking;
     _activePoi = null;
 
-    // Start with static POIs from destination
-    _allPois = List<Poi>.from(destination.pois);
+    // Start with static POIs from destination if enabled
+    _allPois = _stryiskyiParkPoisEnabled ? List<Poi>.from(destination.pois) : [];
     _statusMessage = 'Завантаження точок інтересу…';
     notifyListeners();
 
@@ -463,11 +468,16 @@ class WalkController extends ChangeNotifier {
     _isSimulating = true;
     int index = 0;
 
+    // Automatically re-enable Stryiskyi Park POIs if they were disabled
+    if (!_stryiskyiParkPoisEnabled) {
+      setStryiskyiParkPoisEnabled(true);
+    }
+
     // Filter Stryiskyi park points
-    var parkPois = _allPois.where((p) => p.id.startsWith('sp_')).toList();
+    var parkPois = _allPois.where(_isStryiskyiPoi).toList();
     if (parkPois.isEmpty) {
-      _allPois = List<Poi>.from(destination.pois);
-      parkPois = _allPois.where((p) => p.id.startsWith('sp_')).toList();
+      _allPois.insertAll(0, destination.pois);
+      parkPois = _allPois.where(_isStryiskyiPoi).toList();
     }
     if (parkPois.isEmpty) return;
 
@@ -521,10 +531,41 @@ class WalkController extends ChangeNotifier {
 
   /// Reset / force reload Stryiskyi Park curated points as active and unvisited.
   void resetStryiskyiParkPois() {
+    _stryiskyiParkPoisEnabled = true;
     _poiEngine.resetSession();
-    _allPois = List<Poi>.from(destination.pois);
+    final nonParkPois = _allPois.where((p) => !_isStryiskyiPoi(p)).toList();
+    _allPois = [...destination.pois, ...nonParkPois];
     _nearbyUnplayedPois = List<Poi>.from(destination.pois);
     _statusMessage = 'Точки Стрийського парку увімкнено (${destination.pois.length} точок).';
+    notifyListeners();
+  }
+
+  /// Check whether a POI is part of the static Stryiskyi Park dataset.
+  bool _isStryiskyiPoi(Poi p) {
+    return p.id.startsWith('sp_') || destination.pois.any((dp) => dp.id == p.id);
+  }
+
+  /// Toggle or set whether hardcoded Stryiskyi Park POIs are active.
+  void setStryiskyiParkPoisEnabled(bool enabled) {
+    if (_stryiskyiParkPoisEnabled == enabled) return;
+    _stryiskyiParkPoisEnabled = enabled;
+
+    if (!enabled) {
+      if (_isSimulating) {
+        stopSimulation();
+      }
+      if (_activePoi != null && _isStryiskyiPoi(_activePoi!)) {
+        stopAudio();
+      }
+      _allPois.removeWhere(_isStryiskyiPoi);
+      _nearbyUnplayedPois.removeWhere(_isStryiskyiPoi);
+      _statusMessage = 'Точки Стрийського парку вимкнено.';
+    } else {
+      final existingIds = _allPois.map((p) => p.id).toSet();
+      final toAdd = destination.pois.where((p) => !existingIds.contains(p.id)).toList();
+      _allPois.insertAll(0, toAdd);
+      _statusMessage = 'Точки Стрийського парку увімкнено (${destination.pois.length} точок).';
+    }
     notifyListeners();
   }
 

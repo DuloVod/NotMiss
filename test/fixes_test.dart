@@ -9,6 +9,7 @@ import 'package:notmiss/services/poi_cache_service.dart';
 import 'package:notmiss/services/poi_category_service.dart';
 import 'package:notmiss/services/poi_engine.dart';
 import 'package:notmiss/services/tts_service.dart';
+import 'package:notmiss/ui/walk_controller.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -360,6 +361,51 @@ void main() {
         expect(p.triggerRadius, 35.0);
         expect(p.narrationText.isNotEmpty, true);
       }
+    });
+
+    test('WalkController enables and disables Stryiskyi Park points', () {
+      final dest = Destination(
+        id: 'stryiskyi_park',
+        name: 'Стрийський парк',
+        centerLatitude: 49.8228,
+        centerLongitude: 24.0264,
+        defaultZoom: 16.0,
+        pois: [
+          const Poi(
+            id: 'sp_01',
+            name: 'Вежа',
+            latitude: 49.82,
+            longitude: 24.02,
+            triggerRadius: 35,
+            shortDescription: 'Опис',
+            facts: ['Факт'],
+            narrationText: 'Текст',
+            sources: [],
+          ),
+        ],
+      );
+
+      final controller = WalkController(
+        destination: dest,
+        apiKey: '',
+      );
+
+      expect(controller.stryiskyiParkPoisEnabled, isTrue);
+      expect(controller.allPois.length, 1);
+      expect(controller.allPois.first.id, 'sp_01');
+
+      // Disable points
+      controller.setStryiskyiParkPoisEnabled(false);
+      expect(controller.stryiskyiParkPoisEnabled, isFalse);
+      expect(controller.allPois.isEmpty, isTrue);
+
+      // Re-enable points
+      controller.setStryiskyiParkPoisEnabled(true);
+      expect(controller.stryiskyiParkPoisEnabled, isTrue);
+      expect(controller.allPois.length, 1);
+      expect(controller.allPois.first.id, 'sp_01');
+
+      controller.dispose();
     });
   });
 }
