@@ -17,8 +17,7 @@ class AudioPlayerService {
 
   bool get isPaused =>
       !_player.playing &&
-      (_player.processingState == ProcessingState.ready ||
-       _player.processingState == ProcessingState.buffering);
+      _player.processingState == ProcessingState.ready;
 
   Stream<PlayerState> get playerStateStream => _player.playerStateStream;
 

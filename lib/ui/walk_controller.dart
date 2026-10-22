@@ -20,6 +20,7 @@ import '../services/poi_cache_service.dart';
 import '../services/research_queue.dart';
 import '../services/wikidata_service.dart';
 import '../services/wikipedia_service.dart';
+import '../services/ios_background_task.dart';
 
 enum WalkStatus { idle, walking, stopped }
 
@@ -257,6 +258,7 @@ class WalkController extends ChangeNotifier {
     _isProcessing = true;
     notifyListeners();
 
+    await IosBackgroundTask.begin();
     try {
       String narration = updated.narrationText;
       if (narration.isEmpty) {
@@ -281,6 +283,7 @@ class WalkController extends ChangeNotifier {
     } catch (e) {
       debugPrint('[WalkController] Play narration error: $e');
     } finally {
+      await IosBackgroundTask.end();
       if (gen == _manualPlayGen && _activePoi?.id == updated.id) {
         _isProcessing = false;
         _activePoi = null;
@@ -730,6 +733,7 @@ class WalkController extends ChangeNotifier {
       'Generating audio narration…',
     );
 
+    await IosBackgroundTask.begin();
     try {
       String narration = activePoi.narrationText;
       if (narration.isEmpty) {
@@ -739,6 +743,11 @@ class WalkController extends ChangeNotifier {
         if (narration.isNotEmpty) {
           await _researchService.updateNarration(activePoi.id, narration, poi: activePoi);
         }
+      }
+
+      // Safe fallback so the app is never silent when GPS triggers in pocket
+      if (narration.isEmpty) {
+        narration = 'Перед вами ${activePoi.name}. Зверніть увагу на цей об\'єкт поруч із вами!';
       }
 
       if (narration.isNotEmpty) {
@@ -779,6 +788,7 @@ class WalkController extends ChangeNotifier {
         );
       }
     } finally {
+      await IosBackgroundTask.end();
       if (gen == _processGen) {
         _isProcessing = false;
         _activePoi = null;

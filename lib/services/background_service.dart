@@ -1,19 +1,20 @@
+import 'dart:io' show Platform;
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter_foreground_task/flutter_foreground_task.dart';
 
 /// Manages the Android foreground service that keeps the app alive
 /// while the screen is off during a walk.
 ///
-/// On iOS, background location is handled natively via Info.plist
-/// `UIBackgroundModes: [location, audio]` — no extra service needed.
+/// On iOS, background location and audio are handled natively via Info.plist
+/// `UIBackgroundModes: [location, audio]`, `AVAudioSession`, and `IosBackgroundTask`.
 ///
-/// On Web, this class is a no-op.
+/// On Web and iOS, this class is a no-op.
 class BackgroundService {
   static bool _initialized = false;
 
   /// Call once at app startup (main.dart) to configure the foreground task.
   static void init() {
-    if (kIsWeb) return;
+    if (kIsWeb || !Platform.isAndroid) return;
 
     FlutterForegroundTask.init(
       androidNotificationOptions: AndroidNotificationOptions(
@@ -25,7 +26,7 @@ class BackgroundService {
         priority: NotificationPriority.LOW,
       ),
       iosNotificationOptions: const IOSNotificationOptions(
-        showNotification: false, // iOS handles background via UIBackgroundModes
+        showNotification: false,
       ),
       foregroundTaskOptions: ForegroundTaskOptions(
         eventAction: ForegroundTaskEventAction.repeat(5000), // heartbeat every 5s
@@ -39,10 +40,9 @@ class BackgroundService {
     _initialized = true;
   }
 
-  /// Start the foreground service when a walk begins.
-  /// Shows a persistent notification on Android so the OS doesn't kill the app.
+  /// Start the foreground service when a walk begins (Android only).
   static Future<void> start() async {
-    if (kIsWeb || !_initialized) return;
+    if (kIsWeb || !Platform.isAndroid || !_initialized) return;
 
     // Request notification permission (Android 13+)
     final notifResult = await FlutterForegroundTask.checkNotificationPermission();
@@ -57,18 +57,18 @@ class BackgroundService {
     );
   }
 
-  /// Update the notification text (e.g. when a POI is triggered).
+  /// Update the notification text (Android only).
   static Future<void> updateNotification(String title, String text) async {
-    if (kIsWeb || !_initialized) return;
+    if (kIsWeb || !Platform.isAndroid || !_initialized) return;
     await FlutterForegroundTask.updateService(
       notificationTitle: title,
       notificationText: text,
     );
   }
 
-  /// Stop the foreground service when the walk ends.
+  /// Stop the foreground service when the walk ends (Android only).
   static Future<void> stop() async {
-    if (kIsWeb || !_initialized) return;
+    if (kIsWeb || !Platform.isAndroid || !_initialized) return;
     await FlutterForegroundTask.stopService();
   }
 }

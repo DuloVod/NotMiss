@@ -13,7 +13,9 @@ import 'package:geolocator/geolocator.dart';
 ///   - Skips duplicate positions (same lat/lng) on web
 class LocationService {
   /// Worst accuracy we accept. Positions with accuracy > this are discarded.
-  static const double _maxAccuracyM = 40.0;
+  /// 65.0m ensures reliable outdoor GPS fixes under tree canopy while phone is in pocket,
+  /// while still filtering coarse cellular cell tower approximations (500m+).
+  static const double _maxAccuracyM = 65.0;
 
   static LocationSettings get _settings {
     if (kIsWeb) {

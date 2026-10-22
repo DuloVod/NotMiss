@@ -16,8 +16,6 @@ class TtsService {
   final String apiKey;
 
   static const List<String> _models = [
-    'gemini-3.8-flash-lite-tts',
-    'gemini-3.8-flash-tts',
     'gemini-2.5-flash-preview-tts',
   ];
 
