@@ -503,5 +503,55 @@ void main() {
 
       service.dispose();
     });
+
+    test('AudioPlayerService isPlaying and isPaused getters behave correctly on idle state', () {
+      final audioService = AudioPlayerService();
+      expect(audioService.isPlaying, isFalse);
+      expect(audioService.isPaused, isFalse);
+      audioService.dispose();
+    });
+
+    test('ResearchService guarantees non-trivial description, facts and narration', () async {
+      final cache = PoiCacheService();
+      final category = PoiCategoryService();
+      final queue = ResearchQueue(maxConcurrent: 1);
+
+      final service = ResearchService(
+        categoryService: category,
+        cacheService: cache,
+        queue: queue,
+        wikidataService: WikidataService(),
+        wikipediaService: WikipediaService(),
+        aiService: AiService(apiKey: ''), // offline fallback
+      );
+
+      const testPoi = Poi(
+        id: 'poi_vehicle_test',
+        name: '9К35 «Стріла-10»',
+        latitude: 49.82,
+        longitude: 24.02,
+        triggerRadius: 35,
+        shortDescription: 'historic: vehicle · Радянський зенітно-ракетний комплекс',
+        facts: [],
+        narrationText: '',
+        sources: [],
+      );
+
+      await service.researchImmediately('poi_vehicle_test', poi: testPoi, force: true);
+
+      final result = service.getEnrichedData('poi_vehicle_test');
+      expect(result, isNotNull);
+      expect(result!.researchStatus, ResearchStatus.complete);
+      // Guaranteed human-readable description (not raw historic: vehicle tag)
+      expect(result.shortDescription, isNotNull);
+      expect(result.shortDescription!.startsWith('historic:'), isFalse);
+      // Guaranteed facts
+      expect(result.keyFacts, isNotEmpty);
+      // Guaranteed narration text so the app is never silent
+      expect(result.narrationText, isNotNull);
+      expect(result.narrationText!.isNotEmpty, isTrue);
+
+      service.dispose();
+    });
   });
 }

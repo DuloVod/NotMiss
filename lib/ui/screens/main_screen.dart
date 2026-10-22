@@ -246,7 +246,7 @@ class _MainScreenState extends State<MainScreen> {
                       child: Column(
                         mainAxisSize: MainAxisSize.min,
                         children: [
-                          // Compass reset (only shows if map is rotated)
+                          // Compass reset & orientation indicator (always accessible)
                           StreamBuilder<MapEvent>(
                             stream: _mapController.mapEventStream,
                             builder: (ctx, snap) {
@@ -254,34 +254,64 @@ class _MainScreenState extends State<MainScreen> {
                               try {
                                 rotation = _mapController.camera.rotation;
                               } catch (_) {}
-                              if (rotation == 0.0) return const SizedBox.shrink();
+                              final isRotated = rotation.abs() > 0.5;
                               return Padding(
                                 padding: const EdgeInsets.only(bottom: 12.0),
-                                child: FloatingActionButton(
-                                  heroTag: 'walkResetNorth',
-                                  backgroundColor: Colors.white,
-                                  elevation: 4,
-                                  onPressed: () => _mapController.rotate(0),
-                                  child: Transform.rotate(
-                                    angle: -rotation * (3.14159 / 180),
-                                    child: const Icon(Icons.explore, color: Colors.red, size: 28),
+                                child: SizedBox(
+                                  width: 48,
+                                  height: 48,
+                                  child: FloatingActionButton(
+                                    heroTag: 'walkResetNorth',
+                                    backgroundColor: Colors.white,
+                                    elevation: 4,
+                                    tooltip: 'Орієнтувати на північ',
+                                    onPressed: () => _mapController.rotate(0.0),
+                                    child: Transform.rotate(
+                                      angle: -rotation * (3.141592653589793 / 180),
+                                      child: Stack(
+                                        alignment: Alignment.center,
+                                        children: [
+                                          Icon(
+                                            Icons.navigation,
+                                            color: isRotated ? Colors.red.shade700 : Colors.grey.shade600,
+                                            size: 24,
+                                          ),
+                                          Positioned(
+                                            top: 2,
+                                            child: Text(
+                                              'N',
+                                              style: TextStyle(
+                                                fontSize: 9,
+                                                fontWeight: FontWeight.bold,
+                                                color: isRotated ? Colors.red.shade900 : Colors.grey.shade700,
+                                              ),
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                    ),
                                   ),
                                 ),
                               );
                             },
                           ),
                           // Locate User Button
-                          FloatingActionButton(
-                            heroTag: 'walkLocateMe',
-                            backgroundColor: Colors.white,
-                            elevation: 4,
-                            onPressed: _locateMe,
-                            child: Icon(
-                              pos != null && _followUser
-                                  ? Icons.my_location
-                                  : Icons.location_searching,
-                              color: _followUser ? Colors.blue : Colors.grey.shade600,
-                              size: 28,
+                          SizedBox(
+                            width: 48,
+                            height: 48,
+                            child: FloatingActionButton(
+                              heroTag: 'walkLocateMe',
+                              backgroundColor: Colors.white,
+                              elevation: 4,
+                              tooltip: 'Моє розташування',
+                              onPressed: _locateMe,
+                              child: Icon(
+                                pos != null && _followUser
+                                    ? Icons.my_location
+                                    : Icons.location_searching,
+                                color: _followUser ? Colors.blue : Colors.grey.shade600,
+                                size: 26,
+                              ),
                             ),
                           ),
                         ],
@@ -326,6 +356,9 @@ class _MainScreenState extends State<MainScreen> {
     final isPlaying = widget.controller.isPlaying;
     final isPaused = widget.controller.isAudioPaused;
     final isAudioActive = isPlaying || isPaused;
+    final displayText = (poi.narrationText.isNotEmpty)
+        ? poi.narrationText
+        : poi.shortDescription;
 
     return Padding(
       padding: const EdgeInsets.all(24),
@@ -405,17 +438,63 @@ class _MainScreenState extends State<MainScreen> {
               ),
             ],
           ),
-          if (poi.shortDescription.isNotEmpty) ...[
-            const SizedBox(height: 16),
-            Text(
-              poi.shortDescription,
-              style: const TextStyle(
-                fontSize: 16,
-                color: Colors.black87,
-                height: 1.4,
+          // Narration or Description Card (with quick open to full sheet)
+          if (displayText.isNotEmpty) ...[
+            const SizedBox(height: 14),
+            InkWell(
+              onTap: () => _showPoiDetails(context, poi),
+              borderRadius: BorderRadius.circular(14),
+              child: Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFF1F8E9),
+                  borderRadius: BorderRadius.circular(14),
+                  border: Border.all(color: const Color(0xFFA5D6A7)),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Icon(
+                          poi.narrationText.isNotEmpty ? Icons.auto_awesome : Icons.info_outline,
+                          size: 16,
+                          color: const Color(0xFF2E7D32),
+                        ),
+                        const SizedBox(width: 6),
+                        Text(
+                          poi.narrationText.isNotEmpty ? 'Текст розповіді гіда:' : 'Про об\'єкт:',
+                          style: const TextStyle(
+                            fontSize: 13,
+                            fontWeight: FontWeight.bold,
+                            color: Color(0xFF1B5E20),
+                          ),
+                        ),
+                        const Spacer(),
+                        const Text(
+                          'Читати все ↗',
+                          style: TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.bold,
+                            color: Color(0xFF2E7D32),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 6),
+                    Text(
+                      displayText,
+                      style: const TextStyle(
+                        fontSize: 14,
+                        color: Color(0xFF1B3B1B),
+                        height: 1.4,
+                      ),
+                      maxLines: 4,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ],
+                ),
               ),
-              maxLines: 3,
-              overflow: TextOverflow.ellipsis,
             ),
           ],
           const SizedBox(height: 20),
@@ -1042,9 +1121,18 @@ class _PoiDetailsSheetState extends State<_PoiDetailsSheet> {
   bool _isTrivial(String? s) {
     if (s == null || s.trim().isEmpty) return true;
     final trimmed = s.trim().toLowerCase();
+    if (trimmed.startsWith('historic:') ||
+        trimmed.startsWith('tourism:') ||
+        trimmed.startsWith('amenity:') ||
+        trimmed.startsWith('leisure:') ||
+        trimmed.startsWith('building:') ||
+        trimmed.startsWith('natural:') ||
+        trimmed.startsWith('man_made:')) {
+      return true;
+    }
     const trivialOsmValues = {
       'library', 'artwork', 'monument', 'fountain', 'viewpoint',
-      'museum', 'ruins', 'park', 'attraction', 'memorial'
+      'museum', 'ruins', 'park', 'attraction', 'memorial', 'vehicle'
     };
     if (trivialOsmValues.contains(trimmed)) return true;
     return trimmed.length < 15 && !trimmed.contains(' ');
@@ -1060,16 +1148,6 @@ class _PoiDetailsSheetState extends State<_PoiDetailsSheet> {
     final updatedPoi = widget.controller.getUpdatedPoi(widget.poi);
     final enriched = widget.controller.getEnrichedPoi(widget.poi.id);
 
-    // If AI or background research already ran or is running for this POI, don't repeat the search
-    if (enriched != null &&
-        (enriched.isResearchComplete ||
-         enriched.researchStatus == ResearchStatus.complete ||
-         enriched.researchStatus == ResearchStatus.partial ||
-         enriched.researchStatus == ResearchStatus.insufficientInformation ||
-         enriched.researchStatus == ResearchStatus.inProgress)) {
-      return;
-    }
-
     final hasNarration = (enriched?.narrationText?.isNotEmpty == true || updatedPoi.narrationText.isNotEmpty);
     final rawDesc = (enriched?.shortDescription?.isNotEmpty == true)
         ? enriched!.shortDescription!
@@ -1081,7 +1159,7 @@ class _PoiDetailsSheetState extends State<_PoiDetailsSheet> {
 
     if (!hasCompleteData && !_isRequesting) {
       _isRequesting = true;
-      widget.controller.researchPoiNow(widget.poi).whenComplete(() {
+      widget.controller.researchPoiNow(widget.poi, force: true).whenComplete(() {
         if (mounted) {
           setState(() => _isRequesting = false);
         }
@@ -1226,7 +1304,7 @@ class _PoiDetailsSheetState extends State<_PoiDetailsSheet> {
                                       Text(
                                         queuePos > 0
                                             ? 'Об\'єкт у черзі на дослідження (позиція: $queuePos)...'
-                                            : 'ШІ та Вікіпедія готують розповідь та факти...',
+                                            : 'Шишка шукає інформацію про це місце (Вікіпедія, ШІ)...',
                                         style: TextStyle(
                                           fontSize: 15,
                                           color: Colors.amber.shade900,

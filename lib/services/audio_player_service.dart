@@ -10,11 +10,15 @@ import 'package:just_audio/just_audio.dart';
 class AudioPlayerService {
   final AudioPlayer _player = AudioPlayer();
 
-  bool get isPlaying => _player.playing;
+  bool get isPlaying =>
+      _player.playing &&
+      _player.processingState != ProcessingState.completed &&
+      _player.processingState != ProcessingState.idle;
 
   bool get isPaused =>
       !_player.playing &&
-      _player.processingState == ProcessingState.ready;
+      (_player.processingState == ProcessingState.ready ||
+       _player.processingState == ProcessingState.buffering);
 
   Stream<PlayerState> get playerStateStream => _player.playerStateStream;
 
@@ -39,6 +43,11 @@ class AudioPlayerService {
     await _player.playerStateStream.firstWhere((state) =>
         state.processingState == ProcessingState.completed ||
         state.processingState == ProcessingState.idle);
+
+    // Cleanly reset player when playback reaches completion naturally
+    try {
+      await _player.stop();
+    } catch (_) {}
   }
 
   /// Pause playback.
