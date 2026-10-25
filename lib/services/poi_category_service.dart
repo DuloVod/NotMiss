@@ -76,6 +76,37 @@ class PoiCategoryService {
     return ResearchPriority.medium;
   }
 
+  /// Evaluates whether a description string is trivial (e.g. raw OSM tag values like "library")
+  /// or a meaningful description / proper noun that should be preserved.
+  static bool isTrivialDescription(String? s) {
+    if (s == null || s.trim().isEmpty) return true;
+    final trimmed = s.trim().toLowerCase();
+    // OSM tag prefix patterns — always trivial
+    if (trimmed.startsWith('historic:') ||
+        trimmed.startsWith('tourism:') ||
+        trimmed.startsWith('amenity:') ||
+        trimmed.startsWith('leisure:') ||
+        trimmed.startsWith('building:') ||
+        trimmed.startsWith('natural:') ||
+        trimmed.startsWith('man_made:')) {
+      return true;
+    }
+    // Known single-word OSM values that carry no useful information for the user
+    const trivialOsmValues = {
+      'library', 'artwork', 'monument', 'fountain', 'viewpoint',
+      'museum', 'ruins', 'park', 'attraction', 'memorial', 'vehicle',
+      'yes', 'no', 'building', 'place_of_worship',
+    };
+    if (trivialOsmValues.contains(trimmed)) return true;
+    // Bare single words shorter than 20 chars are likely raw OSM category values.
+    // We keep them if they're proper nouns (start with uppercase in the original).
+    if (!trimmed.contains(' ') && s.trim().length < 20) {
+      final firstChar = s.trim()[0];
+      if (firstChar == firstChar.toLowerCase()) return true; // lowercase start → discard
+    }
+    return false;
+  }
+
   bool _isSculptureMemorial(
       String? historic, String? tourism, String? amenity, String? manMade) {
     const sculptureTags = {

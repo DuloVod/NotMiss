@@ -6,6 +6,7 @@ import 'package:latlong2/latlong.dart';
 import '../../models/poi.dart';
 import '../../models/enriched_poi.dart';
 import '../../models/chat_message.dart';
+import '../../services/poi_category_service.dart';
 import '../walk_controller.dart';
 import 'package:geolocator/geolocator.dart'; // For Position
 
@@ -83,7 +84,6 @@ class _MainScreenState extends State<MainScreen> {
     final pos = widget.controller.currentPosition;
     final activePoi = widget.controller.activePoi;
     final allPois = widget.controller.allPois;
-    // events list removed
 
     return Scaffold(
       backgroundColor: const Color(0xFFEFEFEF),
@@ -1118,26 +1118,6 @@ class _PoiDetailsSheet extends StatefulWidget {
 class _PoiDetailsSheetState extends State<_PoiDetailsSheet> {
   bool _isRequesting = false;
 
-  bool _isTrivial(String? s) {
-    if (s == null || s.trim().isEmpty) return true;
-    final trimmed = s.trim().toLowerCase();
-    if (trimmed.startsWith('historic:') ||
-        trimmed.startsWith('tourism:') ||
-        trimmed.startsWith('amenity:') ||
-        trimmed.startsWith('leisure:') ||
-        trimmed.startsWith('building:') ||
-        trimmed.startsWith('natural:') ||
-        trimmed.startsWith('man_made:')) {
-      return true;
-    }
-    const trivialOsmValues = {
-      'library', 'artwork', 'monument', 'fountain', 'viewpoint',
-      'museum', 'ruins', 'park', 'attraction', 'memorial', 'vehicle'
-    };
-    if (trivialOsmValues.contains(trimmed)) return true;
-    return trimmed.length < 15 && !trimmed.contains(' ');
-  }
-
   @override
   void initState() {
     super.initState();
@@ -1152,14 +1132,15 @@ class _PoiDetailsSheetState extends State<_PoiDetailsSheet> {
     final rawDesc = (enriched?.shortDescription?.isNotEmpty == true)
         ? enriched!.shortDescription!
         : updatedPoi.shortDescription;
-    final hasRichDesc = !_isTrivial(rawDesc);
+    final hasRichDesc = !PoiCategoryService.isTrivialDescription(rawDesc);
     final hasFacts = (enriched?.keyFacts.isNotEmpty == true || updatedPoi.facts.isNotEmpty);
 
     final hasCompleteData = hasNarration && hasRichDesc && hasFacts;
+    final isAlreadyResearched = enriched?.isResearchComplete == true;
 
-    if (!hasCompleteData && !_isRequesting) {
+    if (!hasCompleteData && !isAlreadyResearched && !_isRequesting) {
       _isRequesting = true;
-      widget.controller.researchPoiNow(widget.poi, force: true).whenComplete(() {
+      widget.controller.researchPoiNow(widget.poi, force: false).whenComplete(() {
         if (mounted) {
           setState(() => _isRequesting = false);
         }
@@ -1183,7 +1164,7 @@ class _PoiDetailsSheetState extends State<_PoiDetailsSheet> {
         final rawDesc = (enriched?.shortDescription?.isNotEmpty == true)
             ? enriched!.shortDescription!
             : updatedPoi.shortDescription;
-        final description = _isTrivial(rawDesc) ? '' : rawDesc;
+        final description = PoiCategoryService.isTrivialDescription(rawDesc) ? '' : rawDesc;
 
         final facts = (enriched?.keyFacts.isNotEmpty == true)
             ? enriched!.keyFacts.map((f) => f.fact).toList()

@@ -152,8 +152,11 @@ class ResearchService {
   ///
   /// If [force] is false and the POI is already researched, skips redundant network/AI requests.
   Future<void> researchImmediately(String poiId, {Poi? poi, bool force = false}) async {
-    // If already being researched immediately, skip duplicate call
-    if (_inFlightImmediateIds.contains(poiId)) return;
+    // If already being researched immediately, wait for completion rather than skipping
+    if (_inFlightImmediateIds.contains(poiId)) {
+      await waitForResearch(poiId);
+      return;
+    }
 
     // Session cache check: if already researched and not forced, return immediately
     if (!force && !_cacheService.needsResearch(poiId)) {
@@ -337,40 +340,7 @@ class ResearchService {
 
       String? narrationText = enriched.narrationText;
 
-      // Filter out trivial raw OSM tag strings (like "library" or "historic: vehicle").
-      // We only discard if the text is a known single-word OSM category value
-      // or is shorter than 20 chars with no spaces (single bare word with no context).
-      bool isTrivial(String? s) {
-        if (s == null || s.trim().isEmpty) return true;
-        final trimmed = s.trim().toLowerCase();
-        // OSM tag prefix patterns — always trivial
-        if (trimmed.startsWith('historic:') ||
-            trimmed.startsWith('tourism:') ||
-            trimmed.startsWith('amenity:') ||
-            trimmed.startsWith('leisure:') ||
-            trimmed.startsWith('building:') ||
-            trimmed.startsWith('natural:') ||
-            trimmed.startsWith('man_made:')) {
-          return true;
-        }
-        // Known single-word OSM values that carry no useful information for the user
-        const trivialOsmValues = {
-          'library', 'artwork', 'monument', 'fountain', 'viewpoint',
-          'museum', 'ruins', 'park', 'attraction', 'memorial', 'vehicle',
-          'yes', 'no', 'building', 'place_of_worship',
-        };
-        if (trivialOsmValues.contains(trimmed)) return true;
-        // Bare single words shorter than 20 chars are likely raw OSM category values.
-        // We keep them if they're proper nouns (start with uppercase in the original).
-        if (!trimmed.contains(' ') && s.trim().length < 20) {
-          // Allow if the original starts with an uppercase letter (proper noun / place name)
-          final firstChar = s.trim()[0];
-          if (firstChar == firstChar.toLowerCase()) return true; // lowercase start → discard
-        }
-        return false;
-      }
-
-      if (isTrivial(shortDesc)) {
+      if (PoiCategoryService.isTrivialDescription(shortDesc)) {
         shortDesc = null;
       }
 
@@ -409,7 +379,7 @@ class ResearchService {
       }
 
       // Safety fallback: guaranteed non-empty human-readable description and facts
-      if (shortDesc == null || isTrivial(shortDesc)) {
+      if (shortDesc == null || PoiCategoryService.isTrivialDescription(shortDesc)) {
         if (facts.isNotEmpty) {
           shortDesc = facts.first.fact;
         } else {

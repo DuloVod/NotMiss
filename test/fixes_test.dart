@@ -553,5 +553,46 @@ void main() {
 
       service.dispose();
     });
+
+    test('ResearchService.researchImmediately awaits in-flight research when called concurrently', () async {
+      final cache = PoiCacheService();
+      final category = PoiCategoryService();
+      final queue = ResearchQueue(maxConcurrent: 1);
+
+      final service = ResearchService(
+        categoryService: category,
+        cacheService: cache,
+        queue: queue,
+        wikidataService: WikidataService(),
+        wikipediaService: WikipediaService(),
+        aiService: AiService(apiKey: ''), // offline fallback
+      );
+
+      const testPoi = Poi(
+        id: 'poi_concurrent_test',
+        name: 'Ратуша',
+        latitude: 49.84,
+        longitude: 24.03,
+        triggerRadius: 40,
+        shortDescription: 'Ратуша',
+        facts: [],
+        narrationText: '',
+        sources: [],
+      );
+
+      // Launch two concurrent researchImmediately calls on the same POI
+      final f1 = service.researchImmediately('poi_concurrent_test', poi: testPoi, force: true);
+      final f2 = service.researchImmediately('poi_concurrent_test', poi: testPoi, force: true);
+
+      await Future.wait([f1, f2]);
+
+      final result = service.getEnrichedData('poi_concurrent_test');
+      expect(result, isNotNull);
+      expect(result!.researchStatus, ResearchStatus.complete);
+      expect(result.narrationText, isNotNull);
+      expect(result.narrationText!.isNotEmpty, isTrue);
+
+      service.dispose();
+    });
   });
 }

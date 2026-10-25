@@ -221,58 +221,35 @@ void main() {
           reason: 'Offline fallback narration must always be saved on research failure');
     });
 
-    test('isTrivial preserves proper-noun single-word descriptions', () {
-      // We use a helper function matching the one in ResearchService to verify
-      // that proper nouns are kept, while lowercase OSM values are discarded.
-      bool isTrivial(String? s) {
-        if (s == null || s.trim().isEmpty) return true;
-        final trimmed = s.trim().toLowerCase();
-        if (trimmed.startsWith('historic:') ||
-            trimmed.startsWith('tourism:') ||
-            trimmed.startsWith('amenity:') ||
-            trimmed.startsWith('leisure:') ||
-            trimmed.startsWith('building:') ||
-            trimmed.startsWith('natural:') ||
-            trimmed.startsWith('man_made:')) return true;
-        const trivialOsmValues = {
-          'library', 'artwork', 'monument', 'fountain', 'viewpoint',
-          'museum', 'ruins', 'park', 'attraction', 'memorial', 'vehicle',
-          'yes', 'no', 'building', 'place_of_worship',
-        };
-        if (trivialOsmValues.contains(trimmed)) return true;
-        if (!trimmed.contains(' ') && s.trim().length < 20) {
-          final firstChar = s.trim()[0];
-          if (firstChar == firstChar.toLowerCase()) return true;
-        }
-        return false;
-      }
+    test('isTrivialDescription preserves proper-noun single-word descriptions', () {
+      // Test the centralized method in PoiCategoryService directly.
 
       // Trivial: known OSM values
-      expect(isTrivial('museum'), isTrue);
-      expect(isTrivial('artwork'), isTrue);
-      expect(isTrivial('historic:monument'), isTrue);
-      expect(isTrivial('yes'), isTrue);
+      expect(PoiCategoryService.isTrivialDescription('museum'), isTrue);
+      expect(PoiCategoryService.isTrivialDescription('artwork'), isTrue);
+      expect(PoiCategoryService.isTrivialDescription('historic:monument'), isTrue);
+      expect(PoiCategoryService.isTrivialDescription('yes'), isTrue);
 
       // Trivial: lowercase bare word (looks like OSM tag value)
-      expect(isTrivial('church'), isTrue);
-      expect(isTrivial('tower'), isTrue);
+      expect(PoiCategoryService.isTrivialDescription('church'), isTrue);
+      expect(PoiCategoryService.isTrivialDescription('tower'), isTrue);
 
       // NOT trivial: proper noun (uppercase start)
-      expect(isTrivial('Ратуша'), isFalse);
-      expect(isTrivial('Костел'), isFalse);
-      expect(isTrivial('Palais'), isFalse);
+      expect(PoiCategoryService.isTrivialDescription('Ратуша'), isFalse);
+      expect(PoiCategoryService.isTrivialDescription('Костел'), isFalse);
+      expect(PoiCategoryService.isTrivialDescription('Palais'), isFalse);
 
       // NOT trivial: contains a space (even short)
-      expect(isTrivial('old town'), isFalse);
+      expect(PoiCategoryService.isTrivialDescription('old town'), isFalse);
 
       // NOT trivial: long enough description
-      expect(isTrivial('Бароковий костел XVIII ст.'), isFalse);
-      expect(isTrivial('Цікавий туристичний об\'єкт'), isFalse);
+      expect(PoiCategoryService.isTrivialDescription('Бароковий костел XVIII ст.'), isFalse);
+      expect(PoiCategoryService.isTrivialDescription('Цікавий туристичний об\'єкт'), isFalse);
 
       // Edge: empty / null
-      expect(isTrivial(null), isTrue);
-      expect(isTrivial(''), isTrue);
-      expect(isTrivial('  '), isTrue);
+      expect(PoiCategoryService.isTrivialDescription(null), isTrue);
+      expect(PoiCategoryService.isTrivialDescription(''), isTrue);
+      expect(PoiCategoryService.isTrivialDescription('  '), isTrue);
     });
   });
 }

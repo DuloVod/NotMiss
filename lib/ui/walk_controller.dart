@@ -262,20 +262,12 @@ class WalkController extends ChangeNotifier {
     try {
       String narration = updated.narrationText;
       if (narration.isEmpty) {
-        // Wait for background research to settle before raw AI fallback
-        final enriched = _researchService.getEnrichedData(updated.id);
-        final isResearching = enriched != null &&
-            (enriched.researchStatus == ResearchStatus.inProgress ||
-             enriched.researchStatus == ResearchStatus.queued);
-        if (isResearching) {
-          debugPrint('[WalkController] Manual play: waiting for research on ${updated.name}…');
-          await _researchService.waitForResearch(updated.id,
-              timeout: const Duration(seconds: 30));
-          if (gen != _manualPlayGen) return;
-          final refreshed = getUpdatedPoi(updated);
-          narration = refreshed.narrationText;
-          _activePoi = refreshed;
-        }
+        // Run or await research immediately — guarantees Wikipedia/Wikidata is consulted first
+        await _researchService.researchImmediately(updated.id, poi: updated);
+        if (gen != _manualPlayGen) return;
+        final refreshed = getUpdatedPoi(updated);
+        narration = refreshed.narrationText;
+        _activePoi = refreshed;
       }
 
       if (narration.isEmpty) {
@@ -420,7 +412,9 @@ class WalkController extends ChangeNotifier {
 
     _uiTimer?.cancel();
     _uiTimer = Timer.periodic(const Duration(seconds: 1), (_) {
-      if (_status == WalkStatus.walking) notifyListeners();
+      if (_status == WalkStatus.walking && backgroundActivity.isNotEmpty) {
+        notifyListeners();
+      }
     });
   }
 
@@ -671,6 +665,9 @@ class WalkController extends ChangeNotifier {
       _loadOsmPoisAsync();
     }
     // Завчасно піднімаємо пріоритет для точок, до яких наближається користувач (150 метрів)
+    Poi? closestApproachingPoi;
+    double closestApproachingDist = double.infinity;
+
     for (final p in _allPois) {
       if (!_poiEngine.triggeredPoiIds.contains(p.id)) {
         final dist = Geolocator.distanceBetween(
@@ -680,12 +677,17 @@ class WalkController extends ChangeNotifier {
         if (dist < 150) {
           _researchService.prioritizePoi(p.id);
         }
-        // Заздалегідь синтезуємо аудіо для найближчої точки (до 100м),
-        // щоб у фоновому режимі при вимкненому екрані відтворення почалося миттєво
-        if (dist <= 100 && dist > p.triggerRadius && !_isProcessing) {
-          _preSynthesizePoi(p);
+        // Знаходимо одну найближчу точку на наближенні (до 100м)
+        if (dist <= 100 && dist > p.triggerRadius && dist < closestApproachingDist) {
+          closestApproachingDist = dist;
+          closestApproachingPoi = p;
         }
       }
+    }
+
+    // Заздалегідь синтезуємо аудіо лише для однієї найближчої точки, уникаючи спаму черги TTS
+    if (closestApproachingPoi != null && !_isProcessing) {
+      _preSynthesizePoi(closestApproachingPoi);
     }
 
     // Знаходимо всі точки поруч, які ще не були відвідані
@@ -759,22 +761,12 @@ class WalkController extends ChangeNotifier {
     try {
       String narration = activePoi.narrationText;
       if (narration.isEmpty) {
-        // Wait for background research to finish (up to 30s) before falling
-        // back to a raw AI call — research produces richer narration text.
-        final enriched = _researchService.getEnrichedData(activePoi.id);
-        final isResearching = enriched != null &&
-            (enriched.researchStatus == ResearchStatus.inProgress ||
-             enriched.researchStatus == ResearchStatus.queued);
-        if (isResearching) {
-          debugPrint('[WalkController] Waiting for research to complete for ${activePoi.name}…');
-          await _researchService.waitForResearch(activePoi.id,
-              timeout: const Duration(seconds: 30));
-          if (gen != _processGen) return; // Cancelled while waiting
-          // Re-fetch after research settled
-          final updatedAfterResearch = getUpdatedPoi(activePoi);
-          narration = updatedAfterResearch.narrationText;
-          _activePoi = updatedAfterResearch;
-        }
+        // Run or await research immediately — guarantees Wikipedia/Wikidata is consulted first
+        await _researchService.researchImmediately(activePoi.id, poi: activePoi);
+        if (gen != _processGen) return; // Cancelled while waiting
+        final updatedAfterResearch = getUpdatedPoi(activePoi);
+        narration = updatedAfterResearch.narrationText;
+        _activePoi = updatedAfterResearch;
       }
 
       if (narration.isEmpty) {

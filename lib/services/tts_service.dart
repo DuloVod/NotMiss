@@ -27,14 +27,28 @@ class TtsService {
 
   TtsService({required this.apiKey});
 
+  /// Deterministic 31-bit DJB2 hash of text content for cache validation.
+  int _hashText(String text) {
+    var hash = 5381;
+    for (var i = 0; i < text.length; i++) {
+      hash = ((hash << 5) + hash) + text.codeUnitAt(i);
+      hash &= 0x7FFFFFFF;
+    }
+    return hash;
+  }
+
   /// Convert [text] to audio.
   ///
   /// Returns a data URI on web (for use with AudioPlayer.setUrl),
   /// or a file path on native (for use with AudioPlayer.setFilePath).
   Future<String> synthesize(String text, String poiId) async {
-    // Check disk cache first to avoid redundant API calls and enable offline / instant playback
+    final textHash = _hashText(text);
+
+    // Check disk cache first to avoid redundant API calls and enable offline / instant playback.
+    // textHash ensures that if a POI's narration text was updated (e.g. from fallback to rich
+    // Wikipedia research), the old fallback audio is never mistakenly reused.
     if (!kIsWeb) {
-      final cached = await platform.getCachedTempWav(poiId);
+      final cached = await platform.getCachedTempWav(poiId, textHash: textHash);
       if (cached != null) {
         debugPrint('[TtsService] Using cached audio for $poiId: $cached');
         return cached;
@@ -95,7 +109,7 @@ class TtsService {
             final base64Wav = base64Encode(wavBytes);
             return 'data:audio/wav;base64,$base64Wav';
           } else {
-            return await platform.saveTempWav(wavBytes, poiId);
+            return await platform.saveTempWav(wavBytes, poiId, textHash: textHash);
           }
         } else {
           lastError = 'TTS API error with $model ${response.statusCode}: ${response.body}';
