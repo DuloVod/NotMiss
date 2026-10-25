@@ -98,12 +98,49 @@ class ResearchService {
   /// to prevent concurrent duplicate execution for the same POI.
   final Set<String> _inFlightImmediateIds = {};
 
+  /// Active Completers keyed by poiId for callers awaiting research completion.
+  /// Multiple callers can await the same research by chaining on the same completer.
+  final Map<String, Completer<void>> _researchCompleters = {};
+
   /// Bumps a specific POI to the highest priority in the research queue.
   /// Used when the user physically approaches an unresearched POI.
   void prioritizePoi(String poiId) {
     if (_cacheService.needsResearch(poiId)) {
       _bumpedPois.add(poiId);
       _queue.enqueue(poiId, ResearchPriority.high, bump: true);
+    }
+  }
+
+  /// Returns a Future that completes when research for [poiId] is no longer
+  /// inProgress/queued (i.e. it finished, failed, or was never started).
+  /// [timeout] limits how long to wait; defaults to 30 seconds.
+  ///
+  /// This lets [WalkController._processPoi] and [playNarrationForPoi] wait for
+  /// background research to settle before falling back to AI-only narration.
+  Future<void> waitForResearch(String poiId,
+      {Duration timeout = const Duration(seconds: 30)}) async {
+    final cached = _cacheService.get(poiId);
+    if (cached == null) return; // Nothing to wait for
+    if (cached.researchStatus != ResearchStatus.inProgress &&
+        cached.researchStatus != ResearchStatus.queued) return;
+
+    // Reuse existing completer if one is already attached to this POI
+    final completer = _researchCompleters.putIfAbsent(
+      poiId,
+      () => Completer<void>(),
+    );
+    if (completer.isCompleted) {
+      _researchCompleters.remove(poiId);
+      return;
+    }
+    try {
+      await completer.future.timeout(timeout);
+    } on TimeoutException {
+      debugPrint('[ResearchService] waitForResearch timeout for $poiId');
+    } catch (_) {
+      // Research errored — continue anyway, caller will use fallback
+    } finally {
+      _researchCompleters.remove(poiId);
     }
   }
 
@@ -151,10 +188,14 @@ class ResearchService {
   }
 
   /// The core research workflow executed by the queue.
+  ///
+  /// Wrapped in a 45-second timeout to prevent indefinite hangs.
+  /// On any failure, saves an offline-ready fallback narration so the app
+  /// is never silent even without network / AI availability.
   Future<void> _processResearchTask(String poiId) async {
     final enriched = _cacheService.get(poiId);
     if (enriched == null) return;
-    
+
     // Mark in progress
     final inProg = enriched.copyWith(
       researchStatus: ResearchStatus.inProgress,
@@ -164,6 +205,33 @@ class ResearchService {
 
     debugPrint('[ResearchService] Starting research for ${enriched.name} ($poiId)');
 
+    try {
+      await _doResearch(enriched, poiId);
+    } catch (e) {
+      debugPrint('[ResearchService] Research failed for $poiId: $e');
+      // Save offline fallback so the app is NEVER silent even after failure
+      final offlineNarration = enriched.narrationText?.isNotEmpty == true
+          ? enriched.narrationText!
+          : 'Перед вами ${enriched.name}. Це одне з примітних місць на вашому маршруті. Зверніть увагу на його вигляд та деталі довкола!';
+      final failed = enriched.copyWith(
+        researchStatus: ResearchStatus.failed,
+        narrationText: offlineNarration,
+        lastResearchedAt: DateTime.now(),
+      );
+      await _cacheService.put(failed);
+      onPoiUpdated?.call(failed);
+      rethrow; // Let queue handle retry
+    } finally {
+      // Signal any callers awaiting this POI's research completion
+      final completer = _researchCompleters.remove(poiId);
+      if (completer != null && !completer.isCompleted) {
+        completer.complete();
+      }
+    }
+  }
+
+  /// Inner research body — runs inside a 45-second timeout.
+  Future<void> _doResearch(EnrichedPoi enriched, String poiId) async {
     try {
       final facts = <KeyFact>[...enriched.keyFacts];
       final sources = <ResearchSource>[...enriched.sources];
@@ -269,10 +337,13 @@ class ResearchService {
 
       String? narrationText = enriched.narrationText;
 
-      // Filter out trivial raw OSM tag strings (like "library" or "historic: vehicle")
+      // Filter out trivial raw OSM tag strings (like "library" or "historic: vehicle").
+      // We only discard if the text is a known single-word OSM category value
+      // or is shorter than 20 chars with no spaces (single bare word with no context).
       bool isTrivial(String? s) {
         if (s == null || s.trim().isEmpty) return true;
         final trimmed = s.trim().toLowerCase();
+        // OSM tag prefix patterns — always trivial
         if (trimmed.startsWith('historic:') ||
             trimmed.startsWith('tourism:') ||
             trimmed.startsWith('amenity:') ||
@@ -282,12 +353,21 @@ class ResearchService {
             trimmed.startsWith('man_made:')) {
           return true;
         }
+        // Known single-word OSM values that carry no useful information for the user
         const trivialOsmValues = {
           'library', 'artwork', 'monument', 'fountain', 'viewpoint',
-          'museum', 'ruins', 'park', 'attraction', 'memorial', 'vehicle'
+          'museum', 'ruins', 'park', 'attraction', 'memorial', 'vehicle',
+          'yes', 'no', 'building', 'place_of_worship',
         };
         if (trivialOsmValues.contains(trimmed)) return true;
-        return trimmed.length < 15 && !trimmed.contains(' ');
+        // Bare single words shorter than 20 chars are likely raw OSM category values.
+        // We keep them if they're proper nouns (start with uppercase in the original).
+        if (!trimmed.contains(' ') && s.trim().length < 20) {
+          // Allow if the original starts with an uppercase letter (proper noun / place name)
+          final firstChar = s.trim()[0];
+          if (firstChar == firstChar.toLowerCase()) return true; // lowercase start → discard
+        }
+        return false;
       }
 
       if (isTrivial(shortDesc)) {
@@ -385,15 +465,9 @@ class ResearchService {
       await _cacheService.put(updated);
       onPoiUpdated?.call(updated);
       debugPrint('[ResearchService] Finished research for ${updated.name} -> ${updated.researchStatus.name}');
-    } catch (e) {
-      debugPrint('[ResearchService] Research failed for $poiId: $e');
-      final failed = enriched.copyWith(
-        researchStatus: ResearchStatus.failed,
-        lastResearchedAt: DateTime.now(),
-      );
-      await _cacheService.put(failed);
-      onPoiUpdated?.call(failed);
-      rethrow; // Let queue handle retry
+    } on TimeoutException {
+      debugPrint('[ResearchService] Research timed out for $poiId');
+      rethrow;
     }
   }
 

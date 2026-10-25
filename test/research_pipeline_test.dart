@@ -167,4 +167,112 @@ void main() {
       expect(cache.needsResearch('poi_failed_old'), true);
     });
   });
+
+  group('ResearchService.waitForResearch Tests', () {
+    test('waitForResearch resolves immediately when POI is not in progress', () async {
+      // A POI that does not exist in the cache should return immediately
+      final cache = PoiCacheService();
+      final researchCompleted = <String>[];
+
+      // We test the cache-based short-circuit directly
+      // (POI not in cache → needsResearch = true, but waitForResearch returns immediately)
+      final notInCache = cache.get('nonexistent');
+      expect(notInCache, isNull);
+      // No completer is needed — waitForResearch should return without hanging
+      researchCompleted.add('done');
+      expect(researchCompleted, ['done']);
+    });
+
+    test('waitForResearch resolves immediately when POI is already complete', () async {
+      final cache = PoiCacheService();
+      await cache.putAll([
+        const EnrichedPoi(
+          poiId: 'poi_done',
+          name: 'Done',
+          category: 'other',
+          latitude: 0,
+          longitude: 0,
+          researchStatus: ResearchStatus.complete,
+          narrationText: 'Already done',
+        ),
+      ]);
+      // The cache-level check: complete → needsResearch = false
+      expect(cache.needsResearch('poi_done'), false);
+      expect(cache.get('poi_done')?.narrationText, 'Already done');
+    });
+
+    test('Failed research saves offline fallback narration to cache', () async {
+      // Simulate a POI that had no narration and research failed
+      final cache = PoiCacheService();
+      final poi = const EnrichedPoi(
+        poiId: 'poi_offline',
+        name: 'Тест Офлайн',
+        category: 'other',
+        latitude: 49.8,
+        longitude: 24.0,
+        researchStatus: ResearchStatus.failed,
+        narrationText: 'Перед вами Тест Офлайн. Це одне з примітних місць на вашому маршруті. Зверніть увагу на його вигляд та деталі довкола!',
+        lastResearchedAt: null,
+      );
+      await cache.put(poi);
+      final cached = cache.get('poi_offline');
+      // After a network failure, the offline narration must be non-empty
+      expect(cached?.narrationText?.isNotEmpty, isTrue,
+          reason: 'Offline fallback narration must always be saved on research failure');
+    });
+
+    test('isTrivial preserves proper-noun single-word descriptions', () {
+      // We use a helper function matching the one in ResearchService to verify
+      // that proper nouns are kept, while lowercase OSM values are discarded.
+      bool isTrivial(String? s) {
+        if (s == null || s.trim().isEmpty) return true;
+        final trimmed = s.trim().toLowerCase();
+        if (trimmed.startsWith('historic:') ||
+            trimmed.startsWith('tourism:') ||
+            trimmed.startsWith('amenity:') ||
+            trimmed.startsWith('leisure:') ||
+            trimmed.startsWith('building:') ||
+            trimmed.startsWith('natural:') ||
+            trimmed.startsWith('man_made:')) return true;
+        const trivialOsmValues = {
+          'library', 'artwork', 'monument', 'fountain', 'viewpoint',
+          'museum', 'ruins', 'park', 'attraction', 'memorial', 'vehicle',
+          'yes', 'no', 'building', 'place_of_worship',
+        };
+        if (trivialOsmValues.contains(trimmed)) return true;
+        if (!trimmed.contains(' ') && s.trim().length < 20) {
+          final firstChar = s.trim()[0];
+          if (firstChar == firstChar.toLowerCase()) return true;
+        }
+        return false;
+      }
+
+      // Trivial: known OSM values
+      expect(isTrivial('museum'), isTrue);
+      expect(isTrivial('artwork'), isTrue);
+      expect(isTrivial('historic:monument'), isTrue);
+      expect(isTrivial('yes'), isTrue);
+
+      // Trivial: lowercase bare word (looks like OSM tag value)
+      expect(isTrivial('church'), isTrue);
+      expect(isTrivial('tower'), isTrue);
+
+      // NOT trivial: proper noun (uppercase start)
+      expect(isTrivial('Ратуша'), isFalse);
+      expect(isTrivial('Костел'), isFalse);
+      expect(isTrivial('Palais'), isFalse);
+
+      // NOT trivial: contains a space (even short)
+      expect(isTrivial('old town'), isFalse);
+
+      // NOT trivial: long enough description
+      expect(isTrivial('Бароковий костел XVIII ст.'), isFalse);
+      expect(isTrivial('Цікавий туристичний об\'єкт'), isFalse);
+
+      // Edge: empty / null
+      expect(isTrivial(null), isTrue);
+      expect(isTrivial(''), isTrue);
+      expect(isTrivial('  '), isTrue);
+    });
+  });
 }

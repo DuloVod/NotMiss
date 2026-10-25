@@ -262,11 +262,33 @@ class WalkController extends ChangeNotifier {
     try {
       String narration = updated.narrationText;
       if (narration.isEmpty) {
+        // Wait for background research to settle before raw AI fallback
+        final enriched = _researchService.getEnrichedData(updated.id);
+        final isResearching = enriched != null &&
+            (enriched.researchStatus == ResearchStatus.inProgress ||
+             enriched.researchStatus == ResearchStatus.queued);
+        if (isResearching) {
+          debugPrint('[WalkController] Manual play: waiting for research on ${updated.name}…');
+          await _researchService.waitForResearch(updated.id,
+              timeout: const Duration(seconds: 30));
+          if (gen != _manualPlayGen) return;
+          final refreshed = getUpdatedPoi(updated);
+          narration = refreshed.narrationText;
+          _activePoi = refreshed;
+        }
+      }
+
+      if (narration.isEmpty) {
         narration = await _aiService.generateNarration(updated);
         if (narration.isNotEmpty) {
           await _researchService.updateNarration(updated.id, narration, poi: updated);
         }
         if (gen != _manualPlayGen) return;
+      }
+
+      // Hard safety net — TTS must never be called with empty text
+      if (narration.isEmpty) {
+        narration = 'Перед вами ${updated.name}. Зверніть увагу на цей об\'єкт поруч із вами!';
       }
 
       if (narration.isNotEmpty) {
@@ -736,6 +758,25 @@ class WalkController extends ChangeNotifier {
     await IosBackgroundTask.begin();
     try {
       String narration = activePoi.narrationText;
+      if (narration.isEmpty) {
+        // Wait for background research to finish (up to 30s) before falling
+        // back to a raw AI call — research produces richer narration text.
+        final enriched = _researchService.getEnrichedData(activePoi.id);
+        final isResearching = enriched != null &&
+            (enriched.researchStatus == ResearchStatus.inProgress ||
+             enriched.researchStatus == ResearchStatus.queued);
+        if (isResearching) {
+          debugPrint('[WalkController] Waiting for research to complete for ${activePoi.name}…');
+          await _researchService.waitForResearch(activePoi.id,
+              timeout: const Duration(seconds: 30));
+          if (gen != _processGen) return; // Cancelled while waiting
+          // Re-fetch after research settled
+          final updatedAfterResearch = getUpdatedPoi(activePoi);
+          narration = updatedAfterResearch.narrationText;
+          _activePoi = updatedAfterResearch;
+        }
+      }
+
       if (narration.isEmpty) {
         final aiText = await _aiService.generateNarration(activePoi);
         if (gen != _processGen) return; // Відмінено
