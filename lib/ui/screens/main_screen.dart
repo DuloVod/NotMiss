@@ -1077,12 +1077,13 @@ class _PoiDetailsSheetState extends State<_PoiDetailsSheet> {
     final hasRichDesc = !PoiCategoryService.isTrivialDescription(rawDesc);
     final hasFacts = (enriched?.keyFacts.isNotEmpty == true || updatedPoi.facts.isNotEmpty);
 
-    final hasCompleteData = hasNarration && hasRichDesc && hasFacts;
-    final isAlreadyResearched = enriched?.isResearchComplete == true;
+    final hasFallback = enriched?.hasFallbackContent ?? false;
+    final hasCompleteData = hasNarration && hasRichDesc && hasFacts && !hasFallback;
+    final isAlreadyResearched = (enriched?.isResearchComplete == true) && !hasFallback;
 
-    if (!hasCompleteData && !isAlreadyResearched && !_isRequesting) {
+    if ((!hasCompleteData || hasFallback) && !_isRequesting) {
       _isRequesting = true;
-      widget.controller.researchPoiNow(widget.poi, force: false).whenComplete(() {
+      widget.controller.researchPoiNow(widget.poi, force: hasFallback).whenComplete(() {
         if (mounted) {
           setState(() => _isRequesting = false);
         }

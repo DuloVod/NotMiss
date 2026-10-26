@@ -63,13 +63,14 @@ class PoiCacheService {
   /// Check if a POI exists in cache and is marked complete.
   bool isComplete(String poiId) {
     final cached = _cache[poiId];
-    return cached != null && cached.isResearchComplete;
+    return cached != null && cached.isResearchComplete && !cached.hasFallbackContent;
   }
 
-  /// Check if a POI needs research (not started or failed with retry allowed).
+  /// Check if a POI needs research (not started, failed with retry, or holding fallback content).
   bool needsResearch(String poiId) {
     final cached = _cache[poiId];
     if (cached == null) return true;
+    if (cached.hasFallbackContent) return true; // Re-research fallback POIs
     if (cached.researchStatus == ResearchStatus.notStarted) return true;
     if (cached.researchStatus == ResearchStatus.queued) return true;
     if (cached.researchStatus == ResearchStatus.inProgress) {

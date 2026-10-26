@@ -10,13 +10,15 @@ class AiService {
   final ContentService _contentService;
 
   static const List<String> _models = [
-    'gemini-2.5-flash-lite',
+    'gemini-3.8-flash',
+    'gemini-3.5-flash',
+    'gemini-3.5-flash-lite',
     'gemini-2.5-flash',
-    'gemini-2.0-flash',
+    'gemini-2.5-flash-lite',
   ];
 
-  static String _endpoint(String model) =>
-      'https://generativelanguage.googleapis.com/v1beta/models/$model:generateContent';
+  static String _endpoint(String model, String apiKey) =>
+      'https://generativelanguage.googleapis.com/v1beta/models/$model:generateContent?key=$apiKey';
 
   AiService({required this.apiKey, ContentService? contentService})
       : _contentService = contentService ?? ContentService();
@@ -33,7 +35,7 @@ class AiService {
       try {
         final response = await http
             .post(
-              Uri.parse(_endpoint(model)),
+              Uri.parse(_endpoint(model, apiKey)),
               headers: {
                 'Content-Type': 'application/json',
                 'x-goog-api-key': apiKey,
@@ -98,7 +100,7 @@ class AiService {
     for (final model in _models) {
       try {
         final response = await http.post(
-          Uri.parse(_endpoint(model)),
+          Uri.parse(_endpoint(model, apiKey)),
           headers: {
             'Content-Type': 'application/json',
             'x-goog-api-key': apiKey,
@@ -202,7 +204,7 @@ $desc$narration${factsList.isNotEmpty ? 'Відомі факти:\n$factsList\n'
       try {
         final response = await http
             .post(
-              Uri.parse(_endpoint(model)),
+              Uri.parse(_endpoint(model, apiKey)),
               headers: {
                 'Content-Type': 'application/json',
                 'x-goog-api-key': apiKey,

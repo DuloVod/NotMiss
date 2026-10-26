@@ -150,6 +150,12 @@ class EnrichedPoi {
       researchStatus == ResearchStatus.complete ||
       researchStatus == ResearchStatus.insufficientInformation;
 
+  /// Whether this POI currently holds fallback/template content rather than verified research.
+  bool get hasFallbackContent {
+    final narr = narrationText ?? '';
+    return narr.contains('Це одне з примітних місць на вашому маршруті. Зверніть увагу на його вигляд та деталі довкола!');
+  }
+
   /// Content quality assessment.
   String get contentQuality {
     if (keyFacts.length >= 3 && shortDescription != null) return 'complete';

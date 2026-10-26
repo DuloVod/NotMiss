@@ -16,11 +16,13 @@ class TtsService {
   final String apiKey;
 
   static const List<String> _models = [
+    'gemini-3.8-flash-lite-tts',
+    'gemini-3.8-flash-tts',
     'gemini-2.5-flash-preview-tts',
   ];
 
-  static String _endpoint(String model) =>
-      'https://generativelanguage.googleapis.com/v1beta/models/$model:generateContent';
+  static String _endpoint(String model, String apiKey) =>
+      'https://generativelanguage.googleapis.com/v1beta/models/$model:generateContent?key=$apiKey';
 
   // A warm, clear voice suitable for an audio guide
   static const String _voice = 'Kore';
@@ -66,7 +68,7 @@ class TtsService {
       try {
         final response = await http
             .post(
-              Uri.parse(_endpoint(model)),
+              Uri.parse(_endpoint(model, apiKey)),
               headers: {
                 'Content-Type': 'application/json',
                 'x-goog-api-key': apiKey,
@@ -102,8 +104,19 @@ class TtsService {
             continue;
           }
 
-          final pcmBytes = base64Decode(audioBase64);
-          final wavBytes = _wrapPcmInWav(pcmBytes);
+          final rawBytes = base64Decode(audioBase64);
+          final Uint8List wavBytes;
+          if (rawBytes.length >= 4 &&
+              rawBytes[0] == 0x52 && // 'R'
+              rawBytes[1] == 0x49 && // 'I'
+              rawBytes[2] == 0x46 && // 'F'
+              rawBytes[3] == 0x46) { // 'F'
+            // Already a valid WAV container (Gemini 3.8+ default)
+            wavBytes = rawBytes;
+          } else {
+            // Raw PCM without header (Gemini 2.5 legacy)
+            wavBytes = _wrapPcmInWav(rawBytes);
+          }
 
           if (kIsWeb) {
             final base64Wav = base64Encode(wavBytes);

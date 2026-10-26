@@ -341,6 +341,10 @@ class ResearchService {
       }
 
       String? narrationText = enriched.narrationText;
+      if (narrationText != null &&
+          narrationText.contains('Це одне з примітних місць на вашому маршруті')) {
+        narrationText = null;
+      }
 
       if (PoiCategoryService.isTrivialDescription(shortDesc)) {
         shortDesc = null;
@@ -385,11 +389,13 @@ class ResearchService {
         if (facts.isNotEmpty) {
           shortDesc = facts.first.fact;
         } else {
-          shortDesc = 'Цікавий туристичний та історичний об\'єкт «${enriched.name}» у Львові.';
+          final catLabel = PoiCategoryService.categoryLabelUk(enriched.category);
+          shortDesc = '$catLabel «${enriched.name}» у Львові.';
         }
       }
       if (facts.isEmpty) {
-        addFact('Об\'єкт відкрито для візуального огляду під час прогулянки.', null, 'medium');
+        final catLabel = PoiCategoryService.categoryLabelUk(enriched.category);
+        addFact('Об\'єкт належить до категорії «$catLabel» і відкритий для огляду.', null, 'medium');
       }
 
       // STEP 5: Mandatory Narration Generation (App must NEVER be silent!)
@@ -417,8 +423,8 @@ class ResearchService {
             ));
           }
         } else {
-          // Offline/Default graceful narration
-          narrationText = 'Перед вами ${enriched.name}. Це одне з примітних місць на вашому маршруті. Зверніть увагу на його вигляд та деталі довкола!';
+          // Dynamic graceful narration if AI generation failed/offline
+          narrationText = _buildDynamicFallbackNarration(enriched, shortDesc);
         }
       }
 
@@ -492,5 +498,33 @@ class ResearchService {
       return text.substring(0, firstPeriod + 1).trim();
     }
     return text.length > 150 ? _truncate(text, 150) : text;
+  }
+
+  String _buildDynamicFallbackNarration(EnrichedPoi enriched, String? shortDesc) {
+    final cat = enriched.category;
+    final name = enriched.name;
+    final buffer = StringBuffer();
+    buffer.write('Перед вами $name');
+    if (cat == PoiCategoryService.sculptureMemorial) {
+      buffer.write(' — пам\'ятка скульптури та мистецтва.');
+    } else if (cat == PoiCategoryService.historicalBuilding) {
+      buffer.write(' — визначна історична споруда Львова.');
+    } else if (cat == PoiCategoryService.naturePark) {
+      buffer.write(' — мальовничий куточок міської природи.');
+    } else if (cat == PoiCategoryService.fountainViewpointArchitecture) {
+      buffer.write(' — виразна архітектурна прикраса міста.');
+    } else {
+      buffer.write(' — примітне місце на вашому маршруті.');
+    }
+
+    if (shortDesc != null &&
+        shortDesc.isNotEmpty &&
+        !PoiCategoryService.isTrivialDescription(shortDesc) &&
+        !shortDesc.startsWith('Об\'єкт належить')) {
+      buffer.write(' $shortDesc');
+    } else {
+      buffer.write(' Зверніть увагу на архітектурні деталі та атмосферу довкола!');
+    }
+    return buffer.toString();
   }
 }
