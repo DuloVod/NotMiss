@@ -15,6 +15,38 @@ class PoiCategoryService {
   static const fountainViewpointArchitecture = 'fountain_viewpoint_architecture';
   static const other = 'other';
 
+  /// Human-readable Ukrainian category label.
+  static String categoryLabelUk(String category) {
+    switch (category) {
+      case historicalBuilding:
+        return 'Історична споруда';
+      case sculptureMemorial:
+        return 'Пам\'ятник / Скульптура';
+      case naturePark:
+        return 'Парк / Природа';
+      case fountainViewpointArchitecture:
+        return 'Фонтан / Архітектура';
+      default:
+        return 'Цікаве місце';
+    }
+  }
+
+  /// Category icon emoji.
+  static String categoryEmoji(String category) {
+    switch (category) {
+      case historicalBuilding:
+        return '🏛️';
+      case sculptureMemorial:
+        return '🗿';
+      case naturePark:
+        return '🌳';
+      case fountainViewpointArchitecture:
+        return '⛲';
+      default:
+        return '📍';
+    }
+  }
+
   /// Determine the category of a POI based on its OSM tags.
   String categorize(Map<String, String> tags) {
     final historic = tags['historic'];

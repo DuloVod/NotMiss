@@ -137,6 +137,7 @@ class WalkController extends ChangeNotifier {
   Position? get currentPosition => _currentPosition;
   Poi? get activePoi => _activePoi;
   String? get statusMessage => _statusMessage;
+  bool get isProcessing => _isProcessing;
   bool get isPlaying => _audioService.isPlaying;
   bool get isAudioPaused => _audioService.isPaused;
   bool get isAudioActive => isPlaying || isAudioPaused;
@@ -160,22 +161,27 @@ class WalkController extends ChangeNotifier {
   /// Trigger immediate priority research for a specific POI (e.g. when user taps on it).
   /// If [force] is true, ignores cached completion status and re-runs research.
   Future<void> researchPoiNow(dynamic poiOrId, {bool force = false}) async {
-    Poi? poi;
-    String id;
-    if (poiOrId is Poi) {
-      poi = poiOrId;
-      id = poi.id;
-    } else {
-      id = poiOrId.toString();
-      for (final p in _allPois) {
-        if (p.id == id) {
-          poi = p;
-          break;
+    try {
+      Poi? poi;
+      String id;
+      if (poiOrId is Poi) {
+        poi = poiOrId;
+        id = poi.id;
+      } else {
+        id = poiOrId.toString();
+        for (final p in _allPois) {
+          if (p.id == id) {
+            poi = p;
+            break;
+          }
         }
       }
+      await _researchService.researchImmediately(id, poi: poi, force: force);
+    } catch (e) {
+      debugPrint('[WalkController] researchPoiNow error: $e');
+    } finally {
+      notifyListeners();
     }
-    await _researchService.researchImmediately(id, poi: poi, force: force);
-    notifyListeners();
   }
 
   /// Session cache of AI chat messages per POI id.
@@ -253,36 +259,39 @@ class WalkController extends ChangeNotifier {
 
     await IosBackgroundTask.begin();
     try {
-      String narration = updated.narrationText;
+      var currentPoi = updated;
+      String narration = currentPoi.narrationText;
       if (narration.isEmpty) {
         // Run or await research immediately — guarantees Wikipedia/Wikidata is consulted first
-        await _researchService.researchImmediately(updated.id, poi: updated);
+        await _researchService.researchImmediately(currentPoi.id, poi: currentPoi);
         if (gen != _manualPlayGen) return;
-        final refreshed = getUpdatedPoi(updated);
-        narration = refreshed.narrationText;
-        _activePoi = refreshed;
+        currentPoi = getUpdatedPoi(currentPoi);
+        narration = currentPoi.narrationText;
+        _activePoi = currentPoi;
       }
 
       if (narration.isEmpty) {
-        narration = await _aiService.generateNarration(updated);
+        narration = await _aiService.generateNarration(currentPoi);
         if (narration.isNotEmpty) {
-          await _researchService.updateNarration(updated.id, narration, poi: updated);
+          await _researchService.updateNarration(currentPoi.id, narration, poi: currentPoi);
+          currentPoi = getUpdatedPoi(currentPoi);
+          _activePoi = currentPoi;
         }
         if (gen != _manualPlayGen) return;
       }
 
       // Hard safety net — TTS must never be called with empty text
       if (narration.isEmpty) {
-        narration = 'Перед вами ${updated.name}. Зверніть увагу на цей об\'єкт поруч із вами!';
+        narration = 'Перед вами ${currentPoi.name}. Зверніть увагу на цей об\'єкт поруч із вами!';
       }
 
       if (narration.isNotEmpty) {
-        _statusMessage = '🔊 ${updated.name} — озвучення…';
+        _statusMessage = '🔊 ${currentPoi.name} — озвучення…';
         notifyListeners();
-        final audioPath = await _ttsService.synthesize(narration, updated.id);
+        final audioPath = await _ttsService.synthesize(narration, currentPoi.id);
         if (gen != _manualPlayGen) return;
 
-        _statusMessage = '🎧 ${updated.name}';
+        _statusMessage = '🎧 ${currentPoi.name}';
         notifyListeners();
         await _audioService.play(audioPath);
         if (gen != _manualPlayGen) return;
@@ -376,7 +385,7 @@ class WalkController extends ChangeNotifier {
     if (_status == WalkStatus.walking) return;
     final granted = await _locationService.requestPermission();
     if (!granted) {
-      _statusMessage = 'Location permission required to start a walk.';
+      _statusMessage = 'Для роботи аудіогіда потрібен доступ до геолокації.';
       notifyListeners();
       return;
     }
@@ -620,44 +629,47 @@ class WalkController extends ChangeNotifier {
       'Generating audio narration…',
     );
 
+    var currentPoi = activePoi;
     await IosBackgroundTask.begin();
     try {
-      String narration = activePoi.narrationText;
+      String narration = currentPoi.narrationText;
       if (narration.isEmpty) {
         // Run or await research immediately — guarantees Wikipedia/Wikidata is consulted first
-        await _researchService.researchImmediately(activePoi.id, poi: activePoi);
+        await _researchService.researchImmediately(currentPoi.id, poi: currentPoi);
         if (gen != _processGen) return; // Cancelled while waiting
-        final updatedAfterResearch = getUpdatedPoi(activePoi);
-        narration = updatedAfterResearch.narrationText;
-        _activePoi = updatedAfterResearch;
+        currentPoi = getUpdatedPoi(currentPoi);
+        narration = currentPoi.narrationText;
+        _activePoi = currentPoi;
       }
 
       if (narration.isEmpty) {
-        final aiText = await _aiService.generateNarration(activePoi);
+        final aiText = await _aiService.generateNarration(currentPoi);
         if (gen != _processGen) return; // Відмінено
-        narration = _contentService.getNarration(activePoi, aiText: aiText);
+        narration = _contentService.getNarration(currentPoi, aiText: aiText);
         if (narration.isNotEmpty) {
-          await _researchService.updateNarration(activePoi.id, narration, poi: activePoi);
+          await _researchService.updateNarration(currentPoi.id, narration, poi: currentPoi);
+          currentPoi = getUpdatedPoi(currentPoi);
+          _activePoi = currentPoi;
         }
       }
 
       // Safe fallback so the app is never silent when GPS triggers in pocket
       if (narration.isEmpty) {
-        narration = 'Перед вами ${activePoi.name}. Зверніть увагу на цей об\'єкт поруч із вами!';
+        narration = 'Перед вами ${currentPoi.name}. Зверніть увагу на цей об\'єкт поруч із вами!';
       }
 
       if (narration.isNotEmpty) {
-        _statusMessage = '🔊 ${activePoi.name} — озвучення…';
+        _statusMessage = '🔊 ${currentPoi.name} — озвучення…';
         notifyListeners();
 
-        final audioPath = await _ttsService.synthesize(narration, activePoi.id);
+        final audioPath = await _ttsService.synthesize(narration, currentPoi.id);
         if (gen != _processGen) return; // Відмінено
 
-        _statusMessage = '🎧 ${activePoi.name}';
+        _statusMessage = '🎧 ${currentPoi.name}';
         notifyListeners();
 
         BackgroundService.updateNotification(
-          'NotMiss — ${activePoi.name}',
+          'NotMiss — ${currentPoi.name}',
           'Now playing audio narration 🎧',
         );
 
@@ -665,7 +677,7 @@ class WalkController extends ChangeNotifier {
         if (gen != _processGen) return; // Відмінено
       } else {
         // Для OSM або точок без розповіді
-        _statusMessage = '📍 ${activePoi.name} — зафіксовано';
+        _statusMessage = '📍 ${currentPoi.name} — зафіксовано';
         notifyListeners();
       }
 
@@ -675,12 +687,14 @@ class WalkController extends ChangeNotifier {
       );
     } catch (e) {
       if (gen == _processGen) {
-        _poiEngine.unmarkTriggered(poi.id); // Allow retry later if transient error occurred
-        _statusMessage = '⚠️ Помилка озвучення ${activePoi.name}: $e';
+        // DO NOT unmarkTriggered — unmarking causes an infinite retry loop every 2s when offline.
+        // Instead keep the POI triggered and inform the user that narration is ready to read.
+        debugPrint('[WalkController] Error processing POI ${currentPoi.name}: $e');
+        _statusMessage = '📍 ${currentPoi.name} — розповідь доступна текстом';
         notifyListeners();
         BackgroundService.updateNotification(
           'NotMiss',
-          'Could not generate narration for ${activePoi.name}.',
+          'Narration available for ${currentPoi.name}.',
         );
       }
     } finally {

@@ -571,5 +571,41 @@ void main() {
 
       service.dispose();
     });
+
+    test('PoiCategoryService categoryLabelUk and categoryEmoji provide friendly Ukrainian labels', () {
+      expect(PoiCategoryService.categoryLabelUk(PoiCategoryService.historicalBuilding), 'Історична споруда');
+      expect(PoiCategoryService.categoryEmoji(PoiCategoryService.historicalBuilding), '🏛️');
+
+      expect(PoiCategoryService.categoryLabelUk(PoiCategoryService.sculptureMemorial), 'Пам\'ятник / Скульптура');
+      expect(PoiCategoryService.categoryEmoji(PoiCategoryService.sculptureMemorial), '🗿');
+
+      expect(PoiCategoryService.categoryLabelUk(PoiCategoryService.naturePark), 'Парк / Природа');
+      expect(PoiCategoryService.categoryEmoji(PoiCategoryService.naturePark), '🌳');
+
+      expect(PoiCategoryService.categoryLabelUk(PoiCategoryService.fountainViewpointArchitecture), 'Фонтан / Архітектура');
+      expect(PoiCategoryService.categoryEmoji(PoiCategoryService.fountainViewpointArchitecture), '⛲');
+
+      expect(PoiCategoryService.categoryLabelUk('unknown'), 'Цікаве місце');
+      expect(PoiCategoryService.categoryEmoji('unknown'), '📍');
+    });
+
+    test('WalkController exposes isProcessing correctly', () {
+      const dest = Destination(
+        id: 'lviv',
+        name: 'Львів',
+        centerLatitude: 49.8419,
+        centerLongitude: 24.0315,
+        defaultZoom: 16.0,
+        pois: [],
+      );
+
+      final controller = WalkController(
+        destination: dest,
+        apiKey: '',
+      );
+
+      expect(controller.isProcessing, isFalse);
+      controller.dispose();
+    });
   });
 }

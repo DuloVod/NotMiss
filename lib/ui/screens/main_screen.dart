@@ -22,7 +22,7 @@ class MainScreen extends StatefulWidget {
   State<MainScreen> createState() => _MainScreenState();
 }
 
-class _MainScreenState extends State<MainScreen> {
+class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
   final MapController _mapController = MapController();
   LatLng? _lastPos;
   bool _followUser = true; // auto-follow; turns off if user pans manually
@@ -30,6 +30,7 @@ class _MainScreenState extends State<MainScreen> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     widget.controller.addListener(_update);
     // Start walk automatically on first load only (not after user stopped)
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -41,9 +42,18 @@ class _MainScreenState extends State<MainScreen> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     widget.controller.removeListener(_update);
     _mapController.dispose();
     super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    // When returning from iOS/Android Settings, auto-start if permission was granted
+    if (state == AppLifecycleState.resumed && widget.controller.status != WalkStatus.walking) {
+      widget.controller.startWalk();
+    }
   }
 
   void _update() {
@@ -124,8 +134,8 @@ class _MainScreenState extends State<MainScreen> {
             ],
           ),
 
-          // ── Status/Error Message Banner ─────────────────────────
-          if (widget.controller.statusMessage != null && widget.controller.status != WalkStatus.walking)
+          // ── Status/Error Message Banner (idle/warning only) ─────
+          if (widget.controller.statusMessage != null && widget.controller.status == WalkStatus.idle)
             Positioned(
               top: MediaQuery.of(context).padding.top + 16,
               left: 16,
@@ -133,12 +143,12 @@ class _MainScreenState extends State<MainScreen> {
               child: Container(
                 padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
                 decoration: BoxDecoration(
-                  color: Colors.red.shade50,
+                  color: Colors.amber.shade50,
                   borderRadius: BorderRadius.circular(16),
-                  border: Border.all(color: Colors.red.shade200, width: 2),
+                  border: Border.all(color: Colors.amber.shade300, width: 1.5),
                   boxShadow: [
                     BoxShadow(
-                      color: Colors.red.withValues(alpha: 0.1),
+                      color: Colors.black.withValues(alpha: 0.08),
                       blurRadius: 10,
                       offset: const Offset(0, 4),
                     ),
@@ -146,14 +156,14 @@ class _MainScreenState extends State<MainScreen> {
                 ),
                 child: Row(
                   children: [
-                    Icon(Icons.error_outline, color: Colors.red.shade700, size: 28),
+                    Icon(Icons.location_off_outlined, color: Colors.amber.shade900, size: 26),
                     const SizedBox(width: 12),
                     Expanded(
                       child: Text(
                         widget.controller.statusMessage!,
                         style: TextStyle(
-                          color: Colors.red.shade900,
-                          fontSize: 16,
+                          color: Colors.amber.shade900,
+                          fontSize: 14,
                           fontWeight: FontWeight.w600,
                         ),
                       ),
@@ -506,25 +516,50 @@ class _MainScreenState extends State<MainScreen> {
               ),
             ),
           ] else ...[
-            ElevatedButton.icon(
-              onPressed: () {
-                widget.controller.playNarrationForPoi(poi);
-              },
-              icon: const Icon(Icons.volume_up_rounded, size: 22),
-              label: const Text(
-                'Прослухати розповідь',
-                style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
-              ),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: _kGreen,
-                foregroundColor: Colors.white,
-                padding: const EdgeInsets.symmetric(vertical: 14),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(16),
+            if (widget.controller.isProcessing && widget.controller.activePoi?.id == poi.id) ...[
+              ElevatedButton.icon(
+                onPressed: null,
+                icon: const SizedBox(
+                  width: 18,
+                  height: 18,
+                  child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
                 ),
-                elevation: 2,
+                label: const Text(
+                  'Готуємо розповідь…',
+                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                ),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: _kGreen.withValues(alpha: 0.7),
+                  foregroundColor: Colors.white,
+                  disabledBackgroundColor: _kGreen.withValues(alpha: 0.7),
+                  disabledForegroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(vertical: 14),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(16),
+                  ),
+                ),
               ),
-            ),
+            ] else ...[
+              ElevatedButton.icon(
+                onPressed: () {
+                  widget.controller.playNarrationForPoi(poi);
+                },
+                icon: const Icon(Icons.volume_up_rounded, size: 22),
+                label: const Text(
+                  'Прослухати розповідь',
+                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                ),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: _kGreen,
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(vertical: 14),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(16),
+                  ),
+                  elevation: 2,
+                ),
+              ),
+            ],
             const SizedBox(height: 10),
             OutlinedButton.icon(
               onPressed: () => _showAiChatSheet(context, poi),
@@ -554,14 +589,139 @@ class _MainScreenState extends State<MainScreen> {
     final isAudioActive = isPlaying || isPaused;
     final isWalking = widget.controller.status == WalkStatus.walking;
 
-    // Build visited POIs list — all triggered POIs that are not currently active
-    final visitedPois = isWalking
-        ? widget.controller.allPois
-            .where((p) =>
-                widget.controller.triggeredPoiIds.contains(p.id) &&
-                p.id != widget.controller.activePoi?.id)
-            .toList()
-        : <Poi>[];
+    if (!isWalking) {
+      final isStopped = widget.controller.status == WalkStatus.stopped;
+      return Padding(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Row(
+              children: [
+                Container(
+                  width: 56,
+                  height: 56,
+                  decoration: BoxDecoration(
+                    color: isStopped ? Colors.blue.shade50 : Colors.amber.shade50,
+                    shape: BoxShape.circle,
+                  ),
+                  child: Icon(
+                    isStopped ? Icons.flag_outlined : Icons.location_on_outlined,
+                    color: isStopped ? Colors.blue.shade700 : Colors.amber.shade800,
+                    size: 30,
+                  ),
+                ),
+                const SizedBox(width: 16),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        isStopped ? 'Прогулянку завершено' : 'Потрібна геолокація',
+                        style: const TextStyle(
+                          fontSize: 20,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        widget.controller.statusMessage ??
+                            (isStopped
+                                ? 'Ви завжди можете розпочати новий маршрут!'
+                                : 'Для роботи аудіогіда надайте доступ до геопозиції.'),
+                        style: const TextStyle(
+                          fontSize: 14,
+                          color: Colors.black54,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 18),
+            Row(
+              children: [
+                Expanded(
+                  child: ElevatedButton.icon(
+                    onPressed: () => widget.controller.startWalk(),
+                    icon: const Icon(Icons.play_arrow_rounded, size: 22),
+                    label: Text(
+                      isStopped ? 'Почати нову прогулянку' : 'Почати прогулянку',
+                      style: const TextStyle(fontSize: 15, fontWeight: FontWeight.bold),
+                    ),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: _kGreen,
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(vertical: 14),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(16),
+                      ),
+                      elevation: 2,
+                    ),
+                  ),
+                ),
+                if (!isStopped) ...[
+                  const SizedBox(width: 10),
+                  OutlinedButton(
+                    onPressed: () => Geolocator.openAppSettings(),
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: Colors.grey.shade800,
+                      side: BorderSide(color: Colors.grey.shade300),
+                      padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 16),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(16),
+                      ),
+                    ),
+                    child: const Icon(Icons.settings_outlined, size: 22),
+                  ),
+                ],
+              ],
+            ),
+          ],
+        ),
+      );
+    }
+
+    // Walking mode
+    final visitedPois = widget.controller.allPois
+        .where((p) =>
+            widget.controller.triggeredPoiIds.contains(p.id) &&
+            p.id != widget.controller.activePoi?.id)
+        .toList();
+
+    Poi? nearestPoi;
+    double? nearestDist;
+    final pos = widget.controller.currentPosition;
+    if (pos != null) {
+      for (final p in widget.controller.allPois) {
+        if (!widget.controller.triggeredPoiIds.contains(p.id)) {
+          final d = Geolocator.distanceBetween(
+            pos.latitude, pos.longitude, p.latitude, p.longitude,
+          );
+          if (nearestDist == null || d < nearestDist) {
+            nearestDist = d;
+            nearestPoi = p;
+          }
+        }
+      }
+    }
+
+    String idleTitle = 'Шукаємо цікаві місця...';
+    String? idleSubtitle = widget.controller.statusMessage;
+
+    if (!isAudioActive) {
+      if (widget.controller.allPois.isEmpty) {
+        idleTitle = 'Шукаємо цікаві місця...';
+        idleSubtitle = 'Завантажуємо пам\'ятки з карти поруч з вами…';
+      } else if (nearestPoi != null && nearestDist != null) {
+        idleTitle = 'Гід на зв\'язку';
+        idleSubtitle = 'Найближче: ${nearestPoi.name} (~${nearestDist.round()} м)';
+      } else {
+        idleTitle = 'Гід на зв\'язку';
+        idleSubtitle = 'Пам\'яток поруч: ${widget.controller.allPois.length} (підійдіть ближче)';
+      }
+    }
 
     return Padding(
       padding: const EdgeInsets.all(24),
@@ -597,18 +757,18 @@ class _MainScreenState extends State<MainScreen> {
                     Text(
                       isAudioActive
                           ? (isPaused ? 'Озвучення на паузі' : 'Грає розповідь гіда')
-                          : 'Шукаємо цікаві місця...',
+                          : idleTitle,
                       style: const TextStyle(
                         fontSize: 20,
                         fontWeight: FontWeight.bold,
                       ),
                     ),
-                    if (widget.controller.statusMessage != null && widget.controller.statusMessage!.isNotEmpty) ...[
+                    if (idleSubtitle != null && idleSubtitle.isNotEmpty) ...[
                       const SizedBox(height: 6),
                       Text(
-                        widget.controller.statusMessage!,
+                        idleSubtitle,
                         style: TextStyle(
-                          fontSize: 16,
+                          fontSize: 15,
                           color: isAudioActive ? Colors.black87 : Colors.black54,
                           fontWeight: isAudioActive ? FontWeight.w500 : FontWeight.normal,
                         ),
@@ -642,6 +802,13 @@ class _MainScreenState extends State<MainScreen> {
                   ],
                 ),
               ),
+              if (!isAudioActive) ...[
+                IconButton(
+                  tooltip: 'Оновити об\'єкти на карті',
+                  icon: const Icon(Icons.refresh_rounded, color: Colors.black54),
+                  onPressed: () => widget.controller.reloadOsmPois(),
+                ),
+              ],
             ],
           ),
           if (isAudioActive) ...[
@@ -754,24 +921,39 @@ class _MainScreenState extends State<MainScreen> {
 
     return Marker(
       point: LatLng(poi.latitude, poi.longitude),
-      width: 36,
-      height: 36,
+      width: 48,
+      height: 48,
       child: GestureDetector(
-        onTap: () => _showPoiDetails(context, poi),
-        onDoubleTap: () => _showPoiDetails(context, poi),
-        onLongPress: () => _showPoiDetails(context, poi),
-        child: Tooltip(
-          message: poi.name,
-          child: Container(
-            decoration: BoxDecoration(
-              color: color,
-              shape: BoxShape.circle,
-              border: Border.all(color: Colors.white, width: 2),
-            ),
-            child: Icon(
-              (isTriggered && !isActive) ? Icons.check : Icons.place,
-              color: Colors.white,
-              size: 18,
+        behavior: HitTestBehavior.opaque,
+        onTap: () {
+          try {
+            _mapController.move(LatLng(poi.latitude, poi.longitude), _mapController.camera.zoom);
+          } catch (_) {}
+          _showPoiDetails(context, poi);
+        },
+        child: Center(
+          child: Tooltip(
+            message: poi.name,
+            child: Container(
+              width: 36,
+              height: 36,
+              decoration: BoxDecoration(
+                color: color,
+                shape: BoxShape.circle,
+                border: Border.all(color: Colors.white, width: 2),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withValues(alpha: 0.2),
+                    blurRadius: 4,
+                    offset: const Offset(0, 2),
+                  ),
+                ],
+              ),
+              child: Icon(
+                (isTriggered && !isActive) ? Icons.check : Icons.place,
+                color: Colors.white,
+                size: 18,
+              ),
             ),
           ),
         ),
@@ -951,6 +1133,10 @@ class _PoiDetailsSheetState extends State<_PoiDetailsSheet> {
           badgeLabel = 'Аудіогід';
         }
 
+        final category = enriched?.category ?? PoiCategoryService().categorize(widget.poi.osmTags ?? {});
+        final catLabel = PoiCategoryService.categoryLabelUk(category);
+        final catEmoji = PoiCategoryService.categoryEmoji(category);
+
         return Container(
           constraints: BoxConstraints(
             maxHeight: MediaQuery.of(context).size.height * 0.82,
@@ -1018,7 +1204,24 @@ class _PoiDetailsSheetState extends State<_PoiDetailsSheet> {
                             ],
                           ],
                         ),
-                        const SizedBox(height: 16),
+                        const SizedBox(height: 8),
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFFF1F8E9),
+                            borderRadius: BorderRadius.circular(12),
+                            border: Border.all(color: const Color(0xFFA5D6A7)),
+                          ),
+                          child: Text(
+                            '$catEmoji $catLabel',
+                            style: const TextStyle(
+                              fontSize: 12,
+                              fontWeight: FontWeight.w600,
+                              color: Color(0xFF1B5E20),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(height: 14),
 
                         // Queue / Processing Banner
                         if (isProcessing && (narration.isEmpty || description.isEmpty)) ...[
@@ -1173,37 +1376,68 @@ class _PoiDetailsSheetState extends State<_PoiDetailsSheet> {
                                     ],
                                   ),
                                 ] else ...[
-                                  SizedBox(
-                                    width: double.infinity,
-                                    child: ElevatedButton.icon(
-                                      onPressed: () {
-                                        widget.controller.playNarrationForPoi(widget.poi);
-                                      },
-                                      icon: Icon(
-                                        isAlreadyTriggered
-                                            ? Icons.replay_rounded
-                                            : Icons.volume_up,
-                                        size: 20,
-                                      ),
-                                      label: Text(
-                                        isAlreadyTriggered
-                                            ? 'Прослухати знову'
-                                            : 'Прослухати зараз',
-                                        style: const TextStyle(
-                                          fontWeight: FontWeight.bold,
-                                          fontSize: 15,
+                                  if (widget.controller.isProcessing && widget.controller.activePoi?.id == widget.poi.id) ...[
+                                    SizedBox(
+                                      width: double.infinity,
+                                      child: ElevatedButton.icon(
+                                        onPressed: null,
+                                        icon: const SizedBox(
+                                          width: 18,
+                                          height: 18,
+                                          child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
                                         ),
-                                      ),
-                                      style: ElevatedButton.styleFrom(
-                                        backgroundColor: const Color(0xFF2E7D32),
-                                        foregroundColor: Colors.white,
-                                        padding: const EdgeInsets.symmetric(vertical: 12),
-                                        shape: RoundedRectangleBorder(
-                                          borderRadius: BorderRadius.circular(12),
+                                        label: const Text(
+                                          'Готуємо розповідь…',
+                                          style: TextStyle(
+                                            fontWeight: FontWeight.bold,
+                                            fontSize: 15,
+                                          ),
+                                        ),
+                                        style: ElevatedButton.styleFrom(
+                                          backgroundColor: const Color(0xFF2E7D32).withValues(alpha: 0.7),
+                                          foregroundColor: Colors.white,
+                                          disabledBackgroundColor: const Color(0xFF2E7D32).withValues(alpha: 0.7),
+                                          disabledForegroundColor: Colors.white,
+                                          padding: const EdgeInsets.symmetric(vertical: 12),
+                                          shape: RoundedRectangleBorder(
+                                            borderRadius: BorderRadius.circular(12),
+                                          ),
                                         ),
                                       ),
                                     ),
-                                  ),
+                                  ] else ...[
+                                    SizedBox(
+                                      width: double.infinity,
+                                      child: ElevatedButton.icon(
+                                        onPressed: () {
+                                          widget.controller.playNarrationForPoi(widget.poi);
+                                        },
+                                        icon: Icon(
+                                          isAlreadyTriggered
+                                              ? Icons.replay_rounded
+                                              : Icons.volume_up,
+                                          size: 20,
+                                        ),
+                                        label: Text(
+                                          isAlreadyTriggered
+                                              ? 'Прослухати знову'
+                                              : 'Прослухати зараз',
+                                          style: const TextStyle(
+                                            fontWeight: FontWeight.bold,
+                                            fontSize: 15,
+                                          ),
+                                        ),
+                                        style: ElevatedButton.styleFrom(
+                                          backgroundColor: const Color(0xFF2E7D32),
+                                          foregroundColor: Colors.white,
+                                          padding: const EdgeInsets.symmetric(vertical: 12),
+                                          shape: RoundedRectangleBorder(
+                                            borderRadius: BorderRadius.circular(12),
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                  ],
                                 ],
                               ],
                             ),
@@ -1243,15 +1477,23 @@ class _PoiDetailsSheetState extends State<_PoiDetailsSheet> {
                                 SizedBox(
                                   width: double.infinity,
                                   child: ElevatedButton.icon(
-                                    onPressed: widget.controller.isAudioActive
+                                    onPressed: (widget.controller.isProcessing && widget.controller.activePoi?.id == widget.poi.id)
                                         ? null
                                         : () {
                                             widget.controller.playNarrationForPoi(widget.poi);
                                           },
-                                    icon: const Icon(Icons.volume_up, size: 20),
-                                    label: const Text(
-                                      'Прослухати розповідь ШІ',
-                                      style: TextStyle(
+                                    icon: (widget.controller.isProcessing && widget.controller.activePoi?.id == widget.poi.id)
+                                        ? const SizedBox(
+                                            width: 18,
+                                            height: 18,
+                                            child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                                          )
+                                        : const Icon(Icons.volume_up, size: 20),
+                                    label: Text(
+                                      (widget.controller.isProcessing && widget.controller.activePoi?.id == widget.poi.id)
+                                          ? 'Готуємо розповідь…'
+                                          : 'Прослухати розповідь ШІ',
+                                      style: const TextStyle(
                                         fontWeight: FontWeight.bold,
                                         fontSize: 15,
                                       ),
@@ -1259,6 +1501,8 @@ class _PoiDetailsSheetState extends State<_PoiDetailsSheet> {
                                     style: ElevatedButton.styleFrom(
                                       backgroundColor: const Color(0xFF2E7D32),
                                       foregroundColor: Colors.white,
+                                      disabledBackgroundColor: const Color(0xFF2E7D32).withValues(alpha: 0.7),
+                                      disabledForegroundColor: Colors.white,
                                       padding: const EdgeInsets.symmetric(vertical: 12),
                                       shape: RoundedRectangleBorder(
                                         borderRadius: BorderRadius.circular(12),
@@ -1530,17 +1774,16 @@ class _AiChatSheetState extends State<_AiChatSheet> {
 
     try {
       final answer = await widget.controller.askAiAboutPoi(widget.poi, query);
-      if (!mounted) return;
       widget.controller.addChatMessage(
         widget.poi.id,
         ChatMessage(text: answer, isUser: false),
       );
+      if (!mounted) return;
       setState(() {
         _isLoading = false;
       });
       _scrollToBottom();
     } catch (e) {
-      if (!mounted) return;
       widget.controller.addChatMessage(
         widget.poi.id,
         ChatMessage(
@@ -1548,6 +1791,7 @@ class _AiChatSheetState extends State<_AiChatSheet> {
           isUser: false,
         ),
       );
+      if (!mounted) return;
       setState(() {
         _isLoading = false;
       });
@@ -1711,6 +1955,7 @@ class _AiChatSheetState extends State<_AiChatSheet> {
             Expanded(
               child: ListView.builder(
                 controller: _scrollController,
+                keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
                 padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
                 itemCount: _messages.length + (_isLoading ? 1 : 0),
                 itemBuilder: (context, index) {

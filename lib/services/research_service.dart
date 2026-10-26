@@ -185,6 +185,8 @@ class ResearchService {
     _inFlightImmediateIds.add(poiId);
     try {
       await _processResearchTask(poiId);
+    } catch (e) {
+      debugPrint('[ResearchService] researchImmediately error handled gracefully (offline fallback preserved): $e');
     } finally {
       _inFlightImmediateIds.remove(poiId);
     }
