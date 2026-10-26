@@ -55,12 +55,8 @@ class WalkController extends ChangeNotifier {
   StreamSubscription<Position>? _positionSub;
   StreamSubscription? _playerStateSub;
 
-  /// All POIs available for this walk (static + dynamic, deduplicated).
+  /// All POIs available for this walk (dynamically loaded from OSM, deduplicated).
   List<Poi> _allPois = [];
-
-  /// Whether static Stryiskyi Park points are enabled (default: false).
-  bool _stryiskyiParkPoisEnabled = false;
-  bool get stryiskyiParkPoisEnabled => _stryiskyiParkPoisEnabled;
 
   /// Proximity events recorded during the current walk.
   final List<ProximityEvent> _proximityEvents = [];
@@ -69,9 +65,6 @@ class WalkController extends ChangeNotifier {
   bool _osmLoaded = false;
   
   Timer? _uiTimer;
-  Timer? _simulationTimer;
-  bool _isSimulating = false;
-  bool get isSimulating => _isSimulating;
   final Set<String> _preSynthesizedIds = {};
 
   /// Dynamic string representing current background activity
@@ -137,7 +130,7 @@ class WalkController extends ChangeNotifier {
     _playerStateSub = _audioService.playerStateStream.listen((_) {
       notifyListeners();
     });
-    _allPois = _stryiskyiParkPoisEnabled ? List<Poi>.from(destination.pois) : [];
+    _allPois = [];
   }
 
   WalkStatus get status => _status;
@@ -394,8 +387,7 @@ class WalkController extends ChangeNotifier {
     _status = WalkStatus.walking;
     _activePoi = null;
 
-    // Start with static POIs from destination if enabled
-    _allPois = _stryiskyiParkPoisEnabled ? List<Poi>.from(destination.pois) : [];
+    _allPois = [];
     _statusMessage = 'Завантаження точок інтересу…';
     notifyListeners();
 
@@ -453,19 +445,7 @@ class WalkController extends ChangeNotifier {
 
       final deduped = <Poi>[];
       for (final osmPoi in newPois) {
-        // 1. If static park points are enabled, skip OSM points that duplicate them (within 25m)
-        if (_stryiskyiParkPoisEnabled) {
-          final isNearStatic = destination.pois.any((sp) {
-            final dist = Geolocator.distanceBetween(
-              sp.latitude, sp.longitude,
-              osmPoi.latitude, osmPoi.longitude,
-            );
-            return dist < 25;
-          });
-          if (isNearStatic) continue;
-        }
-
-        // 2. Prevent duplicate entries for the exact same object from OSM (identical name within 15m)
+        // Prevent duplicate entries for the exact same object from OSM (identical name within 15m)
         final isExactDuplicate = deduped.any((d) =>
             d.name.trim().toLowerCase() == osmPoi.name.trim().toLowerCase() &&
             Geolocator.distanceBetween(d.latitude, d.longitude, osmPoi.latitude, osmPoi.longitude) < 15);
@@ -486,8 +466,7 @@ class WalkController extends ChangeNotifier {
         notifyListeners();
       }
 
-      debugPrint('[WalkController] Merged POIs: ${_allPois.length} total '
-          '(${_stryiskyiParkPoisEnabled ? destination.pois.length : 0} static + ${deduped.length} OSM)');
+      debugPrint('[WalkController] Loaded POIs: ${_allPois.length} total (${deduped.length} new from OSM)');
     } catch (e) {
       debugPrint('[WalkController] OSM load failed: $e');
       _osmLoaded = false;
@@ -505,9 +484,6 @@ class WalkController extends ChangeNotifier {
     _manualPlayGen++;
     _uiTimer?.cancel();
     _uiTimer = null;
-    _simulationTimer?.cancel();
-    _simulationTimer = null;
-    _isSimulating = false;
     _positionSub?.cancel();
     _positionSub = null;
     _locationService.stop();
@@ -537,119 +513,6 @@ class WalkController extends ChangeNotifier {
         return '';
       });
     }
-  }
-
-  /// Start a simulated walk through Stryiskyi Park points for testing.
-  /// Emits a position near each POI sequentially every [stepIntervalSeconds] seconds.
-  /// Allows testing background audio triggering on physical iOS device even with screen off!
-  void startStryiskyiParkSimulation({int stepIntervalSeconds = 12}) {
-    if (_status != WalkStatus.walking) {
-      _status = WalkStatus.walking;
-      _locationService.start();
-    }
-    _simulationTimer?.cancel();
-    _isSimulating = true;
-    int index = 0;
-
-    // Automatically re-enable Stryiskyi Park POIs if they were disabled
-    if (!_stryiskyiParkPoisEnabled) {
-      setStryiskyiParkPoisEnabled(true);
-    }
-
-    // Filter Stryiskyi park points
-    var parkPois = _allPois.where(_isStryiskyiPoi).toList();
-    if (parkPois.isEmpty) {
-      _allPois.insertAll(0, destination.pois);
-      parkPois = _allPois.where(_isStryiskyiPoi).toList();
-    }
-    if (parkPois.isEmpty) return;
-
-    _statusMessage = '🚀 Запущено симуляцію Стрийського парку (${parkPois.length} точок)...';
-    notifyListeners();
-
-    // First step immediately
-    _simulateStep(parkPois[0]);
-
-    _simulationTimer = Timer.periodic(Duration(seconds: stepIntervalSeconds), (timer) {
-      if (!_isSimulating || _status != WalkStatus.walking) {
-        timer.cancel();
-        return;
-      }
-      index++;
-      if (index >= parkPois.length) {
-        _isSimulating = false;
-        timer.cancel();
-        _statusMessage = '✅ Тестову симуляцію Стрийського парку завершено.';
-        notifyListeners();
-        return;
-      }
-      _simulateStep(parkPois[index]);
-    });
-    notifyListeners();
-  }
-
-  void _simulateStep(Poi target) {
-    final pos = Position(
-      latitude: target.latitude,
-      longitude: target.longitude,
-      timestamp: DateTime.now(),
-      accuracy: 5.0,
-      altitude: 300.0,
-      altitudeAccuracy: 5.0,
-      heading: 0.0,
-      headingAccuracy: 0.0,
-      speed: 1.2,
-      speedAccuracy: 0.5,
-    );
-    _onPosition(pos);
-  }
-
-  void stopSimulation() {
-    _simulationTimer?.cancel();
-    _simulationTimer = null;
-    _isSimulating = false;
-    _statusMessage = 'Симуляцію зупинено.';
-    notifyListeners();
-  }
-
-  /// Reset / force reload Stryiskyi Park curated points as active and unvisited.
-  void resetStryiskyiParkPois() {
-    _stryiskyiParkPoisEnabled = true;
-    _poiEngine.resetSession();
-    final nonParkPois = _allPois.where((p) => !_isStryiskyiPoi(p)).toList();
-    _allPois = [...destination.pois, ...nonParkPois];
-    _nearbyUnplayedPois = List<Poi>.from(destination.pois);
-    _statusMessage = 'Точки Стрийського парку увімкнено (${destination.pois.length} точок).';
-    notifyListeners();
-  }
-
-  /// Check whether a POI is part of the static Stryiskyi Park dataset.
-  bool _isStryiskyiPoi(Poi p) {
-    return p.id.startsWith('sp_') || destination.pois.any((dp) => dp.id == p.id);
-  }
-
-  /// Toggle or set whether hardcoded Stryiskyi Park POIs are active.
-  void setStryiskyiParkPoisEnabled(bool enabled) {
-    if (_stryiskyiParkPoisEnabled == enabled) return;
-    _stryiskyiParkPoisEnabled = enabled;
-
-    if (!enabled) {
-      if (_isSimulating) {
-        stopSimulation();
-      }
-      if (_activePoi != null && _isStryiskyiPoi(_activePoi!)) {
-        stopAudio();
-      }
-      _allPois.removeWhere(_isStryiskyiPoi);
-      _nearbyUnplayedPois.removeWhere(_isStryiskyiPoi);
-      _statusMessage = 'Точки Стрийського парку вимкнено.';
-    } else {
-      final existingIds = _allPois.map((p) => p.id).toSet();
-      final toAdd = destination.pois.where((p) => !existingIds.contains(p.id)).toList();
-      _allPois.insertAll(0, toAdd);
-      _statusMessage = 'Точки Стрийського парку увімкнено (${destination.pois.length} точок).';
-    }
-    notifyListeners();
   }
 
   int _processGen = 0;
@@ -850,7 +713,6 @@ class WalkController extends ChangeNotifier {
   void dispose() {
     _disposed = true;
     _uiTimer?.cancel();
-    _simulationTimer?.cancel();
     _playerStateSub?.cancel();
     _positionSub?.cancel();
     _locationService.dispose();

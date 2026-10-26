@@ -369,26 +369,14 @@ void main() {
       }
     });
 
-    test('WalkController enables and disables Stryiskyi Park points', () {
-      final dest = Destination(
-        id: 'stryiskyi_park',
-        name: 'Стрийський парк',
-        centerLatitude: 49.8228,
-        centerLongitude: 24.0264,
+    test('WalkController initializes with clean empty POIs list (all dynamic from OSM)', () {
+      const dest = Destination(
+        id: 'lviv',
+        name: 'Львів',
+        centerLatitude: 49.8419,
+        centerLongitude: 24.0315,
         defaultZoom: 16.0,
-        pois: [
-          const Poi(
-            id: 'sp_01',
-            name: 'Вежа',
-            latitude: 49.82,
-            longitude: 24.02,
-            triggerRadius: 35,
-            shortDescription: 'Опис',
-            facts: ['Факт'],
-            narrationText: 'Текст',
-            sources: [],
-          ),
-        ],
+        pois: [],
       );
 
       final controller = WalkController(
@@ -396,20 +384,9 @@ void main() {
         apiKey: '',
       );
 
-      // By default hardcoded park points are disabled
-      expect(controller.stryiskyiParkPoisEnabled, isFalse);
+      // Initially empty, waiting for live OSM discovery
       expect(controller.allPois.isEmpty, isTrue);
-
-      // Enable points
-      controller.setStryiskyiParkPoisEnabled(true);
-      expect(controller.stryiskyiParkPoisEnabled, isTrue);
-      expect(controller.allPois.length, 1);
-      expect(controller.allPois.first.id, 'sp_01');
-
-      // Disable points
-      controller.setStryiskyiParkPoisEnabled(false);
-      expect(controller.stryiskyiParkPoisEnabled, isFalse);
-      expect(controller.allPois.isEmpty, isTrue);
+      expect(controller.osmLoaded, isFalse);
 
       controller.dispose();
     });
