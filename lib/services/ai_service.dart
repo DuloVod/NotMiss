@@ -1,5 +1,5 @@
 import 'dart:convert';
-import 'package:flutter/foundation.dart' show debugPrint;
+import 'package:flutter/foundation.dart' show debugPrint, visibleForTesting;
 import 'package:http/http.dart' as http;
 import '../models/poi.dart';
 import 'content_service.dart';
@@ -15,6 +15,13 @@ class AiService {
     'gemini-3.5-flash-lite',
     'gemini-2.5-flash',
     'gemini-2.5-flash-lite',
+  ];
+
+  static const List<Map<String, String>> _safetySettings = [
+    {'category': 'HARM_CATEGORY_HARASSMENT', 'threshold': 'BLOCK_NONE'},
+    {'category': 'HARM_CATEGORY_HATE_SPEECH', 'threshold': 'BLOCK_NONE'},
+    {'category': 'HARM_CATEGORY_SEXUALLY_EXPLICIT', 'threshold': 'BLOCK_NONE'},
+    {'category': 'HARM_CATEGORY_DANGEROUS_CONTENT', 'threshold': 'BLOCK_NONE'},
   ];
 
   static String _endpoint(String model, String apiKey) =>
@@ -50,11 +57,12 @@ class AiService {
                 ],
                 'generationConfig': {
                   'temperature': 0.7,
-                  'maxOutputTokens': 500,
+                  'maxOutputTokens': 1500,
                 },
+                'safetySettings': _safetySettings,
               }),
             )
-            .timeout(const Duration(seconds: 15));
+            .timeout(const Duration(seconds: 30));
 
         if (response.statusCode == 200) {
           final json = jsonDecode(response.body) as Map<String, dynamic>;
@@ -115,11 +123,12 @@ class AiService {
             ],
             'generationConfig': {
               'temperature': 0.7,
-              'maxOutputTokens': 800,
+              'maxOutputTokens': 1500,
               'responseMimeType': 'application/json',
             },
+            'safetySettings': _safetySettings,
           }),
-        ).timeout(const Duration(seconds: 15));
+        ).timeout(const Duration(seconds: 30));
 
         if (response.statusCode == 200) {
           final json = jsonDecode(response.body) as Map<String, dynamic>;
@@ -153,24 +162,79 @@ class AiService {
     return text.trim();
   }
 
-  String? _extractText(Map<String, dynamic> json) {
+  static String? _extractText(Map<String, dynamic> json) {
     try {
       final candidates = json['candidates'] as List?;
       if (candidates == null || candidates.isEmpty) return null;
 
-      final content = candidates[0]['content'] as Map<String, dynamic>?;
+      final candidate = candidates[0] as Map<String, dynamic>?;
+      if (candidate == null) return null;
+
+      final content = candidate['content'] as Map<String, dynamic>?;
       if (content == null) return null;
 
       final parts = content['parts'] as List?;
-      if (parts == null) return null;
+      if (parts == null || parts.isEmpty) return null;
 
+      final buffer = StringBuffer();
       for (final part in parts) {
-        final text = part['text'] as String?;
-        if (text != null && text.isNotEmpty) return text.trim();
+        if (part is Map<String, dynamic>) {
+          // Skip internal thinking / reasoning traces from Gemini 2.5 / 3.8
+          if (part['thought'] == true) continue;
+          final text = part['text'] as String?;
+          if (text != null && text.isNotEmpty) {
+            buffer.write(text);
+          }
+        }
+      }
+
+      var text = buffer.toString().trim();
+
+      // Fallback: if all parts had thought == true or no non-thought text found
+      if (text.isEmpty) {
+        for (final part in parts.reversed) {
+          if (part is Map<String, dynamic>) {
+            final t = part['text'] as String?;
+            if (t != null && t.trim().isNotEmpty) {
+              text = t.trim();
+              break;
+            }
+          }
+        }
+      }
+
+      if (text.isNotEmpty) {
+        return _cleanThoughtLeak(text);
       }
     } catch (_) {}
     return null;
   }
+
+  static String _cleanThoughtLeak(String raw) {
+    var text = raw.trim();
+    // 1. Remove leaked prompt / persona markers like:
+    // "2-4 sentences], applying persona):* " or "[2-4 sentences]...:"
+    final residueRegex = RegExp(
+      r'^(?:\[?[^\]\n]*\](?:,\s*[^:\n]*)*\)?:\*?\s*|\*\s*)',
+      caseSensitive: false,
+    );
+    text = text.replaceFirst(residueRegex, '').trim();
+
+    // 2. Remove leading "* " or "- " or "Відповідь:" if present
+    final prefixRegex = RegExp(r'^(?:відповідь|гід|екскурсовод):\s*', caseSensitive: false);
+    text = text.replaceFirst(prefixRegex, '').trim();
+
+    if (text.startsWith('* ') || text.startsWith('- ')) {
+      text = text.substring(2).trim();
+    }
+    return text;
+  }
+
+  @visibleForTesting
+  static String cleanThoughtLeak(String raw) => _cleanThoughtLeak(raw);
+
+  @visibleForTesting
+  static String? extractText(Map<String, dynamic> json) => _extractText(json);
 
   /// Answer a user's question about a specific POI using Gemini.
   Future<String> answerQuestionAboutPoi(
@@ -186,18 +250,19 @@ class AiService {
     final narration = poi.narrationText.isNotEmpty ? 'Розповідь: ${poi.narrationText}\n' : '';
 
     final prompt = '''
-Ти — ерудований, доброзичливий гід-екскурсовод.
+Ти — ерудований, доброзичливий гід-екскурсовод для пішої прогулянки.
 Користувач зараз знаходиться біля або запитує про це місце:
 Назва: "${poi.name}"
 $desc$narration${factsList.isNotEmpty ? 'Відомі факти:\n$factsList\n' : ''}
 
-Запитання користувача:
+Запитання туриста:
 "$question"
 
 Вимоги до відповіді:
 1. Відповідай українською мовою, цікаво, природно та по суті (2–4 речення).
-2. Якщо знаєш точну історичну дату, автора, архітектора чи цікаву деталь — обов'язково назви їх.
-3. Стиль живого екскурсовода, без шаблонних вступів, без списків.
+2. Якщо знаєш точну історичну дату, автора, розробника чи цікаву деталь — обов'язково назви їх.
+3. Стиль живого екскурсовода: пиши одразу текст відповіді для туриста (без вітань на кшталт "Вітаю!", без списків, без мета-коментарів і роздумів).
+4. Завжди повністю закінчуй думку та останнє речення крапкою.
 ''';
 
     for (final model in _models) {
@@ -219,11 +284,12 @@ $desc$narration${factsList.isNotEmpty ? 'Відомі факти:\n$factsList\n'
                 ],
                 'generationConfig': {
                   'temperature': 0.7,
-                  'maxOutputTokens': 500,
+                  'maxOutputTokens': 1500,
                 },
+                'safetySettings': _safetySettings,
               }),
             )
-            .timeout(const Duration(seconds: 15));
+            .timeout(const Duration(seconds: 30));
 
         if (response.statusCode == 200) {
           final json = jsonDecode(response.body) as Map<String, dynamic>;

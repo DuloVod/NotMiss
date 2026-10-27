@@ -607,5 +607,39 @@ void main() {
       expect(controller.isProcessing, isFalse);
       controller.dispose();
     });
+
+    test('AiService.extractText ignores thought parts and extracts true answer', () {
+      final json = {
+        'candidates': [
+          {
+            'content': {
+              'parts': [
+                {
+                  'thought': true,
+                  'text': 'Thinking about user question... [2-4 sentences], applying persona):*'
+                },
+                {
+                  'text': 'Розробку цієї машини розпочали наприкінці 1970-х років.'
+                }
+              ]
+            }
+          }
+        ]
+      };
+
+      final result = AiService.extractText(json);
+      expect(result, 'Розробку цієї машини розпочали наприкінці 1970-х років.');
+    });
+
+    test('AiService.cleanThoughtLeak strips stray prompt residue and bullets', () {
+      expect(
+        AiService.cleanThoughtLeak('2-4 sentences], applying persona):* Розробку цього сталевого'),
+        'Розробку цього сталевого',
+      );
+      expect(
+        AiService.cleanThoughtLeak('* Відповідь: Гарний пам\'ятник у центрі міста.'),
+        'Гарний пам\'ятник у центрі міста.',
+      );
+    });
   });
 }
