@@ -261,9 +261,11 @@ class WalkController extends ChangeNotifier {
     try {
       var currentPoi = updated;
       String narration = currentPoi.narrationText;
-      if (narration.isEmpty) {
+      final enriched = _researchService.getEnrichedData(currentPoi.id);
+      final hasFallback = enriched?.hasFallbackContent ?? false;
+      if (narration.isEmpty || hasFallback) {
         // Run or await research immediately — guarantees Wikipedia/Wikidata is consulted first
-        await _researchService.researchImmediately(currentPoi.id, poi: currentPoi);
+        await _researchService.researchImmediately(currentPoi.id, poi: currentPoi, force: hasFallback);
         if (gen != _manualPlayGen) return;
         currentPoi = getUpdatedPoi(currentPoi);
         narration = currentPoi.narrationText;
@@ -633,9 +635,11 @@ class WalkController extends ChangeNotifier {
     await IosBackgroundTask.begin();
     try {
       String narration = currentPoi.narrationText;
-      if (narration.isEmpty) {
+      final enriched = _researchService.getEnrichedData(currentPoi.id);
+      final hasFallback = enriched?.hasFallbackContent ?? false;
+      if (narration.isEmpty || hasFallback) {
         // Run or await research immediately — guarantees Wikipedia/Wikidata is consulted first
-        await _researchService.researchImmediately(currentPoi.id, poi: currentPoi);
+        await _researchService.researchImmediately(currentPoi.id, poi: currentPoi, force: hasFallback);
         if (gen != _processGen) return; // Cancelled while waiting
         currentPoi = getUpdatedPoi(currentPoi);
         narration = currentPoi.narrationText;
