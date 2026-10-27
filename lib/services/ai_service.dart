@@ -149,18 +149,25 @@ class AiService {
     return null;
   }
 
-  String _cleanJson(String raw) {
+  static String _cleanJson(String raw) {
     var text = raw.trim();
-    if (text.startsWith('```json')) {
-      text = text.substring(7);
-    } else if (text.startsWith('```')) {
-      text = text.substring(3);
+    if (text.contains('```')) {
+      final codeFenceRegex = RegExp(r'```(?:json)?\s*([\s\S]*?)\s*```');
+      final match = codeFenceRegex.firstMatch(text);
+      if (match != null) {
+        text = match.group(1)!.trim();
+      }
     }
-    if (text.endsWith('```')) {
-      text = text.substring(0, text.length - 3);
+    final start = text.indexOf('{');
+    final end = text.lastIndexOf('}');
+    if (start != -1 && end != -1 && end > start) {
+      return text.substring(start, end + 1).trim();
     }
-    return text.trim();
+    return text;
   }
+
+  @visibleForTesting
+  static String cleanJson(String raw) => _cleanJson(raw);
 
   static String? _extractText(Map<String, dynamic> json) {
     try {

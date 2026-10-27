@@ -4,6 +4,7 @@ import 'package:notmiss/models/enriched_poi.dart';
 import 'package:notmiss/services/poi_category_service.dart';
 import 'package:notmiss/services/poi_cache_service.dart';
 import 'package:notmiss/services/research_queue.dart';
+import 'package:notmiss/services/research_service.dart';
 
 void main() {
   group('POI Category Service Tests', () {
@@ -250,6 +251,111 @@ void main() {
       expect(PoiCategoryService.isTrivialDescription(null), isTrue);
       expect(PoiCategoryService.isTrivialDescription(''), isTrue);
       expect(PoiCategoryService.isTrivialDescription('  '), isTrue);
+    });
+  });
+
+  group('Research Pipeline Verification & Sentence Extraction', () {
+    test('extractSentences correctly splits Ukrainian sentences without splitting abbreviations', () {
+      const sample =
+          'Львівська ратуша розташована на площі Ринок, 1 у м. Львові. '
+          'Споруда була зведена у XIX ст. за проєктом архітекторів. '
+          'Сучасна вежа має висоту 65 м і є найвищою в Україні!';
+
+      final sentences = ResearchService.extractSentences(sample);
+      expect(sentences.length, 3);
+      expect(sentences[0], 'Львівська ратуша розташована на площі Ринок, 1 у м. Львові.');
+      expect(sentences[1], 'Споруда була зведена у XIX ст. за проєктом архітекторів.');
+      expect(sentences[2], 'Сучасна вежа має висоту 65 м і є найвищою в Україні!');
+    });
+
+    test('isFallbackFact correctly identifies dummy template facts', () {
+      expect(
+        ResearchService.isFallbackFact('Об\'єкт належить до категорії «Пам\'ятка» і відкритий для огляду.'),
+        isTrue,
+      );
+      expect(
+        ResearchService.isFallbackFact('Об’єкт належить до категорії «Скульптура» і відкритий для огляду.'),
+        isTrue,
+      );
+      expect(
+        ResearchService.isFallbackFact('Об\'єкт відкрито для візуального огляду під час прогулянки.'),
+        isTrue,
+      );
+      expect(
+        ResearchService.isFallbackFact('Це одне з примітних місць на вашому маршруті.'),
+        isTrue,
+      );
+
+      // Real historical facts are NOT fallback facts
+      expect(
+        ResearchService.isFallbackFact('Створено/засновано: 1848 рік'),
+        isFalse,
+      );
+      expect(
+        ResearchService.isFallbackFact('Архітектор: Юзеф Марковський'),
+        isFalse,
+      );
+      expect(
+        ResearchService.isFallbackFact('Ратуша виконана у стилі віденського класицизму.'),
+        isFalse,
+      );
+    });
+
+    test('isFallbackDescription detects template descriptions', () {
+      expect(ResearchService.isFallbackDescription(null), isTrue);
+      expect(ResearchService.isFallbackDescription(''), isTrue);
+      expect(ResearchService.isFallbackDescription('historic:monument'), isTrue);
+      expect(ResearchService.isFallbackDescription('Скульптура «БМ-30» у Львові.'), isTrue);
+      expect(ResearchService.isFallbackDescription('Історична споруда «Ратуша» у Львові.'), isTrue);
+      expect(ResearchService.isFallbackDescription('Парк «Стрийський» у Львові.'), isTrue);
+
+      // Real descriptions are NOT fallback
+      expect(
+        ResearchService.isFallbackDescription('Адміністративна будівля в центральній частині Львова на площі Ринок.'),
+        isFalse,
+      );
+      expect(
+        ResearchService.isFallbackDescription('Один із найстаріших та найгарніших парків міста, пам\'ятка садово-паркового мистецтва.'),
+        isFalse,
+      );
+    });
+
+    test('EnrichedPoi.hasFallbackContent accurately reports presence of fallback content', () {
+      const withFallbackNarr = EnrichedPoi(
+        poiId: 'p1',
+        name: 'Пам\'ятник',
+        category: 'monument',
+        latitude: 49.8,
+        longitude: 24.0,
+        narrationText: 'Перед вами Пам\'ятник. Це одне з примітних місць на вашому маршруті. Зверніть увагу на його вигляд та деталі довкола!',
+        keyFacts: [KeyFact(fact: 'Побудовано у 1901 році')],
+      );
+      expect(withFallbackNarr.hasFallbackContent, isTrue);
+
+      const withFallbackFactsOnly = EnrichedPoi(
+        poiId: 'p2',
+        name: 'Фонтан',
+        category: 'fountain',
+        latitude: 49.8,
+        longitude: 24.0,
+        narrationText: 'Чудовий фонтан у центрі Львова.',
+        keyFacts: [KeyFact(fact: 'Об\'єкт належить до категорії «Фонтан» і відкритий для огляду.')],
+      );
+      expect(withFallbackFactsOnly.hasFallbackContent, isTrue);
+
+      const withRealContent = EnrichedPoi(
+        poiId: 'p3',
+        name: 'Львівська ратуша',
+        category: 'building',
+        latitude: 49.8,
+        longitude: 24.0,
+        narrationText: 'Перед вами велична Львівська ратуша на площі Ринок.',
+        keyFacts: [
+          KeyFact(fact: 'Створено/засновано: 1848 рік'),
+          KeyFact(fact: 'Сучасна вежа має висоту 65 метрів.'),
+        ],
+      );
+      expect(withRealContent.hasFallbackContent, isFalse);
     });
   });
 }

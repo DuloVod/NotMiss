@@ -217,7 +217,7 @@ class ResearchService {
       // Save offline fallback so the app is NEVER silent even after failure
       final offlineNarration = enriched.narrationText?.isNotEmpty == true
           ? enriched.narrationText!
-          : 'Перед вами ${enriched.name}. Це одне з примітних місць на вашому маршруті. Зверніть увагу на його вигляд та деталі довкола!';
+          : _buildDynamicFallbackNarration(enriched, enriched.shortDescription);
       final failed = enriched.copyWith(
         researchStatus: ResearchStatus.failed,
         narrationText: offlineNarration,
@@ -241,11 +241,19 @@ class ResearchService {
       final facts = <KeyFact>[...enriched.keyFacts];
       final sources = <ResearchSource>[...enriched.sources];
       String? shortDesc = enriched.shortDescription;
-      String? wikidataId = enriched.wikidataId;
+      String? wikidataId = enriched.wikidataId ?? enriched.osmTags['wikidata'];
+
+      // Purge stale dummy/fallback facts and descriptions from prior failures or initial seeds
+      facts.removeWhere((f) => isFallbackFact(f.fact));
+      if (isFallbackDescription(shortDesc)) {
+        shortDesc = null;
+      }
 
       void addFact(String factText, String? sourceUrl, String confidence) {
         final trimmed = factText.trim();
-        if (trimmed.isNotEmpty && !facts.any((f) => f.fact.trim() == trimmed)) {
+        if (trimmed.isNotEmpty &&
+            !isFallbackFact(trimmed) &&
+            !facts.any((f) => f.fact.trim() == trimmed)) {
           facts.add(KeyFact(
             fact: trimmed,
             sourceUrl: sourceUrl,
@@ -258,11 +266,16 @@ class ResearchService {
       if (wikidataId != null && wikidataId.isNotEmpty) {
         final wikiData = await _wikidataService.fetchById(wikidataId);
         if (wikiData != null) {
-          if (wikiData.inception != null) {
+          if (wikiData.inception != null && wikiData.inception!.isNotEmpty) {
             addFact('Створено/засновано: ${wikiData.inception}', 'https://www.wikidata.org/wiki/$wikidataId', 'high');
           }
-          if (wikiData.architect != null) {
-            addFact('Архітектор/творець: ${wikiData.architect}', 'https://www.wikidata.org/wiki/$wikidataId', 'high');
+          if (wikiData.architect != null && wikiData.architect!.isNotEmpty) {
+            addFact('Архітектор: ${wikiData.architect}', 'https://www.wikidata.org/wiki/$wikidataId', 'high');
+          } else if (wikiData.creator != null && wikiData.creator!.isNotEmpty) {
+            addFact('Автор/скульптор: ${wikiData.creator}', 'https://www.wikidata.org/wiki/$wikidataId', 'high');
+          }
+          if (wikiData.heritageStatus != null && wikiData.heritageStatus!.isNotEmpty) {
+            addFact('Охоронний статус: ${wikiData.heritageStatus}', 'https://www.wikidata.org/wiki/$wikidataId', 'high');
           }
           if (shortDesc == null || shortDesc.isEmpty) {
             shortDesc = wikiData.description;
@@ -282,11 +295,11 @@ class ResearchService {
               wikiData.wikipediaTitle!,
               lang: wikiData.wikipediaLang!,
             );
-            if (wikiArticle != null) {
+            if (wikiArticle != null && wikiArticle.extract.isNotEmpty) {
               if (shortDesc == null || shortDesc.isEmpty) {
                 shortDesc = wikiArticle.description ?? _firstSentence(wikiArticle.extract);
               }
-              addFact(_truncate(wikiArticle.extract, 150), wikiArticle.url, 'high');
+              _addFactsFromWikipedia(wikiArticle, shortDesc, addFact);
               
               if (!sources.any((s) => s.type == 'wikipedia')) {
                 sources.add(ResearchSource(
@@ -311,7 +324,7 @@ class ResearchService {
             if (shortDesc == null || shortDesc.isEmpty) {
               shortDesc = wikiArticle.description ?? _firstSentence(wikiArticle.extract);
             }
-            addFact(_truncate(wikiArticle.extract, 150), wikiArticle.url, 'high');
+            _addFactsFromWikipedia(wikiArticle, shortDesc, addFact);
             sources.add(ResearchSource(
               url: wikiArticle.url,
               title: 'Wikipedia (${wikiArticle.title})',
@@ -331,7 +344,7 @@ class ResearchService {
           if (shortDesc == null || shortDesc.isEmpty) {
             shortDesc = wikiArticle.description ?? _firstSentence(wikiArticle.extract);
           }
-          addFact(_truncate(wikiArticle.extract, 150), wikiArticle.url, 'high');
+          _addFactsFromWikipedia(wikiArticle, shortDesc, addFact);
           sources.add(ResearchSource(
             url: wikiArticle.url,
             title: 'Wikipedia (${wikiArticle.title})',
@@ -342,27 +355,30 @@ class ResearchService {
 
       String? narrationText = enriched.narrationText;
       if (narrationText != null &&
-          narrationText.contains('Це одне з примітних місць на вашому маршруті')) {
+          (narrationText.contains('Це одне з примітних місць на вашому маршруті') ||
+           narrationText.contains('Зверніть увагу на його вигляд та деталі довкола') ||
+           narrationText.contains('Зверніть увагу на архітектурні деталі та атмосферу довкола!'))) {
         narrationText = null;
       }
 
-      if (PoiCategoryService.isTrivialDescription(shortDesc)) {
+      if (isFallbackDescription(shortDesc)) {
         shortDesc = null;
       }
 
       // STEP 4: AI Fallback & Fact Generation
-      if (facts.isEmpty || shortDesc == null || shortDesc.isEmpty) {
-        debugPrint('[ResearchService] Insufficient Wiki data for ${enriched.name}, using AI fallback...');
+      // If we don't have enough facts (< 2) or description is missing, enrich with AI!
+      if (facts.length < 2 || shortDesc == null || shortDesc.isEmpty) {
+        debugPrint('[ResearchService] Insufficient Wiki data for ${enriched.name} (${facts.length} facts), using AI fallback...');
         final aiData = await _aiService.generateBackgroundFacts(
           enriched.name, enriched.category, enriched.osmTags,
         );
         if (aiData != null) {
           final aiDesc = aiData['description'] as String?;
-          if (aiDesc != null && aiDesc.trim().isNotEmpty) {
+          if (aiDesc != null && aiDesc.trim().isNotEmpty && (shortDesc == null || shortDesc.isEmpty)) {
             shortDesc = aiDesc.trim();
           }
           final aiNarr = aiData['narration'] as String?;
-          if (aiNarr != null && aiNarr.trim().isNotEmpty) {
+          if (aiNarr != null && aiNarr.trim().isNotEmpty && (narrationText == null || narrationText.isEmpty)) {
             narrationText = aiNarr.trim();
           }
           final aiFacts = aiData['facts'] as List<dynamic>?;
@@ -385,7 +401,7 @@ class ResearchService {
       }
 
       // Safety fallback: guaranteed non-empty human-readable description and facts
-      if (shortDesc == null || PoiCategoryService.isTrivialDescription(shortDesc)) {
+      if (shortDesc == null || isFallbackDescription(shortDesc)) {
         if (facts.isNotEmpty) {
           shortDesc = facts.first.fact;
         } else {
@@ -395,7 +411,11 @@ class ResearchService {
       }
       if (facts.isEmpty) {
         final catLabel = PoiCategoryService.categoryLabelUk(enriched.category);
-        addFact('Об\'єкт належить до категорії «$catLabel» і відкритий для огляду.', null, 'medium');
+        facts.add(KeyFact(
+          fact: 'Об\'єкт належить до категорії «$catLabel» і відкритий для огляду.',
+          sourceUrl: null,
+          confidence: 'medium',
+        ));
       }
 
       // STEP 5: Mandatory Narration Generation (App must NEVER be silent!)
@@ -483,15 +503,120 @@ class ResearchService {
     }
   }
 
+  static bool isFallbackFact(String fact) {
+    final trimmed = fact.trim();
+    if (trimmed.startsWith("Об'єкт належить до категорії") ||
+        trimmed.startsWith('Об’єкт належить до категорії') ||
+        trimmed.contains('відкритий для огляду') ||
+        trimmed.contains('відкрито для огляду') ||
+        trimmed.contains('відкрито для візуального огляду') ||
+        trimmed.contains('примітне місце') ||
+        trimmed.contains('примітних місць')) {
+      return true;
+    }
+    return false;
+  }
+
+  static bool isFallbackDescription(String? desc) {
+    if (desc == null || desc.trim().isEmpty) return true;
+    if (PoiCategoryService.isTrivialDescription(desc)) return true;
+    final trimmed = desc.trim();
+    if (trimmed.startsWith("Об'єкт належить до категорії") ||
+        trimmed.startsWith('Об’єкт належить до категорії') ||
+        trimmed.contains('примітне місце') ||
+        trimmed.contains('примітних місць') ||
+        trimmed.contains('відкритий для огляду')) {
+      return true;
+    }
+    final catRegex = RegExp(
+      r"^(Скульптура|Історична споруда|Парк|Фонтан|Пам’ятка|Пам'ятка|Об’єкт|Об'єкт|Цікаве місце)\s+«.+»\s+у Львові\.$",
+      caseSensitive: false,
+    );
+    if (catRegex.hasMatch(trimmed)) {
+      return true;
+    }
+    return false;
+  }
+
+  static final _abbrevRegex = RegExp(
+    r'(?:^|\s)(вул|ім|р|рр|м|с|див|напр|тис|млн|грн|ст|в)\.$',
+    caseSensitive: false,
+  );
+
+  static List<String> extractSentences(String text) {
+    if (text.trim().isEmpty) return [];
+    final rawTokens = text.split(RegExp(r'(?<=[.!?])\s+'));
+    final sentences = <String>[];
+    var current = StringBuffer();
+
+    for (final token in rawTokens) {
+      if (current.isNotEmpty) {
+        current.write(' ');
+      }
+      current.write(token.trim());
+
+      final trimmedCurrent = current.toString();
+      if (_abbrevRegex.hasMatch(trimmedCurrent)) {
+        continue;
+      }
+
+      if (trimmedCurrent.endsWith('.') ||
+          trimmedCurrent.endsWith('!') ||
+          trimmedCurrent.endsWith('?')) {
+        final candidate = trimmedCurrent.trim();
+        if (candidate.length >= 25) {
+          sentences.add(candidate);
+        }
+        current.clear();
+      }
+    }
+
+    if (current.isNotEmpty) {
+      final remaining = current.toString().trim();
+      if (remaining.length >= 25) {
+        sentences.add(remaining);
+      }
+    }
+
+    return sentences;
+  }
+
+  void _addFactsFromWikipedia(
+    WikipediaArticle article,
+    String? shortDesc,
+    void Function(String fact, String? sourceUrl, String confidence) addFact,
+  ) {
+    final sentences = extractSentences(article.extract);
+    final shortDescNorm = shortDesc?.toLowerCase().replaceAll(RegExp(r'[^\w\sа-яєіїґ]'), '').trim() ?? '';
+    
+    int added = 0;
+    for (final s in sentences) {
+      final sNorm = s.toLowerCase().replaceAll(RegExp(r'[^\w\sа-яєіїґ]'), '').trim();
+      if (shortDescNorm.isNotEmpty && (sNorm == shortDescNorm || sNorm.contains(shortDescNorm) || shortDescNorm.contains(sNorm))) {
+        continue;
+      }
+      addFact(_truncate(s, 220), article.url, 'high');
+      added++;
+      if (added >= 3) break;
+    }
+    
+    if (added == 0 && article.extract.isNotEmpty) {
+      final fallbackFact = _truncate(article.extract, 180);
+      if (fallbackFact != shortDesc) {
+        addFact(fallbackFact, article.url, 'high');
+      }
+    }
+  }
+
   String _truncate(String text, int maxLength) {
     if (text.length <= maxLength) return text;
     return '${text.substring(0, maxLength)}...';
   }
 
   String _firstSentence(String text) {
-    final match = RegExp(r'(?<!\b(вул|ім|р|м|с|див|напр|тис|млн|грн))\.\s+[А-ЯЄІЇA-Z]').firstMatch(text);
-    if (match != null) {
-      return text.substring(0, match.start + 1).trim();
+    final sentences = extractSentences(text);
+    if (sentences.isNotEmpty) {
+      return sentences.first;
     }
     final firstPeriod = text.indexOf('. ');
     if (firstPeriod > 20) {
@@ -519,8 +644,7 @@ class ResearchService {
 
     if (shortDesc != null &&
         shortDesc.isNotEmpty &&
-        !PoiCategoryService.isTrivialDescription(shortDesc) &&
-        !shortDesc.startsWith('Об\'єкт належить')) {
+        !isFallbackDescription(shortDesc)) {
       buffer.write(' $shortDesc');
     } else {
       buffer.write(' Зверніть увагу на архітектурні деталі та атмосферу довкола!');

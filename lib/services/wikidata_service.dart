@@ -149,7 +149,15 @@ class WikidataService {
 
       // Extract key claims
       final claims = entity['claims'] as Map<String, dynamic>? ?? {};
-      final inception = _getClaimStringValue(claims, 'P571'); // inception date
+      final rawInception = _getClaimStringValue(claims, 'P571'); // inception date
+      String? inception = rawInception;
+      if (rawInception != null) {
+        // Format Wikidata timestamp e.g. "+1898-00-00T00:00:00Z" -> "1898 рік"
+        final match = RegExp(r'^[+-]?(\d{3,4})').firstMatch(rawInception);
+        if (match != null) {
+          inception = '${match.group(1)} рік';
+        }
+      }
       final heritage = _getClaimStringValue(claims, 'P1435'); // heritage status
 
       // Resolve entity references (architect, creator) to human-readable labels

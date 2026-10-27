@@ -22,6 +22,20 @@ class WikipediaService {
       var targetLang = lang;
       var cleanTitle = title.trim();
 
+      // Handle full Wikipedia URLs like https://uk.wikipedia.org/wiki/Title
+      if (cleanTitle.startsWith('http://') || cleanTitle.startsWith('https://')) {
+        final uri = Uri.tryParse(cleanTitle);
+        if (uri != null) {
+          final hostParts = uri.host.split('.');
+          if (hostParts.isNotEmpty && hostParts[0].length <= 3) {
+            targetLang = hostParts[0];
+          }
+          if (uri.pathSegments.isNotEmpty) {
+            cleanTitle = Uri.decodeComponent(uri.pathSegments.last);
+          }
+        }
+      }
+
       // Handle language prefix if present, e.g. "uk:Title" or "en:Title"
       final prefixMatch = RegExp(r'^([a-z]{2,3}):(.+)$').firstMatch(cleanTitle);
       if (prefixMatch != null) {
@@ -84,7 +98,7 @@ class WikipediaService {
         'list': 'search',
         'srsearch': query,
         'format': 'json',
-        'srlimit': '1',
+        'srlimit': '3',
       });
       final response = await http.get(uri, headers: {
         'User-Agent': _userAgent,
@@ -94,6 +108,20 @@ class WikipediaService {
       final json = jsonDecode(response.body) as Map<String, dynamic>;
       final search = (json['query'] as Map<String, dynamic>?)?['search'] as List?;
       if (search == null || search.isEmpty) return null;
+
+      // Extract query keywords (ignoring small punctuation and short words)
+      final cleanQuery = query.toLowerCase().replaceAll(RegExp(r'[«»"“”.,()\[\]]'), ' ');
+      final keywords = cleanQuery.split(' ').where((w) => w.length >= 4).toList();
+
+      for (final item in search) {
+        if (item is Map<String, dynamic>) {
+          final t = (item['title'] as String?)?.toLowerCase() ?? '';
+          if (keywords.any((kw) => t.contains(kw))) {
+            return item['title'] as String?;
+          }
+        }
+      }
+
       return (search[0] as Map<String, dynamic>)['title'] as String?;
     } catch (e) {
       debugPrint('[WikipediaService] Search error for $query: $e');

@@ -153,7 +153,20 @@ class EnrichedPoi {
   /// Whether this POI currently holds fallback/template content rather than verified research.
   bool get hasFallbackContent {
     final narr = narrationText ?? '';
-    return narr.contains('Це одне з примітних місць на вашому маршруті. Зверніть увагу на його вигляд та деталі довкола!');
+    if (narr.contains('Це одне з примітних місць на вашому маршруті') ||
+        narr.contains('Зверніть увагу на його вигляд та деталі довкола') ||
+        narr.contains('Зверніть увагу на архітектурні деталі та атмосферу довкола!')) {
+      return true;
+    }
+    if (keyFacts.isNotEmpty &&
+        keyFacts.every((f) =>
+            f.fact.contains('належить до категорії') ||
+            f.fact.contains('відкритий для огляду') ||
+            f.fact.contains('відкрито для огляду') ||
+            f.fact.contains('примітне місце на вашому маршруті'))) {
+      return true;
+    }
+    return false;
   }
 
   /// Content quality assessment.
