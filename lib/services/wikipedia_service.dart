@@ -31,7 +31,11 @@ class WikipediaService {
             targetLang = hostParts[0];
           }
           if (uri.pathSegments.isNotEmpty) {
-            cleanTitle = Uri.decodeComponent(uri.pathSegments.last);
+            try {
+              cleanTitle = Uri.decodeComponent(uri.pathSegments.last);
+            } catch (_) {
+              cleanTitle = uri.pathSegments.last;
+            }
           }
         }
       }

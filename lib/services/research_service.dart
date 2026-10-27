@@ -539,7 +539,7 @@ class ResearchService {
   }
 
   static final _abbrevRegex = RegExp(
-    r'(?:^|\s)(вул|ім|р|рр|м|с|див|напр|тис|млн|грн|ст|в)\.$',
+    r'(?:^|\s)(вул|просп|пл|бул|пров|пер|ім|р|рр|м|с|див|напр|тис|млн|грн|ст|в)\.$',
     caseSensitive: false,
   );
 
