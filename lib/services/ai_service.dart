@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart' show debugPrint, visibleForTesting;
 import 'package:http/http.dart' as http;
 import '../models/poi.dart';
 import 'content_service.dart';
+import 'text_quality.dart';
 
 /// Generates narration text and facts for POIs using the Gemini API.
 class AiService {
@@ -103,8 +104,16 @@ class AiService {
 
         if (response.statusCode == 200) {
           final json = jsonDecode(response.body) as Map<String, dynamic>;
-          final text = _extractText(json);
-          if (text != null && text.isNotEmpty) return text;
+          final raw = _extractText(json);
+          if (raw != null && raw.isNotEmpty) {
+            final text = TextQuality.sanitizeNarration(raw);
+            final problem = _finishReason(json) == 'MAX_TOKENS'
+                ? 'cut off (MAX_TOKENS)'
+                : TextQuality.narrationProblem(text);
+            if (problem == null) return text;
+            // Leaked prompt, fragment, wrong language, truncated… try the next model.
+            debugPrint('[AiService] generateNarration with $model rejected: $problem');
+          }
         } else {
           debugPrint('[AiService] generateNarration with $model failed: ${response.statusCode} -> ${response.body}');
           _markUnhealthy(model, response.statusCode);
@@ -134,7 +143,9 @@ class AiService {
 Підготуй для туриста інформацію українською мовою:
 1. "narration": захопливий текст для озвучення аудіогідом на 30–45 секунд (живий, атмосферний стиль від другої особи: "Перед вами...", "Погляньте на...", розмовний стиль для вух, без списків).
 2. "description": короткий змістовний опис (1–2 красивих речення українською: що це за місце).
-3. "facts": 3 цікавих факти про нього (архітектура, рік, значення для міста).
+3. "facts": 3 факти про нього.
+
+ВАЖЛИВО: пиши лише те, що знаєш достеменно. НЕ вигадуй дат, імен, цифр і подій; якщо про об'єкт нічого певного не відомо — описуй загальними словами (вигляд, атмосфера, розташування), а факти формулюй обережно, без конкретних цифр. Усі тексти — чиста українська мова, без латиниці, без markdown.
 
 Формат відповіді СТРОГО валідний JSON:
 {
@@ -161,7 +172,7 @@ class AiService {
               }
             ],
             'generationConfig': {
-              'temperature': 0.7,
+              'temperature': 0.4,
               'maxOutputTokens': 2500,
               'responseMimeType': 'application/json',
             },
@@ -175,7 +186,19 @@ class AiService {
           if (text != null && text.isNotEmpty) {
             final cleaned = _cleanJson(text);
             final decoded = jsonDecode(cleaned);
-            if (decoded is Map<String, dynamic>) return decoded;
+            if (decoded is Map<String, dynamic>) {
+              // Never hand a broken narration downstream: drop it so a proper one is generated.
+              final narr = decoded['narration'];
+              if (narr is String) {
+                final clean = TextQuality.sanitizeNarration(narr);
+                if (TextQuality.isValidNarration(clean) && _finishReason(json) != 'MAX_TOKENS') {
+                  decoded['narration'] = clean;
+                } else {
+                  decoded.remove('narration');
+                }
+              }
+              return decoded;
+            }
             return null; // Unexpected JSON type (e.g. array)
           }
         } else {
@@ -209,6 +232,15 @@ class AiService {
 
   @visibleForTesting
   static String cleanJson(String raw) => _cleanJson(raw);
+
+  static String? _finishReason(Map<String, dynamic> json) {
+    try {
+      final c = (json['candidates'] as List?)?.first as Map<String, dynamic>?;
+      return c?['finishReason'] as String?;
+    } catch (_) {
+      return null;
+    }
+  }
 
   static String? _extractText(Map<String, dynamic> json) {
     try {

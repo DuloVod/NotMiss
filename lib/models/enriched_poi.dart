@@ -1,3 +1,5 @@
+import '../services/text_quality.dart';
+
 /// Research status for a POI.
 enum ResearchStatus {
   notStarted,
@@ -158,6 +160,8 @@ class EnrichedPoi {
         narr.contains('Зверніть увагу на архітектурні деталі та атмосферу довкола!')) {
       return true;
     }
+    // Leaked prompt text, fragments, non-Ukrainian or cut-off narration must be regenerated.
+    if (TextQuality.isBadStoredNarration(narr)) return true;
     if (keyFacts.isNotEmpty &&
         keyFacts.every((f) =>
             f.fact.contains('належить до категорії') ||

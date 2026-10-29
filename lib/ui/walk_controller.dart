@@ -22,6 +22,7 @@ import '../services/research_queue.dart';
 import '../services/wikidata_service.dart';
 import '../services/wikipedia_service.dart';
 import '../services/ios_background_task.dart';
+import '../services/text_quality.dart';
 
 enum WalkStatus { idle, walking, stopped }
 
@@ -117,17 +118,7 @@ class WalkController extends ChangeNotifier {
     _researchService.onPoiUpdated = (enriched) {
       final idx = _allPois.indexWhere((p) => p.id == enriched.poiId);
       if (idx != -1) {
-        final old = _allPois[idx];
-        final facts = enriched.keyFacts.map((f) => f.fact).toList();
-        _allPois[idx] = old.copyWith(
-          shortDescription: (enriched.shortDescription?.isNotEmpty == true)
-              ? enriched.shortDescription!
-              : old.shortDescription,
-          facts: facts.isNotEmpty ? facts : old.facts,
-          narrationText: (enriched.narrationText?.isNotEmpty == true)
-              ? enriched.narrationText!
-              : old.narrationText,
-        );
+        _allPois[idx] = _mergeEnriched(_allPois[idx], enriched);
       }
       if (_activePoi?.id == enriched.poiId) {
         _activePoi = getUpdatedPoi(_activePoi!);
@@ -213,15 +204,29 @@ class WalkController extends ChangeNotifier {
   Poi getUpdatedPoi(Poi poi) {
     final enriched = _researchService.getEnrichedData(poi.id);
     if (enriched == null) return poi;
+    return _mergeEnriched(poi, enriched);
+  }
 
-    final facts = enriched.keyFacts.map((f) => f.fact).toList();
+  /// Applies research results to a POI, but never surfaces broken content that may sit in
+  /// the cache from earlier versions: leaked prompt text, cut-off or non-Ukrainian narration,
+  /// English / placeholder descriptions and facts.
+  Poi _mergeEnriched(Poi poi, EnrichedPoi enriched) {
+    final facts = enriched.keyFacts
+        .map((f) => TextQuality.normalizeFact(f.fact))
+        .where((f) => TextQuality.isCleanUkrainian(f) && !ResearchService.isFallbackFact(f))
+        .toList();
+    final desc = enriched.shortDescription;
+    final narr = enriched.narrationText;
     return poi.copyWith(
-      shortDescription: (enriched.shortDescription?.isNotEmpty == true)
-          ? enriched.shortDescription!
+      shortDescription: (desc != null &&
+              desc.isNotEmpty &&
+              TextQuality.isCleanUkrainian(desc) &&
+              !ResearchService.isFallbackDescription(desc))
+          ? desc
           : poi.shortDescription,
       facts: facts.isNotEmpty ? facts : poi.facts,
-      narrationText: (enriched.narrationText?.isNotEmpty == true)
-          ? enriched.narrationText!
+      narrationText: (narr != null && narr.isNotEmpty && !TextQuality.isBadStoredNarration(narr))
+          ? narr
           : poi.narrationText,
     );
   }

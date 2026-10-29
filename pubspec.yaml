@@ -1,7 +1,7 @@
 name: notmiss
 description: AI Voice Guide for Walking Tours
 publish_to: none
-version: 0.2.4+3
+version: 0.2.4+4
 
 environment:
   sdk: ">=3.3.0 <4.0.0"

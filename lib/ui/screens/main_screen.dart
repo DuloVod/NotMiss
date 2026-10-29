@@ -83,7 +83,12 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
     final pos = widget.controller.currentPosition;
     if (pos != null) {
       _followUser = true;
-      _mapController.move(LatLng(pos.latitude, pos.longitude), 17);
+      // Centre on the user without touching the zoom the user has chosen.
+      double zoom = 17;
+      try {
+        zoom = _mapController.camera.zoom;
+      } catch (_) {}
+      _mapController.move(LatLng(pos.latitude, pos.longitude), zoom);
     }
     setState(() {});
   }

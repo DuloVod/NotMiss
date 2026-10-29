@@ -194,12 +194,12 @@ void main() {
           latitude: 0,
           longitude: 0,
           researchStatus: ResearchStatus.complete,
-          narrationText: 'Already done',
+          narrationText: 'Вже готово: розповідь про місце.',
         ),
       ]);
       // The cache-level check: complete → needsResearch = false
       expect(cache.needsResearch('poi_done'), false);
-      expect(cache.get('poi_done')?.narrationText, 'Already done');
+      expect(cache.get('poi_done')?.narrationText, 'Вже готово: розповідь про місце.');
     });
 
     test('Failed research saves offline fallback narration to cache', () async {

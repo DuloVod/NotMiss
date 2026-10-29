@@ -52,10 +52,18 @@ class WikipediaService {
       final encodedTitle = Uri.encodeComponent(cleanTitle);
       final url = 'https://$targetLang.wikipedia.org/api/rest_v1/page/summary/$encodedTitle';
 
-      final response = await http.get(
+      var response = await http.get(
         Uri.parse(url),
         headers: {'User-Agent': _userAgent},
       ).timeout(const Duration(seconds: 8));
+      if (response.statusCode == 429) {
+        // Polite single retry: Wikipedia rate limits are short-lived.
+        await Future.delayed(const Duration(milliseconds: 1500));
+        response = await http.get(
+          Uri.parse(url),
+          headers: {'User-Agent': _userAgent},
+        ).timeout(const Duration(seconds: 8));
+      }
 
       if (response.statusCode == 404) {
         debugPrint('[WikipediaService] Article not found: $cleanTitle ($targetLang)');
@@ -117,19 +125,17 @@ class WikipediaService {
       if (search == null || search.isEmpty) return null;
 
       // Extract query keywords (ignoring small punctuation and short words)
-      final cleanQuery = query.toLowerCase().replaceAll(RegExp(r'[«»"“”.,()\[\]]'), ' ');
-      final keywords = cleanQuery.split(' ').where((w) => w.length >= 4).toList();
 
       for (final item in search) {
         if (item is Map<String, dynamic>) {
-          final t = (item['title'] as String?)?.toLowerCase() ?? '';
-          if (keywords.any((kw) => t.contains(kw))) {
-            return item['title'] as String?;
-          }
+          final title = item['title'] as String? ?? '';
+          if (titleMatchesName(title, query)) return title;
         }
       }
 
-      return (search[0] as Map<String, dynamic>)['title'] as String?;
+      // No result that actually shares a distinctive word with the name: better no article than
+      // a wrong one ("Простір Львів" must never resolve to a random street).
+      return null;
     } catch (e) {
       debugPrint('[WikipediaService] Search error for $query: $e');
       return null;
@@ -182,12 +188,28 @@ class WikipediaService {
         .toSet();
   }
 
-  /// True when [title] shares at least one significant word with [name].
+  /// Words that name a kind of object, not the object itself. "Музей Івана Франка" must not
+  /// match "Музей Михайла Грушевського" just because both say "музей".
+  static const _generic = {
+    'музей', 'музею', 'пам\'ятник', 'памятник', 'пам\u2019ятник', 'пам\'ятка', 'церква', 'костел', 'собор',
+    'вулиця', 'площа', 'парк', 'сквер', 'будинок', 'будівля', 'монастир', 'каплиця', 'фонтан',
+    'меморіал', 'скульптура', 'статуя', 'хрест', 'готель', 'кафе', 'ресторан', 'школа',
+    'університет', 'бібліотека', 'театр', 'стадіон', 'місто', 'львів', 'львові', 'львова',
+    'museum', 'church', 'park', 'street', 'square', 'monument',
+  };
+
+  /// True when [title] shares the distinctive part of [name]. At least half of the
+  /// distinctive words (generic ones like "музей"/"вулиця"/"Львів" are ignored) must appear;
+  /// if the name has no distinctive word at all, any shared word counts.
   @visibleForTesting
   static bool titleMatchesName(String title, String name) {
-    final a = nameStems(title);
-    final b = nameStems(name);
-    return a.intersection(b).isNotEmpty;
+    final t = nameStems(title);
+    final n = nameStems(name);
+    final genericStems = nameStems(_generic.join(' '));
+    final distinctive = n.difference(genericStems);
+    if (distinctive.isEmpty) return t.intersection(n).isNotEmpty;
+    final hit = distinctive.intersection(t).length;
+    return hit >= (distinctive.length / 2).ceil();
   }
 
   /// An article that has coordinates must be within [maxM] of the POI; articles
@@ -209,6 +231,11 @@ class WikipediaService {
   Future<WikipediaArticle?> fetchSummaryOrSearch(String name,
       {String lang = 'uk', double? lat, double? lng}) async {
     bool ok(WikipediaArticle? a) => a != null && a.extract.isNotEmpty && isNear(a, lat, lng);
+    // Articles found by free-text search are accepted only when Wikipedia confirms their
+    // coordinates are near the POI ("Простір Львів" → "Простір імен" is a programming article
+    // that has no coordinates). Without a POI position we cannot verify, so keep the old rule.
+    bool okSearched(WikipediaArticle? a) =>
+        ok(a) && (lat == null || lng == null || (a!.lat != null && a.lon != null));
 
     final direct = await fetchSummary(name, lang: lang);
     if (ok(direct)) return direct;
@@ -234,7 +261,7 @@ class WikipediaService {
     final foundTitle = await searchArticle(name, lang: lang);
     if (foundTitle != null && foundTitle.isNotEmpty) {
       final result = await fetchSummary(foundTitle, lang: lang);
-      if (ok(result)) return result;
+      if (okSearched(result)) return result;
     }
 
     // If still not found and stripped query exists, try searching stripped
@@ -242,7 +269,7 @@ class WikipediaService {
       final foundStrippedTitle = await searchArticle(stripped, lang: lang);
       if (foundStrippedTitle != null && foundStrippedTitle.isNotEmpty) {
         final result = await fetchSummary(foundStrippedTitle, lang: lang);
-        if (ok(result)) return result;
+        if (okSearched(result)) return result;
       }
     }
 

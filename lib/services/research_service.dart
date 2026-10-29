@@ -8,6 +8,7 @@ import 'research_queue.dart';
 import 'wikidata_service.dart';
 import 'wikipedia_service.dart';
 import 'ai_service.dart';
+import 'text_quality.dart';
 
 /// Orchestrates the research pipeline for POIs.
 ///
@@ -318,15 +319,23 @@ class ResearchService {
       String? shortDesc = enriched.shortDescription;
       String? wikidataId = enriched.wikidataId ?? enriched.osmTags['wikidata'];
 
-      // Purge stale dummy/fallback facts and descriptions from prior failures or initial seeds
-      facts.removeWhere((f) => isFallbackFact(f.fact));
-      if (isFallbackDescription(shortDesc)) {
+      // Purge stale dummy/fallback facts and descriptions from prior failures or initial seeds,
+      // plus facts that are not Ukrainian (English Wikidata/Wikipedia leftovers).
+      facts.removeWhere((f) => isFallbackFact(f.fact) || !TextQuality.isCleanUkrainian(f.fact));
+      for (var i = 0; i < facts.length; i++) {
+        final fixed = TextQuality.normalizeFact(facts[i].fact);
+        if (fixed != facts[i].fact) {
+          facts[i] = KeyFact(fact: fixed, sourceUrl: facts[i].sourceUrl, confidence: facts[i].confidence);
+        }
+      }
+      if (isFallbackDescription(shortDesc) || !TextQuality.isCleanUkrainian(shortDesc)) {
         shortDesc = null;
       }
 
       void addFact(String factText, String? sourceUrl, String confidence) {
-        final trimmed = factText.trim();
+        final trimmed = TextQuality.normalizeFact(factText.trim());
         if (trimmed.isNotEmpty &&
+            TextQuality.isCleanUkrainian(trimmed) &&
             !isFallbackFact(trimmed) &&
             !facts.any((f) => f.fact.trim() == trimmed)) {
           facts.add(KeyFact(
@@ -353,7 +362,9 @@ class ResearchService {
             addFact('Охоронний статус: ${wikiData.heritageStatus}', 'https://www.wikidata.org/wiki/$wikidataId', 'high');
           }
           if (shortDesc == null || shortDesc.isEmpty) {
-            shortDesc = wikiData.description;
+            // Wikidata often only has an English one-liner ("museum in Ukraine") — useless here.
+            final d = wikiData.description;
+            if (TextQuality.isCleanUkrainian(d)) shortDesc = d;
           }
           
           if (!sources.any((s) => s.type == 'wikidata')) {
@@ -372,7 +383,7 @@ class ResearchService {
             );
             if (wikiArticle != null && wikiArticle.extract.isNotEmpty) {
               if (shortDesc == null || shortDesc.isEmpty) {
-                shortDesc = wikiArticle.description ?? _firstSentence(wikiArticle.extract);
+                shortDesc = _pickDescription(wikiArticle);
               }
               _addFactsFromWikipedia(wikiArticle, shortDesc, addFact);
               
@@ -397,7 +408,7 @@ class ResearchService {
           final wikiArticle = await _wikipediaService.fetchSummary(osmWiki);
           if (wikiArticle != null && wikiArticle.extract.isNotEmpty) {
             if (shortDesc == null || shortDesc.isEmpty) {
-              shortDesc = wikiArticle.description ?? _firstSentence(wikiArticle.extract);
+              shortDesc = _pickDescription(wikiArticle);
             }
             _addFactsFromWikipedia(wikiArticle, shortDesc, addFact);
             sources.add(ResearchSource(
@@ -420,7 +431,7 @@ class ResearchService {
         );
         if (wikiArticle != null && wikiArticle.extract.isNotEmpty) {
           if (shortDesc == null || shortDesc.isEmpty) {
-            shortDesc = wikiArticle.description ?? _firstSentence(wikiArticle.extract);
+            shortDesc = _pickDescription(wikiArticle);
           }
           _addFactsFromWikipedia(wikiArticle, shortDesc, addFact);
           sources.add(ResearchSource(
@@ -432,6 +443,10 @@ class ResearchService {
       }
 
       String? narrationText = enriched.narrationText;
+      if (TextQuality.isBadStoredNarration(narrationText)) {
+        debugPrint('[ResearchService] Dropping bad stored narration for ${enriched.name}');
+        narrationText = null;
+      }
       if (narrationText != null &&
           (narrationText.contains('Це одне з примітних місць на вашому маршруті') ||
            narrationText.contains('Зверніть увагу на його вигляд та деталі довкола') ||
@@ -452,7 +467,9 @@ class ResearchService {
         );
         if (aiData != null) {
           final aiDesc = aiData['description'] as String?;
-          if (aiDesc != null && aiDesc.trim().isNotEmpty && (shortDesc == null || shortDesc.isEmpty)) {
+          if (aiDesc != null &&
+              TextQuality.isCleanUkrainian(aiDesc) &&
+              (shortDesc == null || shortDesc.isEmpty)) {
             shortDesc = aiDesc.trim();
           }
           final aiNarr = aiData['narration'] as String?;
@@ -684,6 +701,14 @@ class ResearchService {
         addFact(fallbackFact, article.url, 'high');
       }
     }
+  }
+
+  /// Article description when it is Ukrainian, otherwise the first sentence of the extract
+  /// (if that is Ukrainian); null when only English is available.
+  String? _pickDescription(WikipediaArticle a) {
+    if (TextQuality.isCleanUkrainian(a.description)) return a.description;
+    final first = _firstSentence(a.extract);
+    return TextQuality.isCleanUkrainian(first) ? first : null;
   }
 
   String _truncate(String text, int maxLength) {
