@@ -65,6 +65,10 @@ class WalkController extends ChangeNotifier {
   bool _osmLoaded = false;
   
   Timer? _uiTimer;
+  Timer? _osmRetryTimer;
+
+  /// Pause before re-trying a failed POI search (public so tests can shorten it).
+  Duration osmRetryDelay = const Duration(seconds: 6);
 
   /// TTS retry policy (public so tests can shorten it).
   int ttsAttempts = 3;
@@ -462,7 +466,10 @@ class WalkController extends ChangeNotifier {
     _isOsmLoading = true;
     try {
       // Wait for first GPS fix (max 15 seconds)
-      Position? pos = _locationService.lastPosition;
+      Position? pos = _locationService.lastPosition ??
+          await _locationService.lastKnownPosition();
+      // A fresh fix may have arrived while we waited for the OS-cached one.
+      pos ??= _locationService.lastPosition;
       if (pos == null) {
         pos = await _locationService.positionStream
             .first
@@ -471,6 +478,12 @@ class WalkController extends ChangeNotifier {
 
       final osmPois =
           await _overpassService.loadPois(pos.latitude, pos.longitude, force: force);
+
+      // An empty list caused by network trouble is a failure, not "no points here":
+      // the catch below keeps the walk in "not loaded" state and schedules a retry.
+      if (osmPois.isEmpty && _overpassService.lastLoadFailed) {
+        throw StateError('Overpass unavailable');
+      }
 
       // Перевіряємо статус одразу після await — між await та мутацією
       // міг виконатися stopWalk(), тому перевіряємо тут, а не раніше.
@@ -508,8 +521,17 @@ class WalkController extends ChangeNotifier {
       debugPrint('[WalkController] OSM load failed: $e');
       _osmLoaded = false;
       if (_status == WalkStatus.walking) {
-        _statusMessage = 'Прогулянка — ${_allPois.length} точок (пошук OSM...)';
+        _statusMessage = e is TimeoutException
+            ? 'Очікую GPS-сигнал… (вийдіть на відкрите місце)'
+            : 'Немає зв\'язку з картою — повторюю пошук точок…';
         notifyListeners();
+        // Retry on its own: do not depend on the user moving to trigger another attempt.
+        _osmRetryTimer?.cancel();
+        _osmRetryTimer = Timer(osmRetryDelay, () {
+          if (!_disposed && _status == WalkStatus.walking && !_osmLoaded && !_isOsmLoading) {
+            _loadOsmPoisAsync();
+          }
+        });
       }
     } finally {
       _isOsmLoading = false;
@@ -521,6 +543,7 @@ class WalkController extends ChangeNotifier {
     _manualPlayGen++;
     _uiTimer?.cancel();
     _uiTimer = null;
+    _osmRetryTimer?.cancel();
     _positionSub?.cancel();
     _positionSub = null;
     _locationService.stop();
@@ -833,6 +856,7 @@ class WalkController extends ChangeNotifier {
   void dispose() {
     _disposed = true;
     _uiTimer?.cancel();
+    _osmRetryTimer?.cancel();
     _playerStateSub?.cancel();
     _positionSub?.cancel();
     _locationService.dispose();

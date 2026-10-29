@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/foundation.dart' show debugPrint, kIsWeb;
@@ -43,6 +44,20 @@ class OverpassService {
   /// Minimum time between Overpass requests.
   static const Duration _minRequestInterval = Duration(seconds: 10);
 
+  /// Max pause between retries after failures (kept short: a walker must not wait minutes).
+  static const int _maxBackoffSeconds = 20;
+
+  /// Endpoints are tried in a staggered race: the next mirror starts this long after the
+  /// previous one if nothing has answered yet, so one dead server costs seconds, not 12 s each.
+  final Duration staggerDelay;
+
+  OverpassService({this.staggerDelay = const Duration(seconds: 2)});
+
+  /// True when the last [loadPois] returned an empty list because the network / all mirrors
+  /// failed (as opposed to a genuinely empty area). Callers must retry instead of
+  /// treating the area as loaded.
+  bool lastLoadFailed = false;
+
   // In-memory cache
   List<Poi>? _cachedPois;
   double? _cacheCenterLat;
@@ -69,19 +84,23 @@ class OverpassService {
     if (!force && _cachedPois != null && !shouldReload(lat, lng)) {
       debugPrint('[OverpassService] Using in-memory cache: '
           '${_cachedPois!.length} POIs');
+      lastLoadFailed = false;
       return _cachedPois!;
     }
 
-    // 2. Check disk cache
+    // 2. Check disk cache (valid only for the place it was fetched for)
     List<Poi>? diskPois;
     if (!force) {
       diskPois = await _loadFromDisk();
-      if (diskPois != null && !shouldReload(lat, lng)) {
+      if (diskPois != null && _isNearCacheCenter(lat, lng)) {
         _cachedPois = diskPois;
+        lastLoadFailed = false;
         debugPrint('[OverpassService] Using disk cache: '
             '${diskPois.length} POIs');
         return diskPois;
       }
+      // A cache from another place must never be served as a fallback either.
+      if (diskPois != null && !_isNearCacheCenter(lat, lng, maxM: 1500)) diskPois = null;
     }
 
     // 3. Rate limiting check
@@ -89,14 +108,14 @@ class OverpassService {
       final elapsed = DateTime.now().difference(_lastRequestTime!);
       // Exponential backoff on consecutive errors
       final backoff = _consecutiveErrors > 0
-          ? Duration(seconds: _minRequestInterval.inSeconds *
-              (1 << _consecutiveErrors.clamp(0, 5)))
+          ? Duration(seconds: (3 * (1 << _consecutiveErrors.clamp(0, 4))).clamp(3, _maxBackoffSeconds))
           : _minRequestInterval;
       if (elapsed < backoff) {
         debugPrint('[OverpassService] Rate limited, using cache');
         if (_cachedPois != null) return _cachedPois!;
         if (diskPois != null) return diskPois;
         debugPrint('[OverpassService] Rate limited and no cache available, returning empty list');
+        lastLoadFailed = true;
         return [];
       }
     }
@@ -109,6 +128,7 @@ class OverpassService {
       _cacheCenterLat = lat;
       _cacheCenterLng = lng;
       _consecutiveErrors = 0;
+      lastLoadFailed = false;
       await _saveToDisk(pois, lat, lng);
       debugPrint('[OverpassService] Fetched from Overpass: ${pois.length} POIs');
       return pois;
@@ -119,8 +139,14 @@ class OverpassService {
       // Fall back to any existing cache
       if (_cachedPois != null) return _cachedPois!;
       if (diskPois != null) return diskPois;
+      lastLoadFailed = true;
       return []; // Return empty list rather than crashing on network outage
     }
+  }
+
+  bool _isNearCacheCenter(double lat, double lng, {double maxM = _cacheValidRadiusM}) {
+    if (_cacheCenterLat == null || _cacheCenterLng == null) return false;
+    return Geolocator.distanceBetween(lat, lng, _cacheCenterLat!, _cacheCenterLng!) <= maxM;
   }
 
   /// Build and execute the Overpass QL query with fallback support.
@@ -139,42 +165,46 @@ class OverpassService {
       candidateEndpoints.insert(0, _preferredEndpoint!);
     }
 
-    List<dynamic>? elements;
     final errors = <String>[];
+    final done = Completer<List<dynamic>>();
+    var pending = candidateEndpoints.length;
 
-    for (final endpoint in candidateEndpoints) {
+    Future<void> attempt(String endpoint) async {
       try {
         debugPrint('[OverpassService] Trying endpoint: $endpoint');
         final response = await http
-            .post(
-              Uri.parse(endpoint),
-              headers: headers,
-              body: bodyStr,
-            )
+            .post(Uri.parse(endpoint), headers: headers, body: bodyStr)
             .timeout(const Duration(seconds: 12)); // 12s timeout for Overpass 10s query
-
         if (response.statusCode == 200) {
           final json = jsonDecode(response.body) as Map<String, dynamic>;
-          elements = json['elements'] as List<dynamic>? ?? [];
-          _preferredEndpoint = endpoint; // Stick to the server that responded successfully
-          debugPrint('[OverpassService] Success from $endpoint (${elements.length} elements)');
-          break; // Success, exit the loop
-        } else {
-          final err = 'HTTP ${response.statusCode}: ${response.reasonPhrase}';
-          debugPrint('[OverpassService] Endpoint failed ($endpoint): $err');
-          errors.add('$endpoint: $err');
-          if (endpoint == _preferredEndpoint) _preferredEndpoint = null;
+          final elements = json['elements'] as List<dynamic>? ?? [];
+          if (!done.isCompleted) {
+            _preferredEndpoint = endpoint; // Stick to the server that responded first
+            debugPrint('[OverpassService] Success from $endpoint (${elements.length} elements)');
+            done.complete(elements);
+          }
+          return;
         }
+        final err = 'HTTP ${response.statusCode}: ${response.reasonPhrase}';
+        debugPrint('[OverpassService] Endpoint failed ($endpoint): $err');
+        errors.add('$endpoint: $err');
       } catch (e) {
         debugPrint('[OverpassService] Endpoint error ($endpoint): $e');
         errors.add('$endpoint: $e');
-        if (endpoint == _preferredEndpoint) _preferredEndpoint = null;
+      }
+      if (endpoint == _preferredEndpoint) _preferredEndpoint = null;
+      if (--pending == 0 && !done.isCompleted) {
+        done.completeError(HttpException('All Overpass endpoints failed:\n${errors.join('\n')}'));
       }
     }
 
-    if (elements == null) {
-      throw HttpException('All Overpass endpoints failed:\n${errors.join('\n')}');
+    // Staggered race: next mirror starts if nobody answered within [staggerDelay]
+    // (or immediately when the previous one has already failed).
+    for (var i = 0; i < candidateEndpoints.length && !done.isCompleted; i++) {
+      unawaited(attempt(candidateEndpoints[i]));
+      await Future.any([done.future.then((_) {}, onError: (_) {}), Future.delayed(staggerDelay)]);
     }
+    final elements = await done.future;
 
     return _parseElements(elements);
   }

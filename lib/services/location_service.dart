@@ -62,6 +62,17 @@ class LocationService {
   Stream<Position> get positionStream => _controller.stream;
   Position? get lastPosition => _lastPosition;
 
+  /// Last position known to the OS (instant, no GPS fix needed, not accuracy-gated).
+  /// Used to start loading POIs immediately instead of waiting for the first fine fix.
+  Future<Position?> lastKnownPosition() async {
+    if (kIsWeb) return null;
+    try {
+      return await Geolocator.getLastKnownPosition().timeout(const Duration(seconds: 3));
+    } catch (_) {
+      return null;
+    }
+  }
+
   /// Request permission and return true if granted.
   Future<bool> requestPermission() async {
     try {
