@@ -109,7 +109,7 @@ class TtsService {
                 },
               }),
             )
-            .timeout(const Duration(seconds: 40));
+            .timeout(const Duration(seconds: 25));
 
         lastResponse = response;
         if (response.statusCode == 200) {

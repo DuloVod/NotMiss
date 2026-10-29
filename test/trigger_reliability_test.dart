@@ -7,6 +7,7 @@ import 'package:notmiss/models/enriched_poi.dart';
 import 'package:notmiss/models/poi.dart';
 import 'package:notmiss/services/ai_service.dart';
 import 'package:notmiss/services/audio_player_service.dart';
+import 'package:notmiss/services/overpass_service.dart';
 import 'package:notmiss/services/poi_cache_service.dart';
 import 'package:notmiss/services/poi_category_service.dart';
 import 'package:notmiss/services/research_queue.dart';
@@ -37,6 +38,20 @@ class _FakeAudio extends AudioPlayerService {
   Future<void> play(String source) async => played.add(source);
   @override
   Future<void> stop() async {}
+}
+
+class _NoOverpass extends OverpassService {
+  @override
+  bool shouldReload(double lat, double lng) => false;
+}
+
+class _GatedAudio extends _FakeAudio {
+  final Completer<void> gate = Completer<void>();
+  @override
+  Future<void> play(String source) async {
+    played.add(source);
+    await gate.future;
+  }
 }
 
 class _FakeAi extends AiService {
@@ -117,6 +132,7 @@ WalkController _controller(ResearchService research, _FakeTts tts, _FakeAudio au
     researchService: research,
     ttsService: tts,
     audioService: audio,
+    overpassService: _NoOverpass(),
   );
   c.ttsRetryPause = Duration.zero;
   return c;
@@ -202,6 +218,125 @@ void main() {
       await Future.delayed(const Duration(milliseconds: 50));
       expect(service.getEnrichedData(_poi.id)!.narrationText, good.narrationText);
       service.dispose();
+    });
+  });
+  group('Edge scenarios', () {
+    test('fallback content inside the cooldown is not re-researched at approach (offline user)', () async {
+      final ai = _FakeAi();
+      final cache = PoiCacheService();
+      await cache.put(EnrichedPoi(
+        poiId: _poi.id,
+        name: _poi.name,
+        category: PoiCategoryService.historicalBuilding,
+        latitude: _poi.latitude,
+        longitude: _poi.longitude,
+        researchStatus: ResearchStatus.complete,
+        narrationText: 'Перед вами Ратуша — примітне місце на вашому маршруті. Зверніть увагу на архітектурні деталі та атмосферу довкола!',
+        lastResearchedAt: DateTime.now(),
+      ));
+      expect(cache.needsResearch(_poi.id), isFalse);
+      final service = ResearchService(
+        categoryService: PoiCategoryService(),
+        cacheService: cache,
+        queue: ResearchQueue(maxConcurrent: 2),
+        wikidataService: WikidataService(),
+        wikipediaService: WikipediaService(),
+        aiService: ai,
+      );
+      final tts = _FakeTts();
+      final controller = _controller(service, tts, _FakeAudio());
+
+      await controller.debugProcessPoi(_poi, _pos);
+
+      expect(ai.factCalls, 0, reason: 'no research round-trip');
+      expect(tts.calls, 1);
+      controller.dispose();
+    });
+
+    test('stale fallback content is researched again after the cooldown', () async {
+      final cache = PoiCacheService();
+      await cache.put(EnrichedPoi(
+        poiId: 'old',
+        name: 'Стара',
+        category: 'x',
+        latitude: 0,
+        longitude: 0,
+        researchStatus: ResearchStatus.complete,
+        narrationText: 'Зверніть увагу на архітектурні деталі та атмосферу довкола!',
+        lastResearchedAt: DateTime.now().subtract(const Duration(minutes: 11)),
+      ));
+      expect(cache.needsResearch('old'), isTrue);
+    });
+
+    test('stopWalk closes the card', () async {
+      final controller = _controller(_research(_FakeAi()), _FakeTts(), _FakeAudio());
+      await controller.debugProcessPoi(_poi, _pos);
+      expect(controller.activePoi, isNotNull);
+      controller.stopWalk();
+      expect(controller.activePoi, isNull);
+      controller.dispose();
+    });
+
+    test('card is dismissed after the user walks away, kept while nearby', () async {
+      final controller = _controller(_research(_FakeAi()), _FakeTts(), _FakeAudio());
+      controller.debugSetPois([_poi]);
+      await controller.debugProcessPoi(_poi, _pos);
+      expect(controller.activePoi, isNotNull);
+
+      await controller.debugOnPosition(_pos);
+      expect(controller.activePoi, isNotNull, reason: 'still at the point');
+
+      final far = Position(
+        latitude: 49.8425, // ~55 m north… and then further
+        longitude: 24.03,
+        timestamp: DateTime(2026, 1, 1),
+        accuracy: 5, altitude: 0, altitudeAccuracy: 0, heading: 0,
+        headingAccuracy: 0, speed: 0, speedAccuracy: 0,
+      );
+      await controller.debugOnPosition(far);
+      expect(controller.activePoi, isNull, reason: '~280 m away');
+      controller.dispose();
+    });
+
+    test('a point entered while another narration is playing is played afterwards, even if just passed', () async {
+      const second = Poi(
+        id: 'poi_second',
+        name: 'Арсенал',
+        latitude: 49.84005,
+        longitude: 24.03,
+        triggerRadius: 40,
+        shortDescription: '',
+        facts: [],
+        narrationText: '',
+        sources: [],
+      );
+      final audio = _GatedAudio();
+      final controller = _controller(_research(_FakeAi()), _FakeTts(), audio);
+      controller.ttsRetryPause = Duration.zero;
+      controller.debugSetPois([_poi, second]);
+
+      // First point starts and "plays" (blocked on the gate).
+      final first = controller.debugProcessPoi(_poi, _pos);
+      await Future.delayed(const Duration(milliseconds: 200));
+      expect(controller.isProcessing, isTrue);
+
+      // Second point entered while busy.
+      await controller.debugOnPosition(_pos);
+      expect(controller.triggeredPoiIds, isNot(contains('poi_second')));
+
+      // User walks ~70 m past it (outside radius 40, inside 'just passed' 100 m).
+      final past = Position(
+        latitude: 49.8406, longitude: 24.03, timestamp: DateTime(2026, 1, 1),
+        accuracy: 5, altitude: 0, altitudeAccuracy: 0, heading: 0,
+        headingAccuracy: 0, speed: 0, speedAccuracy: 0,
+      );
+      audio.gate.complete();
+      await first;
+      await controller.debugOnPosition(past);
+      await Future.delayed(const Duration(milliseconds: 200));
+
+      expect(controller.triggeredPoiIds, contains('poi_second'));
+      controller.dispose();
     });
   });
 }

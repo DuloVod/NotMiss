@@ -69,7 +69,7 @@ class WalkController extends ChangeNotifier {
   /// TTS retry policy (public so tests can shorten it).
   int ttsAttempts = 3;
   Duration ttsRetryPause = const Duration(seconds: 3);
-  Duration ttsAttemptTimeout = const Duration(seconds: 60);
+  Duration ttsAttemptTimeout = const Duration(seconds: 45);
   final Set<String> _preSynthesizedIds = {};
 
   /// Dynamic string representing current background activity
@@ -238,6 +238,7 @@ class WalkController extends ChangeNotifier {
 
     final updated = getUpdatedPoi(poi);
     _poiEngine.markTriggered(updated.id);
+    _pendingPoiIds.remove(updated.id);
     _nearbyUnplayedPois.removeWhere((p) => p.id == updated.id);
     if (_currentPosition != null && !_proximityEvents.any((e) => e.poiId == updated.id)) {
       final distance = Geolocator.distanceBetween(
@@ -414,6 +415,7 @@ class WalkController extends ChangeNotifier {
     }
 
     _poiEngine.resetSession();
+    _pendingPoiIds.clear();
     _proximityEvents.clear();
     _osmLoaded = false;
     _status = WalkStatus.walking;
@@ -522,6 +524,8 @@ class WalkController extends ChangeNotifier {
     _audioService.stop();
     _status = WalkStatus.stopped;
     _isProcessing = false;
+    _activePoi = null;
+    _pendingPoiIds.clear();
     _statusMessage =
         'Прогулянка завершена. ${_poiEngine.triggeredPoiIds.length} місць відвідано.';
     notifyListeners();
@@ -548,6 +552,9 @@ class WalkController extends ChangeNotifier {
   }
 
   int _processGen = 0;
+
+  /// Points the user entered while another narration was busy.
+  final Set<String> _pendingPoiIds = {};
   List<Poi> _nearbyUnplayedPois = [];
   List<Poi> get nearbyUnplayedPois => List.unmodifiable(_nearbyUnplayedPois);
 
@@ -598,12 +605,36 @@ class WalkController extends ChangeNotifier {
     }
 
     _dismissStaleCard(pos);
-    _nearbyUnplayedPois = triggerable;
+
+    // Points entered while another narration was busy must not be lost when the user
+    // walks on: remember them and still play them within a wider "just passed" radius.
+    if (_isProcessing) {
+      for (final p in triggerable) {
+        _pendingPoiIds.add(p.id);
+      }
+    }
+    final ready = List<Poi>.of(triggerable);
+    if (!_isProcessing && _pendingPoiIds.isNotEmpty) {
+      for (final p in _allPois) {
+        if (!_pendingPoiIds.contains(p.id) ||
+            _poiEngine.triggeredPoiIds.contains(p.id) ||
+            ready.any((r) => r.id == p.id)) {
+          continue;
+        }
+        final d = Geolocator.distanceBetween(pos.latitude, pos.longitude, p.latitude, p.longitude);
+        if (d <= math.max(p.triggerRadius * 2.5, 100.0)) ready.add(p);
+      }
+      ready.sort((a, b) =>
+          Geolocator.distanceBetween(pos.latitude, pos.longitude, a.latitude, a.longitude).compareTo(
+              Geolocator.distanceBetween(pos.latitude, pos.longitude, b.latitude, b.longitude)));
+      if (_activePoi != null) ready.removeWhere((p) => p.id == _activePoi!.id);
+    }
+    _nearbyUnplayedPois = ready;
     notifyListeners();
 
     // Якщо нічого не грає і є точки - запускаємо найближчу
-    if (!_isProcessing && triggerable.isNotEmpty) {
-      _processPoi(triggerable.first, pos);
+    if (!_isProcessing && ready.isNotEmpty) {
+      _processPoi(ready.first, pos);
     }
   }
 
@@ -617,8 +648,9 @@ class WalkController extends ChangeNotifier {
 
   Future<void> _processPoi(Poi poi, Position pos) async {
     final gen = ++_processGen;
-    
+
     _poiEngine.markTriggered(poi.id);
+    _pendingPoiIds.remove(poi.id);
     _isProcessing = true;
 
     // Merge enriched research data if available
@@ -659,11 +691,14 @@ class WalkController extends ChangeNotifier {
     try {
       String narration = currentPoi.narrationText;
       final enriched = _researchService.getEnrichedData(currentPoi.id);
-      final hasFallback = enriched?.hasFallbackContent ?? false;
-      if (narration.isEmpty || hasFallback) {
+      // Re-research fallback content only after the cache cooldown, otherwise an offline
+      // user would wait for the deadline at every single point.
+      final refresh = (enriched?.hasFallbackContent ?? false) &&
+          _researchService.needsResearch(currentPoi.id);
+      if (narration.isEmpty || refresh) {
         // Joins research already started by the queue (or runs it) — bounded by the
         // research deadline, so a slow network can't keep the user waiting for minutes.
-        await _researchService.researchImmediately(currentPoi.id, poi: currentPoi, force: hasFallback);
+        await _researchService.researchImmediately(currentPoi.id, poi: currentPoi, force: refresh);
         if (gen != _processGen) return; // Cancelled while waiting
         currentPoi = getUpdatedPoi(currentPoi);
         narration = currentPoi.narrationText;
@@ -774,6 +809,16 @@ class WalkController extends ChangeNotifier {
 
   @visibleForTesting
   Future<void> debugProcessPoi(Poi poi, Position pos) => _processPoi(poi, pos);
+
+  @visibleForTesting
+  Future<void> debugOnPosition(Position pos) => _onPosition(pos);
+
+  @visibleForTesting
+  void debugSetPois(List<Poi> pois) {
+    _allPois = List.of(pois);
+    _osmLoaded = true;
+    _status = WalkStatus.walking;
+  }
 
   @override
   void notifyListeners() {

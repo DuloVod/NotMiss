@@ -70,7 +70,12 @@ class PoiCacheService {
   bool needsResearch(String poiId) {
     final cached = _cache[poiId];
     if (cached == null) return true;
-    if (cached.hasFallbackContent) return true; // Re-research fallback POIs
+    if (cached.hasFallbackContent) {
+      // Re-research fallback POIs, but with a cooldown: offline / no-AI results are
+      // always "fallback", and without it every GPS fix would restart the research.
+      final t = cached.lastResearchedAt;
+      return t == null || DateTime.now().difference(t) > const Duration(minutes: 10);
+    }
     if (cached.researchStatus == ResearchStatus.notStarted) return true;
     if (cached.researchStatus == ResearchStatus.queued) return true;
     if (cached.researchStatus == ResearchStatus.inProgress) {

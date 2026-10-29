@@ -60,10 +60,14 @@ class BackgroundService {
   /// Update the notification text (Android only).
   static Future<void> updateNotification(String title, String text) async {
     if (kIsWeb || !Platform.isAndroid || !_initialized) return;
-    await FlutterForegroundTask.updateService(
-      notificationTitle: title,
-      notificationText: text,
-    );
+    try {
+      await FlutterForegroundTask.updateService(
+        notificationTitle: title,
+        notificationText: text,
+      );
+    } catch (_) {
+      // A notification failure must never break narration.
+    }
   }
 
   /// Stop the foreground service when the walk ends (Android only).

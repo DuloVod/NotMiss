@@ -54,6 +54,8 @@ class ResearchService {
   int get activeResearchCount => _queue.activeCount;
   int getQueuePosition(String poiId) => _queue.getQueuePosition(poiId);
 
+  bool needsResearch(String poiId) => _cacheService.needsResearch(poiId);
+
   /// Expose the underlying cache lookup.
   EnrichedPoi? getEnrichedData(String poiId) => _cacheService.get(poiId);
 
