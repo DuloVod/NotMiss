@@ -43,7 +43,23 @@ class TtsService {
   ///
   /// Returns a data URI on web (for use with AudioPlayer.setUrl),
   /// or a file path on native (for use with AudioPlayer.setFilePath).
-  Future<String> synthesize(String text, String poiId) async {
+  Future<String> synthesize(String text, String poiId) {
+    // Pre-synthesis and the proximity trigger can ask for the same audio at once:
+    // share one request instead of paying for (and racing) two.
+    final key = '$poiId:${_hashText(text)}';
+    final inFlight = _inFlight[key];
+    if (inFlight != null) return inFlight;
+    final future = _synthesize(text, poiId);
+    _inFlight[key] = future;
+    future.then<void>((_) {}, onError: (_) {}).whenComplete(() {
+      if (identical(_inFlight[key], future)) _inFlight.remove(key);
+    });
+    return future;
+  }
+
+  final Map<String, Future<String>> _inFlight = {};
+
+  Future<String> _synthesize(String text, String poiId) async {
     final textHash = _hashText(text);
 
     // Check disk cache first to avoid redundant API calls and enable offline / instant playback.

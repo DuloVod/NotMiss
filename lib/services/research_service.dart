@@ -25,6 +25,11 @@ class ResearchService {
   final WikipediaService _wikipediaService;
   final AiService _aiService;
 
+  /// Hard upper bound for one research run (Wikidata → Wikipedia → AI facts → AI narration).
+  /// When it expires the caller proceeds with quick fallback text; the run itself keeps
+  /// going in the background and updates the cache if it finishes later.
+  final Duration researchDeadline;
+
   ResearchService({
     required PoiCategoryService categoryService,
     required PoiCacheService cacheService,
@@ -32,6 +37,7 @@ class ResearchService {
     required WikidataService wikidataService,
     required WikipediaService wikipediaService,
     required AiService aiService,
+    this.researchDeadline = const Duration(seconds: 25),
   })  : _categoryService = categoryService,
         _cacheService = cacheService,
         _queue = queue,
@@ -94,9 +100,10 @@ class ResearchService {
 
   final Set<String> _bumpedPois = {};
 
-  /// Tracks POI IDs currently being researched via [researchImmediately]
-  /// to prevent concurrent duplicate execution for the same POI.
-  final Set<String> _inFlightImmediateIds = {};
+  /// Research runs currently executing, keyed by poiId. Both the background
+  /// queue and [researchImmediately] go through [_processResearchTask], so a POI
+  /// is never researched twice in parallel.
+  final Map<String, Future<void>> _running = {};
 
   /// Active Completers keyed by poiId for callers awaiting research completion.
   /// Multiple callers can await the same research by chaining on the same completer.
@@ -152,9 +159,10 @@ class ResearchService {
   ///
   /// If [force] is false and the POI is already researched, skips redundant network/AI requests.
   Future<void> researchImmediately(String poiId, {Poi? poi, bool force = false}) async {
-    // If already being researched immediately, wait for completion rather than skipping
-    if (_inFlightImmediateIds.contains(poiId)) {
-      await waitForResearch(poiId);
+    // Already running (started by the queue or another caller): join it, don't duplicate.
+    final running = _running[poiId];
+    if (running != null) {
+      await _awaitWithDeadline(running, poiId);
       return;
     }
 
@@ -182,25 +190,85 @@ class ResearchService {
       onPoiUpdated?.call(enriched);
     }
 
-    _inFlightImmediateIds.add(poiId);
     try {
-      await _processResearchTask(poiId);
+      await _processResearchTask(poiId, force: true);
     } catch (e) {
       debugPrint('[ResearchService] researchImmediately error handled gracefully (offline fallback preserved): $e');
-    } finally {
-      _inFlightImmediateIds.remove(poiId);
     }
   }
 
-  /// The core research workflow executed by the queue.
+  /// Waits for [run] but never longer than [researchDeadline]; a timeout is not an error.
+  Future<void> _awaitWithDeadline(Future<void> run, String poiId) async {
+    try {
+      await run.timeout(researchDeadline);
+    } on TimeoutException {
+      debugPrint('[ResearchService] Research deadline ($researchDeadline) hit for $poiId, continuing with fallback');
+    } catch (_) {
+      // Failure is already recorded in the cache by the run itself.
+    }
+  }
+
+  /// Short spoken text that is available instantly (no network). Used when the
+  /// research deadline expires or yields nothing. Never stored in the cache.
+  String quickNarration(Poi poi) {
+    final cached = _cacheService.get(poi.id);
+    final enriched = cached ??
+        EnrichedPoi(
+          poiId: poi.id,
+          name: poi.name,
+          category: _categoryService.categorize(poi.osmTags ?? {}),
+          latitude: poi.latitude,
+          longitude: poi.longitude,
+          researchStatus: ResearchStatus.notStarted,
+        );
+    final desc = (cached?.shortDescription?.isNotEmpty == true)
+        ? cached!.shortDescription
+        : (poi.shortDescription.isNotEmpty ? poi.shortDescription : null);
+    return _buildDynamicFallbackNarration(enriched, desc);
+  }
+
+  /// Entry point for both the background queue and [researchImmediately].
   ///
-  /// Wrapped in a 45-second timeout to prevent indefinite hangs.
-  /// On any failure, saves an offline-ready fallback narration so the app
-  /// is never silent even without network / AI availability.
-  Future<void> _processResearchTask(String poiId) async {
+  /// Joins a run that is already in flight instead of starting a duplicate, and
+  /// bounds the wait by [researchDeadline] so a slow network can neither block a
+  /// queue slot nor keep the user waiting at the POI. On the deadline the run keeps
+  /// going in the background and updates the cache if it completes later.
+  Future<void> _processResearchTask(String poiId, {bool force = false}) async {
+    final existing = _running[poiId];
+    if (existing != null) {
+      await _awaitWithDeadline(existing, poiId);
+      return;
+    }
+
     final enriched = _cacheService.get(poiId);
     if (enriched == null) return;
 
+    // A queued task for a POI that was meanwhile researched via researchImmediately.
+    if (!force &&
+        enriched.researchStatus == ResearchStatus.complete &&
+        !enriched.hasFallbackContent) {
+      return;
+    }
+
+    // Register synchronously (before any await) so concurrent callers always see it.
+    final run = _runResearch(poiId, enriched);
+    _running[poiId] = run;
+    unawaited(run.then<void>((_) {}, onError: (_) {}).whenComplete(() {
+      if (identical(_running[poiId], run)) _running.remove(poiId);
+    }));
+
+    try {
+      await run.timeout(researchDeadline);
+    } on TimeoutException {
+      // Not rethrown: the queue must not schedule a retry (that would start a duplicate
+      // run); the original run is still alive and will populate the cache when done.
+      debugPrint('[ResearchService] Research deadline ($researchDeadline) hit for $poiId');
+    }
+  }
+
+  /// One research run. On any failure saves an offline-ready fallback narration so
+  /// the app is never silent, then rethrows so the queue can retry.
+  Future<void> _runResearch(String poiId, EnrichedPoi enriched) async {
     // Mark in progress
     final inProg = enriched.copyWith(
       researchStatus: ResearchStatus.inProgress,
@@ -214,11 +282,16 @@ class ResearchService {
       await _doResearch(enriched, poiId);
     } catch (e) {
       debugPrint('[ResearchService] Research failed for $poiId: $e');
-      // Save offline fallback so the app is NEVER silent even after failure
-      final offlineNarration = enriched.narrationText?.isNotEmpty == true
-          ? enriched.narrationText!
-          : _buildDynamicFallbackNarration(enriched, enriched.shortDescription);
-      final failed = enriched.copyWith(
+      // Base the failure record on the LATEST cache entry, not the snapshot taken at
+      // start, so a failed run can never overwrite a newer successful result.
+      final latest = _cacheService.get(poiId) ?? enriched;
+      if (latest.researchStatus == ResearchStatus.complete && !latest.hasFallbackContent) {
+        return;
+      }
+      final offlineNarration = latest.narrationText?.isNotEmpty == true
+          ? latest.narrationText!
+          : _buildDynamicFallbackNarration(latest, latest.shortDescription);
+      final failed = latest.copyWith(
         researchStatus: ResearchStatus.failed,
         narrationText: offlineNarration,
         lastResearchedAt: DateTime.now(),

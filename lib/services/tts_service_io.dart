@@ -10,7 +10,11 @@ Future<String> saveTempWav(Uint8List wavBytes, String poiId, {int? textHash}) as
   final safeId = poiId.replaceAll(RegExp(r'[/\\:*?"<>|]'), '_');
   final suffix = textHash != null ? '_$textHash' : '';
   final file = File('${dir.path}/narration_${safeId}$suffix.wav');
-  await file.writeAsBytes(wavBytes);
+  // Write to a temp file and rename: a reader (cache check / player) never sees a
+  // half-written WAV, even if two syntheses for the same POI overlap.
+  final tmp = File('${file.path}.${DateTime.now().microsecondsSinceEpoch}.tmp');
+  await tmp.writeAsBytes(wavBytes, flush: true);
+  await tmp.rename(file.path);
   return file.path;
 }
 

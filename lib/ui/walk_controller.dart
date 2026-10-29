@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math' as math;
 import 'package:flutter/foundation.dart';
 import 'package:geolocator/geolocator.dart';
 import '../models/destination.dart';
@@ -38,7 +39,6 @@ class WalkController extends ChangeNotifier {
   final Destination destination;
   final LocationService _locationService;
   final PoiEngine _poiEngine;
-  final ContentService _contentService;
   final AiService _aiService;
   final TtsService _ttsService;
   final AudioPlayerService _audioService;
@@ -65,6 +65,11 @@ class WalkController extends ChangeNotifier {
   bool _osmLoaded = false;
   
   Timer? _uiTimer;
+
+  /// TTS retry policy (public so tests can shorten it).
+  int ttsAttempts = 3;
+  Duration ttsRetryPause = const Duration(seconds: 3);
+  Duration ttsAttemptTimeout = const Duration(seconds: 60);
   final Set<String> _preSynthesizedIds = {};
 
   /// Dynamic string representing current background activity
@@ -93,7 +98,6 @@ class WalkController extends ChangeNotifier {
     ResearchService? researchService,
   })  : _locationService = locationService ?? LocationService(),
         _poiEngine = poiEngine ?? PoiEngine(),
-        _contentService = contentService ?? ContentService(),
         _aiService = aiService ?? AiService(apiKey: apiKey),
         _ttsService = ttsService ?? TtsService(apiKey: apiKey),
         _audioService = audioService ?? AudioPlayerService(),
@@ -257,6 +261,7 @@ class WalkController extends ChangeNotifier {
     _isProcessing = true;
     notifyListeners();
 
+    var failed = false;
     await IosBackgroundTask.begin();
     try {
       var currentPoi = updated;
@@ -273,7 +278,13 @@ class WalkController extends ChangeNotifier {
       }
 
       if (narration.isEmpty) {
-        narration = await _aiService.generateNarration(currentPoi);
+        try {
+          narration = await _aiService
+              .generateNarration(currentPoi)
+              .timeout(const Duration(seconds: 15));
+        } on TimeoutException {
+          narration = '';
+        }
         if (narration.isNotEmpty) {
           await _researchService.updateNarration(currentPoi.id, narration, poi: currentPoi);
           currentPoi = getUpdatedPoi(currentPoi);
@@ -284,14 +295,16 @@ class WalkController extends ChangeNotifier {
 
       // Hard safety net — TTS must never be called with empty text
       if (narration.isEmpty) {
-        narration = 'Перед вами ${currentPoi.name}. Зверніть увагу на цей об\'єкт поруч із вами!';
+        narration = _researchService.quickNarration(currentPoi);
       }
 
       if (narration.isNotEmpty) {
+        currentPoi = currentPoi.copyWith(narrationText: narration);
+        _activePoi = currentPoi;
         _statusMessage = '🔊 ${currentPoi.name} — озвучення…';
         notifyListeners();
-        final audioPath = await _ttsService.synthesize(narration, currentPoi.id);
-        if (gen != _manualPlayGen) return;
+        final audioPath = await _synthesizeWithRetry(narration, currentPoi.id, () => gen != _manualPlayGen);
+        if (gen != _manualPlayGen || audioPath == null) return;
 
         _statusMessage = '🎧 ${currentPoi.name}';
         notifyListeners();
@@ -300,15 +313,23 @@ class WalkController extends ChangeNotifier {
       }
     } catch (e) {
       debugPrint('[WalkController] Play narration error: $e');
+      if (gen == _manualPlayGen) {
+        failed = true;
+        _statusMessage = '📍 ${updated.name} — озвучення недоступне, розповідь текстом';
+        notifyListeners();
+      }
     } finally {
       await IosBackgroundTask.end();
       if (gen == _manualPlayGen && _activePoi?.id == updated.id) {
         _isProcessing = false;
-        _activePoi = null;
-        if (_status == WalkStatus.walking) {
-          _statusMessage = 'Прогулянка — слухаю (${_proximityEvents.length} зафіксовано)';
-        } else {
-          _statusMessage = null;
+        // Keep the card (and its text) after a failure so the user can read / retry.
+        if (!failed) {
+          if (_status == WalkStatus.walking) {
+            _statusMessage = 'Прогулянка — слухаю (${_proximityEvents.length} зафіксовано)';
+          } else {
+            _statusMessage = null;
+          }
+          _activePoi = null;
         }
         notifyListeners();
       }
@@ -576,6 +597,7 @@ class WalkController extends ChangeNotifier {
       triggerable.removeWhere((p) => p.id == _activePoi!.id);
     }
 
+    _dismissStaleCard(pos);
     _nearbyUnplayedPois = triggerable;
     notifyListeners();
 
@@ -632,58 +654,45 @@ class WalkController extends ChangeNotifier {
     );
 
     var currentPoi = activePoi;
+    var failed = false;
     await IosBackgroundTask.begin();
     try {
       String narration = currentPoi.narrationText;
       final enriched = _researchService.getEnrichedData(currentPoi.id);
       final hasFallback = enriched?.hasFallbackContent ?? false;
       if (narration.isEmpty || hasFallback) {
-        // Run or await research immediately — guarantees Wikipedia/Wikidata is consulted first
+        // Joins research already started by the queue (or runs it) — bounded by the
+        // research deadline, so a slow network can't keep the user waiting for minutes.
         await _researchService.researchImmediately(currentPoi.id, poi: currentPoi, force: hasFallback);
         if (gen != _processGen) return; // Cancelled while waiting
         currentPoi = getUpdatedPoi(currentPoi);
         narration = currentPoi.narrationText;
-        _activePoi = currentPoi;
       }
 
+      // Instant offline text: the guide is never silent and the card never empty.
       if (narration.isEmpty) {
-        final aiText = await _aiService.generateNarration(currentPoi);
-        if (gen != _processGen) return; // Відмінено
-        narration = _contentService.getNarration(currentPoi, aiText: aiText);
-        if (narration.isNotEmpty) {
-          await _researchService.updateNarration(currentPoi.id, narration, poi: currentPoi);
-          currentPoi = getUpdatedPoi(currentPoi);
-          _activePoi = currentPoi;
-        }
+        narration = _researchService.quickNarration(currentPoi);
       }
 
-      // Safe fallback so the app is never silent when GPS triggers in pocket
-      if (narration.isEmpty) {
-        narration = 'Перед вами ${currentPoi.name}. Зверніть увагу на цей об\'єкт поруч із вами!';
-      }
+      // Show the text in the card right away, before (possibly slow) synthesis.
+      currentPoi = currentPoi.copyWith(narrationText: narration);
+      _activePoi = currentPoi;
+      _statusMessage = '🔊 ${currentPoi.name} — озвучення…';
+      notifyListeners();
 
-      if (narration.isNotEmpty) {
-        _statusMessage = '🔊 ${currentPoi.name} — озвучення…';
-        notifyListeners();
+      final audioPath = await _synthesizeWithRetry(narration, currentPoi.id, () => gen != _processGen);
+      if (gen != _processGen || audioPath == null) return; // Відмінено
 
-        final audioPath = await _ttsService.synthesize(narration, currentPoi.id);
-        if (gen != _processGen) return; // Відмінено
+      _statusMessage = '🎧 ${currentPoi.name}';
+      notifyListeners();
 
-        _statusMessage = '🎧 ${currentPoi.name}';
-        notifyListeners();
+      BackgroundService.updateNotification(
+        'NotMiss — ${currentPoi.name}',
+        'Now playing audio narration 🎧',
+      );
 
-        BackgroundService.updateNotification(
-          'NotMiss — ${currentPoi.name}',
-          'Now playing audio narration 🎧',
-        );
-
-        await _audioService.play(audioPath);
-        if (gen != _processGen) return; // Відмінено
-      } else {
-        // Для OSM або точок без розповіді
-        _statusMessage = '📍 ${currentPoi.name} — зафіксовано';
-        notifyListeners();
-      }
+      await _audioService.play(audioPath);
+      if (gen != _processGen) return; // Відмінено
 
       BackgroundService.updateNotification(
         'NotMiss — Walk in progress',
@@ -691,10 +700,11 @@ class WalkController extends ChangeNotifier {
       );
     } catch (e) {
       if (gen == _processGen) {
-        // DO NOT unmarkTriggered — unmarking causes an infinite retry loop every 2s when offline.
-        // Instead keep the POI triggered and inform the user that narration is ready to read.
+        // The POI stays marked as triggered (unmarking would retry forever when offline),
+        // but the card with the narration text stays on screen so nothing is lost.
+        failed = true;
         debugPrint('[WalkController] Error processing POI ${currentPoi.name}: $e');
-        _statusMessage = '📍 ${currentPoi.name} — розповідь доступна текстом';
+        _statusMessage = '📍 ${currentPoi.name} — озвучення недоступне, розповідь текстом';
         notifyListeners();
         BackgroundService.updateNotification(
           'NotMiss',
@@ -705,12 +715,13 @@ class WalkController extends ChangeNotifier {
       await IosBackgroundTask.end();
       if (gen == _processGen) {
         _isProcessing = false;
-        _activePoi = null;
-        if (_status == WalkStatus.walking) {
+        // _activePoi is intentionally kept: the card with the text stays until the user
+        // walks away (see _dismissStaleCard), starts another POI or closes it.
+        if (_status == WalkStatus.walking && !failed) {
           _statusMessage = 'Прогулянка — слухаю (${_proximityEvents.length} зафіксовано)';
         }
         notifyListeners();
-        
+
         // Natural 2-second pause before checking for the next triggerable POI
         Future.delayed(const Duration(seconds: 2), () {
           if (!_disposed && _currentPosition != null && _status == WalkStatus.walking && !_isProcessing) {
@@ -720,6 +731,49 @@ class WalkController extends ChangeNotifier {
       }
     }
   }
+
+  /// TTS with a bounded number of attempts and a pause between them.
+  /// Returns null if cancelled meanwhile; rethrows the last error when attempts run out.
+  Future<String?> _synthesizeWithRetry(
+    String text,
+    String poiId,
+    bool Function() isCancelled,
+  ) async {
+    Object? lastError;
+    for (var attempt = 1; attempt <= ttsAttempts; attempt++) {
+      try {
+        return await _ttsService.synthesize(text, poiId).timeout(ttsAttemptTimeout);
+      } catch (e) {
+        lastError = e;
+        debugPrint('[WalkController] TTS attempt $attempt/$ttsAttempts failed: $e');
+        if (attempt < ttsAttempts) {
+          _statusMessage = '🔊 повторна спроба озвучення ($attempt/$ttsAttempts)…';
+          notifyListeners();
+          await Future.delayed(ttsRetryPause);
+          if (isCancelled()) return null;
+        }
+      }
+    }
+    throw lastError!;
+  }
+
+  /// Clears a finished card once the user has walked well away from its POI.
+  void _dismissStaleCard(Position pos) {
+    final active = _activePoi;
+    if (active == null || _isProcessing || isAudioActive) return;
+    final dist = Geolocator.distanceBetween(
+      pos.latitude, pos.longitude, active.latitude, active.longitude,
+    );
+    if (dist > math.max(active.triggerRadius * 3, 80.0)) {
+      _activePoi = null;
+      if (_status == WalkStatus.walking) {
+        _statusMessage = 'Прогулянка — слухаю (${_proximityEvents.length} зафіксовано)';
+      }
+    }
+  }
+
+  @visibleForTesting
+  Future<void> debugProcessPoi(Poi poi, Position pos) => _processPoi(poi, pos);
 
   @override
   void notifyListeners() {
