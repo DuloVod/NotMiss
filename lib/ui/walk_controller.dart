@@ -414,6 +414,9 @@ class WalkController extends ChangeNotifier {
       return;
     }
 
+    // Set the audio category while the app is still in the foreground.
+    unawaited(_audioService.prepareSession());
+
     _poiEngine.resetSession();
     _pendingPoiIds.clear();
     _proximityEvents.clear();

@@ -1,7 +1,7 @@
 name: notmiss
 description: AI Voice Guide for Walking Tours
 publish_to: none
-version: 0.2.4+1
+version: 0.2.4+2
 
 environment:
   sdk: ">=3.3.0 <4.0.0"
@@ -22,6 +22,7 @@ dependencies:
 
   # Audio playback
   just_audio: ^0.9.43
+  audio_session: ^0.1.25
 
   # Temp file paths (for TTS audio)
   path_provider: ^2.1.0
