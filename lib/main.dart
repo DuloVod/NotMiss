@@ -5,6 +5,7 @@ import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'models/destination.dart';
 import 'services/background_service.dart';
 import 'ui/screens/main_screen.dart';
+import 'ui/theme/app_theme.dart';
 import 'ui/walk_controller.dart';
 
 Future<void> main() async {
@@ -87,13 +88,7 @@ class _NotMissAppState extends State<NotMissApp> {
     return MaterialApp(
       title: 'NotMiss — AI Voice Guide',
       debugShowCheckedModeBanner: false,
-      theme: ThemeData(
-        colorScheme: ColorScheme.fromSeed(
-          seedColor: const Color(0xFF2E7D32),
-          brightness: Brightness.light,
-        ),
-        useMaterial3: true,
-      ),
+      theme: NmTheme.light(),
       home: _controller == null
           ? _ErrorScreen(message: widget.loadError ?? 'Дані парку не завантажились.')
           : MainScreen(controller: _controller!),
@@ -109,24 +104,24 @@ class _ErrorScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: Colors.white,
+      backgroundColor: NmColors.background,
       body: Center(
         child: Padding(
           padding: const EdgeInsets.all(32),
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              const Icon(Icons.error_outline, size: 64, color: Colors.red),
+              const Icon(Icons.error_outline, size: 64, color: NmColors.wine),
               const SizedBox(height: 16),
-              const Text(
+              Text(
                 'Помилка запуску',
-                style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+                style: NmText.title(22),
               ),
               const SizedBox(height: 12),
               Text(
                 message,
                 textAlign: TextAlign.center,
-                style: const TextStyle(fontSize: 13, color: Colors.black54),
+                style: NmText.small,
               ),
             ],
           ),

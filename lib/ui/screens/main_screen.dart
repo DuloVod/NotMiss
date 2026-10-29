@@ -8,9 +8,8 @@ import '../../models/enriched_poi.dart';
 import '../../models/chat_message.dart';
 import '../../services/poi_category_service.dart';
 import '../walk_controller.dart';
+import '../theme/app_theme.dart';
 import 'package:geolocator/geolocator.dart'; // For Position
-
-const _kGreen = Color(0xFF2E7D32);
 
 /// Main unified screen that immediately starts the walk and shows the HUD.
 class MainScreen extends StatefulWidget {
@@ -96,7 +95,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
     final allPois = widget.controller.allPois;
 
     return Scaffold(
-      backgroundColor: const Color(0xFFEFEFEF),
+      backgroundColor: NmColors.background,
       body: Stack(
         children: [
           // ── Map ────────────────────────────────────────────────────────────
@@ -143,9 +142,8 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
               child: Container(
                 padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
                 decoration: BoxDecoration(
-                  color: Colors.amber.shade50,
+                  color: NmColors.cream,
                   borderRadius: BorderRadius.circular(16),
-                  border: Border.all(color: Colors.amber.shade300, width: 1.5),
                   boxShadow: [
                     BoxShadow(
                       color: Colors.black.withValues(alpha: 0.08),
@@ -156,13 +154,13 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
                 ),
                 child: Row(
                   children: [
-                    Icon(Icons.location_off_outlined, color: Colors.amber.shade900, size: 26),
+                    Icon(Icons.location_off_outlined, color: NmColors.ink, size: 26),
                     const SizedBox(width: 12),
                     Expanded(
                       child: Text(
                         widget.controller.statusMessage!,
                         style: TextStyle(
-                          color: Colors.amber.shade900,
+                          color: NmColors.ink,
                           fontSize: 14,
                           fontWeight: FontWeight.w600,
                         ),
@@ -219,7 +217,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
                                         children: [
                                           Icon(
                                             Icons.navigation,
-                                            color: isRotated ? Colors.red.shade700 : Colors.grey.shade600,
+                                            color: isRotated ? NmColors.compassRed : NmColors.muted,
                                             size: 24,
                                           ),
                                           Positioned(
@@ -228,8 +226,8 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
                                               'N',
                                               style: TextStyle(
                                                 fontSize: 9,
-                                                fontWeight: FontWeight.bold,
-                                                color: isRotated ? Colors.red.shade900 : Colors.grey.shade700,
+                                                fontWeight: FontWeight.w600,
+                                                color: isRotated ? NmColors.compassRed : NmColors.muted,
                                               ),
                                             ),
                                           ),
@@ -255,7 +253,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
                                 pos != null && _followUser
                                     ? Icons.my_location
                                     : Icons.location_searching,
-                                color: _followUser ? Colors.blue : Colors.grey.shade600,
+                                color: _followUser ? NmColors.userDot : NmColors.muted,
                                 size: 26,
                               ),
                             ),
@@ -317,16 +315,14 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
                 width: 56,
                 height: 56,
                 decoration: BoxDecoration(
-                  color: isAudioActive
-                      ? (isPaused ? Colors.amber.shade50 : _kGreen.withValues(alpha: 0.15))
-                      : _kGreen.withValues(alpha: 0.1),
+                  color: NmColors.cream,
                   shape: BoxShape.circle,
                 ),
                 child: Icon(
                   isAudioActive
                       ? (isPaused ? Icons.pause_circle_outline : Icons.volume_up)
                       : Icons.headphones,
-                  color: isPaused ? Colors.amber.shade800 : _kGreen,
+                  color: NmColors.ink,
                   size: 32,
                 ),
               ),
@@ -337,11 +333,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
                   children: [
                     Text(
                       poi.name,
-                      style: const TextStyle(
-                        fontSize: 22,
-                        fontWeight: FontWeight.bold,
-                        height: 1.2,
-                      ),
+                      style: NmText.title(22),
                     ),
                     if (widget.controller.statusMessage != null && widget.controller.statusMessage!.isNotEmpty) ...[
                       const SizedBox(height: 6),
@@ -349,7 +341,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
                         widget.controller.statusMessage!,
                         style: TextStyle(
                           fontSize: 16,
-                          color: isPaused ? Colors.amber.shade900 : _kGreen.withValues(alpha: 0.8),
+                          color: NmColors.ink,
                           fontWeight: FontWeight.w600,
                         ),
                       ),
@@ -369,7 +361,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
                               widget.controller.backgroundActivity,
                               style: TextStyle(
                                 fontSize: 13,
-                                color: Colors.blue.shade700,
+                                color: NmColors.muted,
                                 fontStyle: FontStyle.italic,
                               ),
                               maxLines: 1,
@@ -393,9 +385,8 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
               child: Container(
                 padding: const EdgeInsets.all(12),
                 decoration: BoxDecoration(
-                  color: const Color(0xFFF1F8E9),
+                  color: NmColors.cream,
                   borderRadius: BorderRadius.circular(14),
-                  border: Border.all(color: const Color(0xFFA5D6A7)),
                 ),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -405,15 +396,15 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
                         Icon(
                           poi.narrationText.isNotEmpty ? Icons.auto_awesome : Icons.info_outline,
                           size: 16,
-                          color: const Color(0xFF2E7D32),
+                          color: NmColors.ink,
                         ),
                         const SizedBox(width: 6),
                         Text(
                           poi.narrationText.isNotEmpty ? 'Текст розповіді гіда:' : 'Про об\'єкт:',
                           style: const TextStyle(
                             fontSize: 13,
-                            fontWeight: FontWeight.bold,
-                            color: Color(0xFF1B5E20),
+                            fontWeight: FontWeight.w600,
+                            color: NmColors.ink,
                           ),
                         ),
                         const Spacer(),
@@ -421,8 +412,8 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
                           'Читати все ↗',
                           style: TextStyle(
                             fontSize: 12,
-                            fontWeight: FontWeight.bold,
-                            color: Color(0xFF2E7D32),
+                            fontWeight: FontWeight.w600,
+                            color: NmColors.ink,
                           ),
                         ),
                       ],
@@ -432,7 +423,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
                       displayText,
                       style: const TextStyle(
                         fontSize: 14,
-                        color: Color(0xFF1B3B1B),
+                        color: NmColors.ink,
                         height: 1.4,
                       ),
                       maxLines: 4,
@@ -463,17 +454,9 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
                     ),
                     label: Text(
                       isPlaying ? 'Пауза' : 'Продовжити',
-                      style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                      style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
                     ),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: isPlaying ? Colors.amber.shade800 : _kGreen,
-                      foregroundColor: Colors.white,
-                      padding: const EdgeInsets.symmetric(vertical: 14),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(16),
-                      ),
-                      elevation: 2,
-                    ),
+                    style: NmButtons.secondary(),
                   ),
                 ),
                 const SizedBox(width: 12),
@@ -483,17 +466,9 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
                     icon: const Icon(Icons.stop_circle_outlined, size: 22),
                     label: const Text(
                       'Зупинити',
-                      style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                      style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
                     ),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: Colors.red.shade700,
-                      foregroundColor: Colors.white,
-                      padding: const EdgeInsets.symmetric(vertical: 14),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(16),
-                      ),
-                      elevation: 2,
-                    ),
+                    style: NmButtons.destructive(),
                   ),
                 ),
               ],
@@ -504,16 +479,9 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
               icon: const Icon(Icons.auto_awesome, size: 20),
               label: const Text(
                 'Запитати ШІ про це місце',
-                style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold),
+                style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
               ),
-              style: OutlinedButton.styleFrom(
-                foregroundColor: _kGreen,
-                side: const BorderSide(color: _kGreen, width: 1.5),
-                padding: const EdgeInsets.symmetric(vertical: 12),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(16),
-                ),
-              ),
+              style: NmButtons.primary(),
             ),
           ] else ...[
             if (widget.controller.isProcessing && widget.controller.activePoi?.id == poi.id) ...[
@@ -526,18 +494,9 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
                 ),
                 label: const Text(
                   'Готуємо розповідь…',
-                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
                 ),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: _kGreen.withValues(alpha: 0.7),
-                  foregroundColor: Colors.white,
-                  disabledBackgroundColor: _kGreen.withValues(alpha: 0.7),
-                  disabledForegroundColor: Colors.white,
-                  padding: const EdgeInsets.symmetric(vertical: 14),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(16),
-                  ),
-                ),
+                style: NmButtons.primary(),
               ),
             ] else ...[
               ElevatedButton.icon(
@@ -547,17 +506,9 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
                 icon: const Icon(Icons.volume_up_rounded, size: 22),
                 label: const Text(
                   'Прослухати розповідь',
-                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
                 ),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: _kGreen,
-                  foregroundColor: Colors.white,
-                  padding: const EdgeInsets.symmetric(vertical: 14),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(16),
-                  ),
-                  elevation: 2,
-                ),
+                style: NmButtons.primary(),
               ),
             ],
             const SizedBox(height: 10),
@@ -566,16 +517,9 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
               icon: const Icon(Icons.auto_awesome, size: 20),
               label: const Text(
                 'Запитати ШІ про це місце',
-                style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold),
+                style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
               ),
-              style: OutlinedButton.styleFrom(
-                foregroundColor: Colors.grey.shade800,
-                side: BorderSide(color: Colors.grey.shade300),
-                padding: const EdgeInsets.symmetric(vertical: 12),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(16),
-                ),
-              ),
+              style: NmButtons.secondary(),
             ),
           ],
         ],
@@ -602,12 +546,12 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
                   width: 56,
                   height: 56,
                   decoration: BoxDecoration(
-                    color: isStopped ? Colors.blue.shade50 : Colors.amber.shade50,
+                    color: NmColors.cream,
                     shape: BoxShape.circle,
                   ),
                   child: Icon(
                     isStopped ? Icons.flag_outlined : Icons.location_on_outlined,
-                    color: isStopped ? Colors.blue.shade700 : Colors.amber.shade800,
+                    color: NmColors.ink,
                     size: 30,
                   ),
                 ),
@@ -618,10 +562,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
                     children: [
                       Text(
                         isStopped ? 'Прогулянку завершено' : 'Потрібна геолокація',
-                        style: const TextStyle(
-                          fontSize: 20,
-                          fontWeight: FontWeight.bold,
-                        ),
+                        style: NmText.title(20),
                       ),
                       const SizedBox(height: 4),
                       Text(
@@ -631,7 +572,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
                                 : 'Для роботи аудіогіда надайте доступ до геопозиції.'),
                         style: const TextStyle(
                           fontSize: 14,
-                          color: Colors.black54,
+                          color: NmColors.muted,
                         ),
                       ),
                     ],
@@ -648,31 +589,16 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
                     icon: const Icon(Icons.play_arrow_rounded, size: 22),
                     label: Text(
                       isStopped ? 'Почати нову прогулянку' : 'Почати прогулянку',
-                      style: const TextStyle(fontSize: 15, fontWeight: FontWeight.bold),
+                      style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
                     ),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: _kGreen,
-                      foregroundColor: Colors.white,
-                      padding: const EdgeInsets.symmetric(vertical: 14),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(16),
-                      ),
-                      elevation: 2,
-                    ),
+                    style: NmButtons.primary(),
                   ),
                 ),
                 if (!isStopped) ...[
                   const SizedBox(width: 10),
                   OutlinedButton(
                     onPressed: () => Geolocator.openAppSettings(),
-                    style: OutlinedButton.styleFrom(
-                      foregroundColor: Colors.grey.shade800,
-                      side: BorderSide(color: Colors.grey.shade300),
-                      padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 16),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(16),
-                      ),
-                    ),
+                    style: NmButtons.secondary(),
                     child: const Icon(Icons.settings_outlined, size: 22),
                   ),
                 ],
@@ -734,18 +660,14 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
                 width: 56,
                 height: 56,
                 decoration: BoxDecoration(
-                  color: isAudioActive
-                      ? (isPaused ? Colors.amber.shade50 : _kGreen.withValues(alpha: 0.15))
-                      : Colors.blue.shade50,
+                  color: NmColors.cream,
                   shape: BoxShape.circle,
                 ),
                 child: Icon(
                   isAudioActive
                       ? (isPaused ? Icons.pause_circle_outline : Icons.volume_up)
                       : Icons.directions_walk,
-                  color: isAudioActive
-                      ? (isPaused ? Colors.amber.shade800 : _kGreen)
-                      : Colors.blue.shade700,
+                  color: NmColors.ink,
                   size: 32,
                 ),
               ),
@@ -758,10 +680,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
                       isAudioActive
                           ? (isPaused ? 'Озвучення на паузі' : 'Грає розповідь гіда')
                           : idleTitle,
-                      style: const TextStyle(
-                        fontSize: 20,
-                        fontWeight: FontWeight.bold,
-                      ),
+                      style: NmText.title(20),
                     ),
                     if (idleSubtitle != null && idleSubtitle.isNotEmpty) ...[
                       const SizedBox(height: 6),
@@ -769,7 +688,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
                         idleSubtitle,
                         style: TextStyle(
                           fontSize: 15,
-                          color: isAudioActive ? Colors.black87 : Colors.black54,
+                          color: isAudioActive ? NmColors.ink : NmColors.muted,
                           fontWeight: isAudioActive ? FontWeight.w500 : FontWeight.normal,
                         ),
                       ),
@@ -789,7 +708,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
                               widget.controller.backgroundActivity,
                               style: TextStyle(
                                 fontSize: 13,
-                                color: Colors.blue.shade700,
+                                color: NmColors.muted,
                                 fontStyle: FontStyle.italic,
                               ),
                               maxLines: 1,
@@ -805,7 +724,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
               if (!isAudioActive) ...[
                 IconButton(
                   tooltip: 'Оновити об\'єкти на карті',
-                  icon: const Icon(Icons.refresh_rounded, color: Colors.black54),
+                  icon: const Icon(Icons.refresh_rounded, color: NmColors.muted),
                   onPressed: () => widget.controller.reloadOsmPois(),
                 ),
               ],
@@ -830,14 +749,9 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
                     ),
                     label: Text(
                       isPlaying ? 'Пауза' : 'Продовжити',
-                      style: const TextStyle(fontSize: 15, fontWeight: FontWeight.bold),
+                      style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
                     ),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: isPlaying ? Colors.amber.shade800 : _kGreen,
-                      foregroundColor: Colors.white,
-                      padding: const EdgeInsets.symmetric(vertical: 12),
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-                    ),
+                    style: NmButtons.secondary(),
                   ),
                 ),
                 const SizedBox(width: 10),
@@ -847,14 +761,9 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
                     icon: const Icon(Icons.stop_circle_outlined, size: 20),
                     label: const Text(
                       'Зупинити',
-                      style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold),
+                      style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
                     ),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: Colors.red.shade700,
-                      foregroundColor: Colors.white,
-                      padding: const EdgeInsets.symmetric(vertical: 12),
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-                    ),
+                    style: NmButtons.destructive(),
                   ),
                 ),
               ],
@@ -866,14 +775,14 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
             const SizedBox(height: 16),
             Row(
               children: [
-                Icon(Icons.check_circle_outline, size: 16, color: Colors.grey.shade600),
+                Icon(Icons.check_circle_outline, size: 16, color: NmColors.muted),
                 const SizedBox(width: 6),
                 Text(
                   'Відвідані місця (${visitedPois.length}):',
                   style: TextStyle(
                     fontSize: 13,
                     fontWeight: FontWeight.w600,
-                    color: Colors.grey.shade700,
+                    color: NmColors.muted,
                   ),
                 ),
               ],
@@ -895,8 +804,8 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
                       overflow: TextOverflow.ellipsis,
                     ),
                     onPressed: () => _showPoiDetails(context, poi),
-                    backgroundColor: Colors.grey.shade100,
-                    side: BorderSide(color: Colors.grey.shade300),
+                    backgroundColor: NmColors.background,
+                    side: BorderSide(color: NmColors.sand),
                     labelStyle: const TextStyle(fontSize: 13),
                     padding: const EdgeInsets.symmetric(horizontal: 4),
                   );
@@ -915,9 +824,9 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
 
   Marker _buildPoiMarker(Poi poi,
       {required bool isActive, required bool isTriggered}) {
-    Color color = const Color(0xFF2E7D32); // Default green
-    if (isActive) color = Colors.orange;
-    if (isTriggered && !isActive) color = Colors.grey.shade400;
+    Color color = NmColors.ink; // Unvisited place
+    if (isActive) color = NmColors.ochre;
+    if (isTriggered && !isActive) color = NmColors.stone;
 
     return Marker(
       point: LatLng(poi.latitude, poi.longitude),
@@ -991,12 +900,12 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
                 width: 24,
                 height: 24,
                 decoration: BoxDecoration(
-                  color: Colors.blue,
+                  color: NmColors.userDot,
                   shape: BoxShape.circle,
                   border: Border.all(color: Colors.white, width: 3),
                   boxShadow: [
                     BoxShadow(
-                      color: Colors.blue.withValues(alpha: 0.4),
+                      color: NmColors.userDot.withValues(alpha: 0.4),
                       blurRadius: 8,
                       spreadRadius: 2,
                     ),
@@ -1016,7 +925,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
                   top: 0,
                   child: Icon(
                     Icons.navigation, // Arrow pointing UP
-                    color: Colors.blue.withValues(alpha: 0.8),
+                    color: NmColors.userDot.withValues(alpha: 0.8),
                     size: 28,
                   ),
                 ),
@@ -1024,12 +933,12 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
                   width: 22,
                   height: 22,
                   decoration: BoxDecoration(
-                    color: Colors.blue,
+                    color: NmColors.userDot,
                     shape: BoxShape.circle,
                     border: Border.all(color: Colors.white, width: 2),
                     boxShadow: [
                       BoxShadow(
-                        color: Colors.blue.withValues(alpha: 0.4),
+                        color: NmColors.userDot.withValues(alpha: 0.4),
                         blurRadius: 8,
                         spreadRadius: 2,
                       ),
@@ -1157,7 +1066,7 @@ class _PoiDetailsSheetState extends State<_PoiDetailsSheet> {
                   width: 44,
                   height: 4,
                   decoration: BoxDecoration(
-                    color: Colors.grey.shade300,
+                    color: NmColors.sand,
                     borderRadius: BorderRadius.circular(2),
                   ),
                 ),
@@ -1176,12 +1085,7 @@ class _PoiDetailsSheetState extends State<_PoiDetailsSheet> {
                             Expanded(
                               child: Text(
                                 widget.poi.name,
-                                style: const TextStyle(
-                                  fontSize: 22,
-                                  fontWeight: FontWeight.bold,
-                                  height: 1.25,
-                                  color: Colors.black87,
-                                ),
+                                style: NmText.title(28),
                               ),
                             ),
                             if (badgeLabel != null) ...[
@@ -1189,16 +1093,15 @@ class _PoiDetailsSheetState extends State<_PoiDetailsSheet> {
                               Container(
                                 padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
                                 decoration: BoxDecoration(
-                                  color: Colors.blue.shade50,
+                                  color: NmColors.cream,
                                   borderRadius: BorderRadius.circular(12),
-                                  border: Border.all(color: Colors.blue.shade200),
                                 ),
                                 child: Text(
                                   badgeLabel,
                                   style: TextStyle(
                                     fontSize: 12,
-                                    fontWeight: FontWeight.bold,
-                                    color: Colors.blue.shade800,
+                                    fontWeight: FontWeight.w600,
+                                    color: NmColors.ink,
                                   ),
                                 ),
                               ),
@@ -1209,16 +1112,15 @@ class _PoiDetailsSheetState extends State<_PoiDetailsSheet> {
                         Container(
                           padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
                           decoration: BoxDecoration(
-                            color: const Color(0xFFF1F8E9),
+                            color: NmColors.cream,
                             borderRadius: BorderRadius.circular(12),
-                            border: Border.all(color: const Color(0xFFA5D6A7)),
                           ),
                           child: Text(
                             '$catEmoji $catLabel',
                             style: const TextStyle(
                               fontSize: 12,
                               fontWeight: FontWeight.w600,
-                              color: Color(0xFF1B5E20),
+                              color: NmColors.ink,
                             ),
                           ),
                         ),
@@ -1230,9 +1132,8 @@ class _PoiDetailsSheetState extends State<_PoiDetailsSheet> {
                             margin: const EdgeInsets.only(bottom: 16),
                             padding: const EdgeInsets.all(16),
                             decoration: BoxDecoration(
-                              color: Colors.amber.shade50,
+                              color: NmColors.cream,
                               borderRadius: BorderRadius.circular(16),
-                              border: Border.all(color: Colors.amber.shade300),
                             ),
                             child: Row(
                               children: [
@@ -1252,14 +1153,14 @@ class _PoiDetailsSheetState extends State<_PoiDetailsSheet> {
                                             : 'Шишка шукає інформацію про це місце (Вікіпедія, ШІ)...',
                                         style: TextStyle(
                                           fontSize: 15,
-                                          color: Colors.amber.shade900,
+                                          color: NmColors.ink,
                                           fontWeight: FontWeight.w600,
                                         ),
                                       ),
                                       const SizedBox(height: 4),
                                       Text(
                                         'Зачекайте 1-2 секунди, інформація завантажується автоматично.',
-                                        style: TextStyle(fontSize: 13, color: Colors.grey.shade700),
+                                        style: TextStyle(fontSize: 13, color: NmColors.muted),
                                       ),
                                     ],
                                   ),
@@ -1275,9 +1176,8 @@ class _PoiDetailsSheetState extends State<_PoiDetailsSheet> {
                             margin: const EdgeInsets.only(bottom: 18),
                             padding: const EdgeInsets.all(16),
                             decoration: BoxDecoration(
-                              color: const Color(0xFFF1F8E9), // Soft green tint
+                              color: NmColors.cream, // Soft cream panel
                               borderRadius: BorderRadius.circular(16),
-                              border: Border.all(color: const Color(0xFFA5D6A7)),
                               boxShadow: [
                                 BoxShadow(
                                   color: Colors.black.withValues(alpha: 0.03),
@@ -1291,15 +1191,15 @@ class _PoiDetailsSheetState extends State<_PoiDetailsSheet> {
                               children: [
                                 Row(
                                   children: [
-                                    const Icon(Icons.headphones, color: Color(0xFF2E7D32), size: 22),
+                                    const Icon(Icons.headphones, color: NmColors.ink, size: 22),
                                     const SizedBox(width: 8),
                                     const Expanded(
                                       child: Text(
                                         'Розповідь аудіогіда:',
                                         style: TextStyle(
                                           fontSize: 16,
-                                          fontWeight: FontWeight.bold,
-                                          color: Color(0xFF1B5E20),
+                                          fontWeight: FontWeight.w600,
+                                          color: NmColors.ink,
                                         ),
                                       ),
                                     ),
@@ -1310,7 +1210,7 @@ class _PoiDetailsSheetState extends State<_PoiDetailsSheet> {
                                   narration,
                                   style: const TextStyle(
                                     fontSize: 15,
-                                    color: Color(0xFF1B3B1B),
+                                    color: NmColors.ink,
                                     height: 1.45,
                                   ),
                                 ),
@@ -1336,20 +1236,11 @@ class _PoiDetailsSheetState extends State<_PoiDetailsSheet> {
                                           label: Text(
                                             isPlayingThisPoi ? 'Пауза' : 'Продовжити',
                                             style: const TextStyle(
-                                              fontWeight: FontWeight.bold,
+                                              fontWeight: FontWeight.w600,
                                               fontSize: 15,
                                             ),
                                           ),
-                                          style: ElevatedButton.styleFrom(
-                                            backgroundColor: isPlayingThisPoi
-                                                ? Colors.amber.shade800
-                                                : const Color(0xFF2E7D32),
-                                            foregroundColor: Colors.white,
-                                            padding: const EdgeInsets.symmetric(vertical: 12),
-                                            shape: RoundedRectangleBorder(
-                                              borderRadius: BorderRadius.circular(12),
-                                            ),
-                                          ),
+                                          style: NmButtons.secondary(),
                                         ),
                                       ),
                                       const SizedBox(width: 10),
@@ -1360,18 +1251,11 @@ class _PoiDetailsSheetState extends State<_PoiDetailsSheet> {
                                           label: const Text(
                                             'Зупинити',
                                             style: TextStyle(
-                                              fontWeight: FontWeight.bold,
+                                              fontWeight: FontWeight.w600,
                                               fontSize: 15,
                                             ),
                                           ),
-                                          style: ElevatedButton.styleFrom(
-                                            backgroundColor: Colors.red.shade700,
-                                            foregroundColor: Colors.white,
-                                            padding: const EdgeInsets.symmetric(vertical: 12),
-                                            shape: RoundedRectangleBorder(
-                                              borderRadius: BorderRadius.circular(12),
-                                            ),
-                                          ),
+                                          style: NmButtons.destructive(),
                                         ),
                                       ),
                                     ],
@@ -1390,20 +1274,11 @@ class _PoiDetailsSheetState extends State<_PoiDetailsSheet> {
                                         label: const Text(
                                           'Готуємо розповідь…',
                                           style: TextStyle(
-                                            fontWeight: FontWeight.bold,
+                                            fontWeight: FontWeight.w600,
                                             fontSize: 15,
                                           ),
                                         ),
-                                        style: ElevatedButton.styleFrom(
-                                          backgroundColor: const Color(0xFF2E7D32).withValues(alpha: 0.7),
-                                          foregroundColor: Colors.white,
-                                          disabledBackgroundColor: const Color(0xFF2E7D32).withValues(alpha: 0.7),
-                                          disabledForegroundColor: Colors.white,
-                                          padding: const EdgeInsets.symmetric(vertical: 12),
-                                          shape: RoundedRectangleBorder(
-                                            borderRadius: BorderRadius.circular(12),
-                                          ),
-                                        ),
+                                        style: NmButtons.primary(),
                                       ),
                                     ),
                                   ] else ...[
@@ -1424,18 +1299,11 @@ class _PoiDetailsSheetState extends State<_PoiDetailsSheet> {
                                               ? 'Прослухати знову'
                                               : 'Прослухати зараз',
                                           style: const TextStyle(
-                                            fontWeight: FontWeight.bold,
+                                            fontWeight: FontWeight.w600,
                                             fontSize: 15,
                                           ),
                                         ),
-                                        style: ElevatedButton.styleFrom(
-                                          backgroundColor: const Color(0xFF2E7D32),
-                                          foregroundColor: Colors.white,
-                                          padding: const EdgeInsets.symmetric(vertical: 12),
-                                          shape: RoundedRectangleBorder(
-                                            borderRadius: BorderRadius.circular(12),
-                                          ),
-                                        ),
+                                        style: NmButtons.primary(),
                                       ),
                                     ),
                                   ],
@@ -1448,23 +1316,22 @@ class _PoiDetailsSheetState extends State<_PoiDetailsSheet> {
                             margin: const EdgeInsets.only(bottom: 18),
                             padding: const EdgeInsets.all(16),
                             decoration: BoxDecoration(
-                              color: const Color(0xFFF1F8E9),
+                              color: NmColors.cream,
                               borderRadius: BorderRadius.circular(16),
-                              border: Border.all(color: const Color(0xFFA5D6A7)),
                             ),
                             child: Column(
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
                                 const Row(
                                   children: [
-                                    Icon(Icons.headphones, color: Color(0xFF2E7D32), size: 22),
+                                    Icon(Icons.headphones, color: NmColors.ink, size: 22),
                                     SizedBox(width: 8),
                                     Text(
                                       'Аудіогід від ШІ:',
                                       style: TextStyle(
                                         fontSize: 16,
-                                        fontWeight: FontWeight.bold,
-                                        color: Color(0xFF1B5E20),
+                                        fontWeight: FontWeight.w600,
+                                        color: NmColors.ink,
                                       ),
                                     ),
                                   ],
@@ -1472,7 +1339,7 @@ class _PoiDetailsSheetState extends State<_PoiDetailsSheet> {
                                 const SizedBox(height: 8),
                                 const Text(
                                   'ШІ може озвучити розповідь про це місце для вас прямо зараз.',
-                                  style: TextStyle(fontSize: 14, color: Color(0xFF1B3B1B)),
+                                  style: TextStyle(fontSize: 14, color: NmColors.ink),
                                 ),
                                 const SizedBox(height: 12),
                                 SizedBox(
@@ -1495,20 +1362,11 @@ class _PoiDetailsSheetState extends State<_PoiDetailsSheet> {
                                           ? 'Готуємо розповідь…'
                                           : 'Прослухати розповідь ШІ',
                                       style: const TextStyle(
-                                        fontWeight: FontWeight.bold,
+                                        fontWeight: FontWeight.w600,
                                         fontSize: 15,
                                       ),
                                     ),
-                                    style: ElevatedButton.styleFrom(
-                                      backgroundColor: const Color(0xFF2E7D32),
-                                      foregroundColor: Colors.white,
-                                      disabledBackgroundColor: const Color(0xFF2E7D32).withValues(alpha: 0.7),
-                                      disabledForegroundColor: Colors.white,
-                                      padding: const EdgeInsets.symmetric(vertical: 12),
-                                      shape: RoundedRectangleBorder(
-                                        borderRadius: BorderRadius.circular(12),
-                                      ),
-                                    ),
+                                    style: NmButtons.primary(),
                                   ),
                                 ),
                               ],
@@ -1518,20 +1376,16 @@ class _PoiDetailsSheetState extends State<_PoiDetailsSheet> {
 
                         // 🏛 Description Section
                         if (description.isNotEmpty) ...[
-                          const Text(
-                            'Про місце:',
-                            style: TextStyle(
-                              fontSize: 16,
-                              fontWeight: FontWeight.bold,
-                              color: Colors.black87,
-                            ),
+                          Text(
+                            'Про місце',
+                            style: NmText.title(18),
                           ),
                           const SizedBox(height: 6),
                           Text(
                             description,
                             style: const TextStyle(
                               fontSize: 15,
-                              color: Colors.black87,
+                              color: NmColors.ink,
                               height: 1.4,
                             ),
                           ),
@@ -1541,12 +1395,8 @@ class _PoiDetailsSheetState extends State<_PoiDetailsSheet> {
                         // 💡 Key Facts Section
                         if (facts.isNotEmpty) ...[
                           Text(
-                            'Цікаві факти:',
-                            style: TextStyle(
-                              fontSize: 15,
-                              fontWeight: FontWeight.bold,
-                              color: Colors.grey.shade800,
-                            ),
+                            'Цікаві факти',
+                            style: NmText.title(18),
                           ),
                           const SizedBox(height: 8),
                           ...facts.map((f) => Padding(
@@ -1556,10 +1406,10 @@ class _PoiDetailsSheetState extends State<_PoiDetailsSheet> {
                                   children: [
                                     Text(
                                       '• ',
-                                      style: TextStyle(
-                                        color: Colors.blue.shade700,
+                                      style: const TextStyle(
+                                        color: NmColors.ochre,
                                         fontSize: 16,
-                                        fontWeight: FontWeight.bold,
+                                        fontWeight: FontWeight.w600,
                                       ),
                                     ),
                                     Expanded(
@@ -1567,7 +1417,7 @@ class _PoiDetailsSheetState extends State<_PoiDetailsSheet> {
                                         f,
                                         style: const TextStyle(
                                           fontSize: 14,
-                                          color: Colors.black87,
+                                          color: NmColors.ink,
                                           height: 1.35,
                                         ),
                                       ),
@@ -1583,24 +1433,23 @@ class _PoiDetailsSheetState extends State<_PoiDetailsSheet> {
                           Container(
                             padding: const EdgeInsets.all(14),
                             decoration: BoxDecoration(
-                              color: Colors.grey.shade50,
+                              color: NmColors.background,
                               borderRadius: BorderRadius.circular(14),
-                              border: Border.all(color: Colors.grey.shade300),
                             ),
                             child: Column(
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
                                 Row(
                                   children: [
-                                    Icon(Icons.info_outline, size: 20, color: Colors.grey.shade700),
+                                    Icon(Icons.info_outline, size: 20, color: NmColors.muted),
                                     const SizedBox(width: 8),
                                     Expanded(
                                       child: Text(
                                         'Цей об\'єкт знайдено на карті',
                                         style: TextStyle(
                                           fontSize: 15,
-                                          fontWeight: FontWeight.bold,
-                                          color: Colors.grey.shade800,
+                                          fontWeight: FontWeight.w600,
+                                          color: NmColors.ink,
                                         ),
                                       ),
                                     ),
@@ -1609,7 +1458,7 @@ class _PoiDetailsSheetState extends State<_PoiDetailsSheet> {
                                 const SizedBox(height: 6),
                                 Text(
                                   'У відкритих реєстрах стаття відсутня, проте ШІ може підготувати опис та розповідь прямо зараз.',
-                                  style: TextStyle(fontSize: 14, color: Colors.grey.shade600, height: 1.35),
+                                  style: TextStyle(fontSize: 14, color: NmColors.muted, height: 1.35),
                                 ),
                                 const SizedBox(height: 12),
                                 OutlinedButton.icon(
@@ -1638,15 +1487,7 @@ class _PoiDetailsSheetState extends State<_PoiDetailsSheet> {
                   child: SizedBox(
                     width: double.infinity,
                     child: ElevatedButton.icon(
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: const Color(0xFF2E7D32),
-                        foregroundColor: Colors.white,
-                        padding: const EdgeInsets.symmetric(vertical: 14),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(16),
-                        ),
-                        elevation: 1,
-                      ),
+                      style: NmButtons.primary(),
                       onPressed: () {
                         Navigator.pop(context);
                         _showAiChatModal(context, widget.controller, widget.poi);
@@ -1654,7 +1495,7 @@ class _PoiDetailsSheetState extends State<_PoiDetailsSheet> {
                       icon: const Icon(Icons.auto_awesome, size: 20),
                       label: const Text(
                         'Запитати ШІ про це місце',
-                        style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                        style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
                       ),
                     ),
                   ),
@@ -1666,18 +1507,11 @@ class _PoiDetailsSheetState extends State<_PoiDetailsSheet> {
                   child: SizedBox(
                     width: double.infinity,
                     child: OutlinedButton(
-                      style: OutlinedButton.styleFrom(
-                        foregroundColor: Colors.grey.shade800,
-                        side: BorderSide(color: Colors.grey.shade300),
-                        padding: const EdgeInsets.symmetric(vertical: 14),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(16),
-                        ),
-                      ),
+                      style: NmButtons.secondary(),
                       onPressed: () => Navigator.pop(context),
                       child: const Text(
                         'Закрити',
-                        style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                        style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
                       ),
                     ),
                   ),
@@ -1860,7 +1694,7 @@ class _AiChatSheetState extends State<_AiChatSheet> {
               width: 40,
               height: 4,
               decoration: BoxDecoration(
-                color: Colors.grey.shade300,
+                color: NmColors.sand,
                 borderRadius: BorderRadius.circular(2),
               ),
             ),
@@ -1874,12 +1708,12 @@ class _AiChatSheetState extends State<_AiChatSheet> {
                     width: 38,
                     height: 38,
                     decoration: const BoxDecoration(
-                      color: Color(0xFFE8F5E9),
+                      color: NmColors.cream,
                       shape: BoxShape.circle,
                     ),
                     child: const Icon(
                       Icons.auto_awesome,
-                      color: Color(0xFF2E7D32),
+                      color: NmColors.ink,
                       size: 20,
                     ),
                   ),
@@ -1890,10 +1724,7 @@ class _AiChatSheetState extends State<_AiChatSheet> {
                       children: [
                         Text(
                           widget.poi.name,
-                          style: const TextStyle(
-                            fontSize: 18,
-                            fontWeight: FontWeight.bold,
-                          ),
+                          style: NmText.title(20),
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                         ),
@@ -1901,7 +1732,7 @@ class _AiChatSheetState extends State<_AiChatSheet> {
                           'ШІ-екскурсовод • Gemini',
                           style: TextStyle(
                             fontSize: 12,
-                            color: Colors.grey.shade600,
+                            color: NmColors.muted,
                           ),
                         ),
                       ],
@@ -1914,7 +1745,6 @@ class _AiChatSheetState extends State<_AiChatSheet> {
                 ],
               ),
             ),
-            const Divider(height: 1),
 
             // Quick suggestion chips
             Container(
@@ -1933,15 +1763,14 @@ class _AiChatSheetState extends State<_AiChatSheet> {
                     child: Container(
                       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
                       decoration: BoxDecoration(
-                        color: Colors.grey.shade100,
+                        color: NmColors.background,
                         borderRadius: BorderRadius.circular(16),
-                        border: Border.all(color: Colors.grey.shade300),
                       ),
                       child: Text(
                         q,
                         style: TextStyle(
                           fontSize: 13,
-                          color: _isLoading ? Colors.grey.shade400 : Colors.grey.shade800,
+                          color: _isLoading ? NmColors.stone : NmColors.ink,
                           fontWeight: FontWeight.w500,
                         ),
                       ),
@@ -1950,7 +1779,6 @@ class _AiChatSheetState extends State<_AiChatSheet> {
                 },
               ),
             ),
-            const Divider(height: 1),
 
             // Message history list
             Expanded(
@@ -2000,10 +1828,10 @@ class _AiChatSheetState extends State<_AiChatSheet> {
                         hintText: 'Запитайте про «${widget.poi.name}»...',
                         hintStyle: TextStyle(
                           fontSize: 15,
-                          color: Colors.grey.shade500,
+                          color: NmColors.stone,
                         ),
                         filled: true,
-                        fillColor: Colors.grey.shade100,
+                        fillColor: NmColors.background,
                         border: OutlineInputBorder(
                           borderRadius: BorderRadius.circular(24),
                           borderSide: BorderSide.none,
@@ -2025,13 +1853,13 @@ class _AiChatSheetState extends State<_AiChatSheet> {
                       height: 48,
                       decoration: BoxDecoration(
                         color: _isLoading
-                            ? Colors.grey.shade400
-                            : const Color(0xFF2E7D32),
+                            ? NmColors.stone
+                            : NmColors.ink,
                         shape: BoxShape.circle,
                         boxShadow: [
                           if (!_isLoading)
                             BoxShadow(
-                              color: const Color(0xFF2E7D32).withValues(alpha: 0.35),
+                              color: NmColors.ink.withValues(alpha: 0.35),
                               blurRadius: 8,
                               offset: const Offset(0, 3),
                             ),
@@ -2076,7 +1904,7 @@ class _AiChatSheetState extends State<_AiChatSheet> {
             ),
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
             decoration: const BoxDecoration(
-              color: Color(0xFF2E7D32),
+              color: NmColors.ink,
               borderRadius: BorderRadius.only(
                 topLeft: Radius.circular(18),
                 topRight: Radius.circular(18),
@@ -2107,14 +1935,13 @@ class _AiChatSheetState extends State<_AiChatSheet> {
             ),
             padding: const EdgeInsets.fromLTRB(16, 12, 12, 10),
             decoration: BoxDecoration(
-              color: const Color(0xFFF5F9F5),
+              color: NmColors.background,
               borderRadius: const BorderRadius.only(
                 topLeft: Radius.circular(18),
                 topRight: Radius.circular(18),
                 bottomRight: Radius.circular(18),
                 bottomLeft: Radius.circular(4),
               ),
-              border: Border.all(color: const Color(0xFFC8E6C9)),
             ),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -2122,7 +1949,7 @@ class _AiChatSheetState extends State<_AiChatSheet> {
                 Text(
                   msg.text,
                   style: const TextStyle(
-                    color: Color(0xFF1B3B1B),
+                    color: NmColors.ink,
                     fontSize: 15,
                     height: 1.4,
                   ),
@@ -2148,8 +1975,8 @@ class _AiChatSheetState extends State<_AiChatSheet> {
                                   : Icons.volume_up_outlined,
                               size: 18,
                               color: isSpeaking
-                                  ? Colors.red.shade700
-                                  : const Color(0xFF2E7D32),
+                                  ? NmColors.ink
+                                  : NmColors.muted,
                             ),
                             const SizedBox(width: 4),
                             Text(
@@ -2158,8 +1985,8 @@ class _AiChatSheetState extends State<_AiChatSheet> {
                                 fontSize: 12,
                                 fontWeight: FontWeight.w600,
                                 color: isSpeaking
-                                    ? Colors.red.shade700
-                                    : const Color(0xFF2E7D32),
+                                    ? NmColors.ink
+                                    : NmColors.muted,
                               ),
                             ),
                           ],
@@ -2184,9 +2011,8 @@ class _AiChatSheetState extends State<_AiChatSheet> {
         child: Container(
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
           decoration: BoxDecoration(
-            color: const Color(0xFFF5F9F5),
+            color: NmColors.background,
             borderRadius: BorderRadius.circular(16),
-            border: Border.all(color: const Color(0xFFC8E6C9)),
           ),
           child: Row(
             mainAxisSize: MainAxisSize.min,
@@ -2196,14 +2022,14 @@ class _AiChatSheetState extends State<_AiChatSheet> {
                 height: 16,
                 child: CircularProgressIndicator(
                   strokeWidth: 2,
-                  color: Color(0xFF2E7D32),
+                  color: NmColors.ink,
                 ),
               ),
               const SizedBox(width: 10),
               Text(
                 'ШІ думає над відповіддю...',
                 style: TextStyle(
-                  color: Colors.grey.shade700,
+                  color: NmColors.muted,
                   fontSize: 14,
                   fontStyle: FontStyle.italic,
                 ),
