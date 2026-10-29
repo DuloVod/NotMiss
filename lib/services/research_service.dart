@@ -409,11 +409,14 @@ class ResearchService {
         }
       }
 
-      // STEP 3: Direct Wikipedia search by POI Name
-      if (!sources.any((s) => s.type == 'wikipedia')) {
+      // STEP 3: Wikipedia search by POI name + coordinates (uk first, then en)
+      for (final lang in const ['uk', 'en']) {
+        if (sources.any((s) => s.type == 'wikipedia')) break;
         final wikiArticle = await _wikipediaService.fetchSummaryOrSearch(
           enriched.name,
-          lang: 'uk',
+          lang: lang,
+          lat: enriched.latitude,
+          lng: enriched.longitude,
         );
         if (wikiArticle != null && wikiArticle.extract.isNotEmpty) {
           if (shortDesc == null || shortDesc.isEmpty) {

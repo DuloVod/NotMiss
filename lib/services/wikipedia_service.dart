@@ -1,5 +1,6 @@
 import 'dart:convert';
-import 'package:flutter/foundation.dart' show debugPrint;
+import 'package:flutter/foundation.dart' show debugPrint, visibleForTesting;
+import 'package:geolocator/geolocator.dart';
 import 'package:http/http.dart' as http;
 
 /// Fetches article summaries and extracts from Wikipedia.
@@ -54,7 +55,7 @@ class WikipediaService {
       final response = await http.get(
         Uri.parse(url),
         headers: {'User-Agent': _userAgent},
-      ).timeout(const Duration(seconds: 15));
+      ).timeout(const Duration(seconds: 8));
 
       if (response.statusCode == 404) {
         debugPrint('[WikipediaService] Article not found: $cleanTitle ($targetLang)');
@@ -86,6 +87,8 @@ class WikipediaService {
         lang: targetLang,
         thumbnailUrl: (json['thumbnail'] as Map<String, dynamic>?)
                 ?['source'] as String?,
+        lat: ((json['coordinates'] as Map<String, dynamic>?)?['lat'] as num?)?.toDouble(),
+        lon: ((json['coordinates'] as Map<String, dynamic>?)?['lon'] as num?)?.toDouble(),
       );
     } catch (e) {
       debugPrint('[WikipediaService] Error fetching $title: $e');
@@ -106,7 +109,7 @@ class WikipediaService {
       });
       final response = await http.get(uri, headers: {
         'User-Agent': _userAgent,
-      }).timeout(const Duration(seconds: 10));
+      }).timeout(const Duration(seconds: 6));
 
       if (response.statusCode != 200) return null;
       final json = jsonDecode(response.body) as Map<String, dynamic>;
@@ -133,26 +136,105 @@ class WikipediaService {
     }
   }
 
+  /// Articles with coordinates near a point (Wikipedia GeoData). The most reliable way
+  /// to find the article about a physical object when its OSM name differs from the
+  /// article title. Returns titles ordered by distance.
+  Future<List<String>> searchNearby(double lat, double lng,
+      {String lang = 'uk', int radiusM = 200}) async {
+    await _rateLimit();
+    try {
+      final uri = Uri.https('$lang.wikipedia.org', '/w/api.php', {
+        'action': 'query',
+        'list': 'geosearch',
+        'gscoord': '$lat|$lng',
+        'gsradius': '$radiusM',
+        'gslimit': '10',
+        'format': 'json',
+      });
+      final response = await http
+          .get(uri, headers: {'User-Agent': _userAgent})
+          .timeout(const Duration(seconds: 6));
+      if (response.statusCode != 200) return [];
+      final json = jsonDecode(response.body) as Map<String, dynamic>;
+      final list = (json['query'] as Map<String, dynamic>?)?['geosearch'] as List?;
+      if (list == null) return [];
+      return [
+        for (final item in list)
+          if (item is Map<String, dynamic> && item['title'] is String) item['title'] as String
+      ];
+    } catch (e) {
+      debugPrint('[WikipediaService] Geosearch error: $e');
+      return [];
+    }
+  }
+
+  static final _wordSplit = RegExp(r'[^\p{L}\p{N}]+', unicode: true);
+
+  /// Significant lowercase words of a name (≥4 letters), truncated to a 5-letter stem so
+  /// that Ukrainian case endings ("Шевченка" / "Шевченку") still match.
+  @visibleForTesting
+  static Set<String> nameStems(String name) {
+    return name
+        .toLowerCase()
+        .split(_wordSplit)
+        .where((w) => w.length >= 4)
+        .map((w) => w.length > 5 ? w.substring(0, 5) : w)
+        .toSet();
+  }
+
+  /// True when [title] shares at least one significant word with [name].
+  @visibleForTesting
+  static bool titleMatchesName(String title, String name) {
+    final a = nameStems(title);
+    final b = nameStems(name);
+    return a.intersection(b).isNotEmpty;
+  }
+
+  /// An article that has coordinates must be within [maxM] of the POI; articles
+  /// without coordinates cannot be verified and are accepted.
+  @visibleForTesting
+  static bool isNear(WikipediaArticle a, double? lat, double? lng, {double maxM = 2000}) {
+    if (lat == null || lng == null || a.lat == null || a.lon == null) return true;
+    return Geolocator.distanceBetween(lat, lng, a.lat!, a.lon!) <= maxM;
+  }
+
   /// Tries multiple strategies to find and fetch a Wikipedia article for a POI:
   /// 1. Exact title lookup.
   /// 2. Sanitized title lookup (quotes/symbols removed).
-  /// 3. Keyword search on Wikipedia API.
-  Future<WikipediaArticle?> fetchSummaryOrSearch(String name, {String lang = 'uk'}) async {
+  /// 3. Wikipedia GeoData search around [lat]/[lng], matched by name.
+  /// 4. Keyword search on Wikipedia API.
+  ///
+  /// When [lat]/[lng] are given, an article whose own coordinates are far from the POI
+  /// is rejected, so "Ратуша" never resolves to a town hall in another city.
+  Future<WikipediaArticle?> fetchSummaryOrSearch(String name,
+      {String lang = 'uk', double? lat, double? lng}) async {
+    bool ok(WikipediaArticle? a) => a != null && a.extract.isNotEmpty && isNear(a, lat, lng);
+
     final direct = await fetchSummary(name, lang: lang);
-    if (direct != null && direct.extract.isNotEmpty) return direct;
+    if (ok(direct)) return direct;
 
     // Try without quotes or special punctuation
     final stripped = name.replaceAll(RegExp(r'[«»"“”]'), ' ').replaceAll(RegExp(r'\s+'), ' ').trim();
     if (stripped.isNotEmpty && stripped != name) {
       final sanitized = await fetchSummary(stripped, lang: lang);
-      if (sanitized != null && sanitized.extract.isNotEmpty) return sanitized;
+      if (ok(sanitized)) return sanitized;
+    }
+
+    // Geo search: article about something standing at this very spot.
+    if (lat != null && lng != null) {
+      final nearby = await searchNearby(lat, lng, lang: lang);
+      for (final title in nearby) {
+        if (!titleMatchesName(title, name)) continue;
+        final result = await fetchSummary(title, lang: lang);
+        if (ok(result)) return result;
+      }
     }
 
     // Try search query
     final foundTitle = await searchArticle(name, lang: lang);
     if (foundTitle != null && foundTitle.isNotEmpty) {
       final result = await fetchSummary(foundTitle, lang: lang);
-      if (result != null && result.extract.isNotEmpty) return result;
+      if (ok(result)) return result;
     }
 
     // If still not found and stripped query exists, try searching stripped
@@ -160,7 +242,7 @@ class WikipediaService {
       final foundStrippedTitle = await searchArticle(stripped, lang: lang);
       if (foundStrippedTitle != null && foundStrippedTitle.isNotEmpty) {
         final result = await fetchSummary(foundStrippedTitle, lang: lang);
-        if (result != null && result.extract.isNotEmpty) return result;
+        if (ok(result)) return result;
       }
     }
 
@@ -192,6 +274,8 @@ class WikipediaArticle {
   final String url;
   final String lang;
   final String? thumbnailUrl;
+  final double? lat;
+  final double? lon;
 
   const WikipediaArticle({
     required this.title,
@@ -200,6 +284,8 @@ class WikipediaArticle {
     required this.url,
     required this.lang,
     this.thumbnailUrl,
+    this.lat,
+    this.lon,
   });
 
   @override

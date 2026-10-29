@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/foundation.dart' show debugPrint, visibleForTesting;
 import 'package:http/http.dart' as http;
@@ -9,13 +10,49 @@ class AiService {
   final String apiKey;
   final ContentService _contentService;
 
+  /// Ordered by measured speed/availability for the project key (Oct 2026):
+  /// lite models answer in ~1.5 s; `gemini-3.8-flash` / `3.7-flash` hung for 60 s and
+  /// `gemini-2.5-*` return 404 for new keys, so they must not lead the chain.
   static const List<String> _models = [
-    'gemini-3.8-flash',
-    'gemini-3.5-flash',
     'gemini-3.5-flash-lite',
-    'gemini-2.5-flash',
-    'gemini-2.5-flash-lite',
+    'gemini-3.1-flash-lite',
+    'gemini-flash-lite-latest',
+    'gemini-3-flash-preview',
+    'gemini-3.5-flash',
+    'gemini-3.8-flash',
   ];
+
+  /// Per-model request timeout. Short on purpose: the whole research has a 25 s budget.
+  static const Duration _modelTimeout = Duration(seconds: 12);
+
+  /// Models that just failed (404 / timeout / overload) are skipped for a while, shared
+  /// by every AiService instance, so one dead model costs one request, not one per call.
+  static final Map<String, DateTime> _unhealthyUntil = {};
+
+  static List<String> _activeModels() {
+    final now = DateTime.now();
+    final active = _models.where((m) {
+      final until = _unhealthyUntil[m];
+      return until == null || now.isAfter(until);
+    }).toList();
+    return active.isEmpty ? _models : active;
+  }
+
+  static void _markUnhealthy(String model, int? status) {
+    final cooldown = status == 404 || status == 403
+        ? const Duration(hours: 6)
+        : const Duration(minutes: 3);
+    _unhealthyUntil[model] = DateTime.now().add(cooldown);
+  }
+
+  @visibleForTesting
+  static List<String> get activeModels => _activeModels();
+
+  @visibleForTesting
+  static void markUnhealthyForTest(String model, int? status) => _markUnhealthy(model, status);
+
+  @visibleForTesting
+  static void resetModelHealth() => _unhealthyUntil.clear();
 
   static const List<Map<String, String>> _safetySettings = [
     {'category': 'HARM_CATEGORY_HARASSMENT', 'threshold': 'BLOCK_NONE'},
@@ -38,7 +75,7 @@ class AiService {
 
     final prompt = _contentService.buildAiPrompt(poi);
 
-    for (final model in _models) {
+    for (final model in _activeModels()) {
       try {
         final response = await http
             .post(
@@ -57,12 +94,12 @@ class AiService {
                 ],
                 'generationConfig': {
                   'temperature': 0.7,
-                  'maxOutputTokens': 1500,
+                  'maxOutputTokens': 2500,
                 },
                 'safetySettings': _safetySettings,
               }),
             )
-            .timeout(const Duration(seconds: 30));
+            .timeout(_modelTimeout);
 
         if (response.statusCode == 200) {
           final json = jsonDecode(response.body) as Map<String, dynamic>;
@@ -70,9 +107,11 @@ class AiService {
           if (text != null && text.isNotEmpty) return text;
         } else {
           debugPrint('[AiService] generateNarration with $model failed: ${response.statusCode} -> ${response.body}');
+          _markUnhealthy(model, response.statusCode);
         }
       } catch (e) {
         debugPrint('[AiService] generateNarration error ($model): $e');
+        if (e is TimeoutException) _markUnhealthy(model, null);
       }
     }
 
@@ -105,7 +144,7 @@ class AiService {
 }
 ''';
 
-    for (final model in _models) {
+    for (final model in _activeModels()) {
       try {
         final response = await http.post(
           Uri.parse(_endpoint(model, apiKey)),
@@ -123,12 +162,12 @@ class AiService {
             ],
             'generationConfig': {
               'temperature': 0.7,
-              'maxOutputTokens': 1500,
+              'maxOutputTokens': 2500,
               'responseMimeType': 'application/json',
             },
             'safetySettings': _safetySettings,
           }),
-        ).timeout(const Duration(seconds: 30));
+        ).timeout(_modelTimeout);
 
         if (response.statusCode == 200) {
           final json = jsonDecode(response.body) as Map<String, dynamic>;
@@ -141,9 +180,11 @@ class AiService {
           }
         } else {
           debugPrint('[AiService] generateBackgroundFacts with $model failed: ${response.statusCode} -> ${response.body}');
+          _markUnhealthy(model, response.statusCode);
         }
       } catch (e) {
         debugPrint('[AiService] generateBackgroundFacts error ($model): $e');
+        if (e is TimeoutException) _markUnhealthy(model, null);
       }
     }
     return null;
@@ -272,7 +313,7 @@ $desc$narration${factsList.isNotEmpty ? 'Відомі факти:\n$factsList\n'
 4. Завжди повністю закінчуй думку та останнє речення крапкою.
 ''';
 
-    for (final model in _models) {
+    for (final model in _activeModels()) {
       try {
         final response = await http
             .post(
@@ -291,12 +332,12 @@ $desc$narration${factsList.isNotEmpty ? 'Відомі факти:\n$factsList\n'
                 ],
                 'generationConfig': {
                   'temperature': 0.7,
-                  'maxOutputTokens': 1500,
+                  'maxOutputTokens': 2500,
                 },
                 'safetySettings': _safetySettings,
               }),
             )
-            .timeout(const Duration(seconds: 30));
+            .timeout(_modelTimeout);
 
         if (response.statusCode == 200) {
           final json = jsonDecode(response.body) as Map<String, dynamic>;
@@ -306,9 +347,11 @@ $desc$narration${factsList.isNotEmpty ? 'Відомі факти:\n$factsList\n'
           }
         } else {
           debugPrint('[AiService] answerQuestionAboutPoi with $model failed: ${response.statusCode} -> ${response.body}');
+          _markUnhealthy(model, response.statusCode);
         }
       } catch (e) {
         debugPrint('[AiService] answerQuestionAboutPoi error ($model): $e');
+        if (e is TimeoutException) _markUnhealthy(model, null);
       }
     }
 
