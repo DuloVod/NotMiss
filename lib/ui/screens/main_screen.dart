@@ -173,6 +173,49 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
                       child: Column(
                         mainAxisSize: MainAxisSize.min,
                         children: [
+                          // Places already visited (always reachable, also while a place card is open)
+                          Padding(
+                            padding: const EdgeInsets.only(bottom: 12.0),
+                            child: SizedBox(
+                              width: 48,
+                              height: 48,
+                              child: Stack(
+                                clipBehavior: Clip.none,
+                                children: [
+                                  FloatingActionButton(
+                                    heroTag: 'walkVisitedList',
+                                    backgroundColor: Colors.white,
+                                    elevation: 4,
+                                    tooltip: 'Пройдені місця',
+                                    onPressed: () => _showVisitedSheet(context),
+                                    child: const Icon(Icons.checklist_rounded,
+                                        color: NmColors.ink, size: 26),
+                                  ),
+                                  if (widget.controller.visitedPlaces.isNotEmpty)
+                                    Positioned(
+                                      right: -2,
+                                      top: -2,
+                                      child: Container(
+                                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                        decoration: BoxDecoration(
+                                          color: NmColors.ink,
+                                          borderRadius: BorderRadius.circular(10),
+                                          border: Border.all(color: Colors.white, width: 1.5),
+                                        ),
+                                        child: Text(
+                                          '${widget.controller.visitedPlaces.length}',
+                                          style: const TextStyle(
+                                            color: Colors.white,
+                                            fontSize: 11,
+                                            fontWeight: FontWeight.w700,
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                ],
+                              ),
+                            ),
+                          ),
                           // Compass reset & orientation indicator (always accessible)
                           StreamBuilder<MapEvent>(
                             stream: _mapController.mapEventStream,

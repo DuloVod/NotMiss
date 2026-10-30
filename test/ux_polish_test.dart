@@ -472,6 +472,35 @@ void main() {
       c.dispose();
     });
   });
+
+  group('Varied openings', () {
+    test('stock openings are recognised', () {
+      for (final t in [
+        'Зупиніться на хвилинку і подивіться вгору.',
+        'Погляньте на цей фасад.',
+        'Перед вами старовинна церква.',
+        'Зверніть увагу на різьблення.',
+      ]) {
+        expect(TextQuality.hasStockOpening(t), isTrue, reason: t);
+      }
+      expect(TextQuality.hasStockOpening('Цей фонтан бачив три століття.'), isFalse);
+      expect(TextQuality.openingKey('Цей фонтан, бачив три століття.'), 'цей фонтан');
+    });
+
+    test('the prompt carries a style, the ban list and the recent openings', () {
+      final poi = _poi('x', 'Ратуша');
+      final p = ContentService().buildAiPrompt(poi,
+          style: ContentService.openingStyles[1], avoid: ['цей фонтан', 'уявіть собі']);
+      expect(p, contains(ContentService.openingStyles[1]));
+      expect(p, contains('Зупиніться'));
+      expect(p, contains('«цей фонтан…»'));
+      expect(p, isNot(contains('("Перед вами...", "Погляньте на...")')));
+    });
+
+    test('there are enough different styles', () {
+      expect(ContentService.openingStyles.toSet().length, greaterThanOrEqualTo(8));
+    });
+  });
 }
 
 class _FakePlace extends PlaceContextService {

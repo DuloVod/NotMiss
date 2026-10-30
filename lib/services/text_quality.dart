@@ -47,6 +47,25 @@ class TextQuality {
     return t;
   }
 
+  /// Stock openings that made every story sound the same.
+  static final _stockOpening = RegExp(
+    r'^\s*(?:зупиніться|зупинімось|зупинімося|погляньте|подивіться|перед вами|перед вами постає|зверніть увагу|підніміть погляд|вітаю|привіт)',
+    caseSensitive: false,
+    unicode: true,
+  );
+
+  static bool hasStockOpening(String text) => _stockOpening.hasMatch(text);
+
+  /// First two words, lower-case, without punctuation — to spot repeated openings.
+  static String openingKey(String text) {
+    final words = text
+        .toLowerCase()
+        .replaceAll(RegExp(r'[^\p{L}\s\x27ʼ’-]', unicode: true), ' ')
+        .trim()
+        .split(RegExp(r'\s+'));
+    return words.take(2).join(' ');
+  }
+
   /// ~45 seconds of speech; longer stories tire a person who is walking.
   static const int maxNarrationChars = 700;
 

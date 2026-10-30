@@ -66,6 +66,42 @@ class AiService {
   /// does not confuse the place with a namesake elsewhere. Null when unknown.
   static String? placeContext;
 
+  // ── Variety: stories must not all start the same way ────────────────────────
+  static final List<String> _recentOpenings = [];
+  static int _styleCounter = 0;
+  static const int _recentKeep = 8;
+
+  /// Openings of the last stories (for tests and for the "do not start like these" hint).
+  @visibleForTesting
+  static List<String> get recentOpenings => List.unmodifiable(_recentOpenings);
+
+  @visibleForTesting
+  static void resetOpenings() {
+    _recentOpenings.clear();
+    _styleCounter = 0;
+  }
+
+  /// A different opening style for every story (also when the same place is generated again).
+  static String _nextStyle(String seed, {required bool hasFacts}) {
+    final styles = hasFacts ? ContentService.openingStyles : ContentService.safeOpeningStyles;
+    var h = 0;
+    for (final c in seed.codeUnits) {
+      h = (h * 31 + c) & 0x7FFFFFFF;
+    }
+    return styles[(h + _styleCounter++) % styles.length];
+  }
+
+  static List<String> _avoidList() => _recentOpenings.reversed.take(5).toList();
+
+  static bool _isRepetitive(String text) =>
+      TextQuality.hasStockOpening(text) ||
+      _recentOpenings.contains(TextQuality.openingKey(text));
+
+  static void _rememberOpening(String text) {
+    _recentOpenings.add(TextQuality.openingKey(text));
+    if (_recentOpenings.length > _recentKeep) _recentOpenings.removeAt(0);
+  }
+
   static String _endpoint(String model, String apiKey) =>
       'https://generativelanguage.googleapis.com/v1beta/models/$model:generateContent?key=$apiKey';
 
@@ -78,7 +114,13 @@ class AiService {
       return poi.narrationText;
     }
 
-    final prompt = _contentService.buildAiPrompt(poi);
+    final prompt = _contentService.buildAiPrompt(
+      poi,
+      style: _nextStyle(poi.name, hasFacts: poi.facts.isNotEmpty),
+      avoid: _avoidList(),
+    );
+    String? repetitive; // valid but starts like an earlier story: used only if nothing better comes
+    var repeats = 0;
 
     for (final model in _activeModels()) {
       try {
@@ -114,7 +156,19 @@ class AiService {
             final problem = _finishReason(json) == 'MAX_TOKENS'
                 ? 'cut off (MAX_TOKENS)'
                 : TextQuality.narrationProblem(text);
-            if (problem == null) return text;
+            if (problem == null) {
+              if (!_isRepetitive(text)) {
+                _rememberOpening(text);
+                return text;
+              }
+              if (++repeats >= 2) {
+                _rememberOpening(repetitive ?? text);
+                return repetitive ?? text;
+              }
+              repetitive ??= text;
+              debugPrint('[AiService] generateNarration with $model: opening repeats, trying again');
+              continue;
+            }
             // Leaked prompt, fragment, wrong language, truncated… try the next model.
             debugPrint('[AiService] generateNarration with $model rejected: $problem');
           }
@@ -128,6 +182,10 @@ class AiService {
       }
     }
 
+    if (repetitive != null) {
+      _rememberOpening(repetitive);
+      return repetitive;
+    }
     return poi.narrationText;
   }
 
@@ -145,7 +203,7 @@ ${placeContext != null ? 'Розташування: $placeContext (це саме
 Теги OpenStreetMap: $tagsContext
 
 Підготуй для туриста інформацію українською мовою:
-1. "narration": захопливий текст для озвучення аудіогідом на 30–45 секунд (до 90 слів, не довше 650 символів; живий, атмосферний стиль від другої особи, розмовний стиль для вух, без списків). Починай одразу з місця, БЕЗ вітань ("Привіт", "Вітаю", "Ласкаво просимо") — це не перша зупинка екскурсії, а лише одна з багатьох.
+1. "narration": захопливий текст для озвучення аудіогідом на 30–45 секунд (до 90 слів, не довше 650 символів; живий, атмосферний стиль від другої особи, розмовний стиль для вух, без списків). БЕЗ вітань ("Привіт", "Вітаю", "Ласкаво просимо") — це не перша зупинка екскурсії, а лише одна з багатьох. ${ContentService.openingRules(_nextStyle(name, hasFacts: false), _avoidList())}
 2. "description": короткий змістовний опис (1–2 красивих речення українською: що це за місце).
 3. "facts": 3 факти про нього.
 
@@ -195,7 +253,10 @@ ${placeContext != null ? 'Розташування: $placeContext (це саме
               final narr = decoded['narration'];
               if (narr is String) {
                 final clean = TextQuality.finalizeNarration(narr);
-                if (TextQuality.isValidNarration(clean) && _finishReason(json) != 'MAX_TOKENS') {
+                if (TextQuality.isValidNarration(clean) &&
+                    _finishReason(json) != 'MAX_TOKENS' &&
+                    !_isRepetitive(clean)) {
+                  _rememberOpening(clean);
                   decoded['narration'] = clean;
                 } else {
                   decoded.remove('narration');
