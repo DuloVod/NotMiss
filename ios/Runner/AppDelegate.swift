@@ -65,6 +65,11 @@ import ActivityKit
   private func setupNowPlayingChannel(messenger: FlutterBinaryMessenger) {
     let channel = FlutterMethodChannel(name: "com.dulo.notmiss/now_playing", binaryMessenger: messenger)
 
+    // Buttons on the Live Activity arrive here (see GuideCommandIntent) and go to Dart.
+    GuideCommandBus.handler = { command in
+      DispatchQueue.main.async { channel.invokeMethod("command", arguments: command) }
+    }
+
     let center = MPRemoteCommandCenter.shared()
     func bind(_ command: MPRemoteCommand, _ name: String) {
       command.isEnabled = true
@@ -136,9 +141,14 @@ import ActivityKit
           title: args["title"] as? String ?? "",
           subtitle: args["subtitle"] as? String ?? "",
           badge: args["badge"] as? String ?? "",
-          speaking: args["speaking"] as? Bool ?? false
+          speaking: args["speaking"] as? Bool ?? false,
+          paused: args["paused"] as? Bool ?? false,
+          controls: args["controls"] as? Bool ?? false,
+          canSkipNext: args["canSkipNext"] as? Bool ?? false
         )
-        let content = ActivityContent(state: state, staleDate: nil)
+        // The app refreshes the activity regularly; if it stops (app closed), iOS marks it
+        // stale and the card says the guide is not active instead of showing old data.
+        let content = ActivityContent(state: state, staleDate: Date().addingTimeInterval(120))
         Task {
           if let existing = Activity<GuideActivityAttributes>.activities.first {
             await existing.update(content)
@@ -175,6 +185,32 @@ import ActivityKit
     }
   }
 
+  /// A fresh process has no walk: remove an indicator left behind by a previous run.
+  private func endStaleLiveActivities() {
+    guard #available(iOS 16.2, *) else { return }
+    Task {
+      for activity in Activity<GuideActivityAttributes>.activities {
+        await activity.end(nil, dismissalPolicy: .immediate)
+      }
+    }
+  }
+
+  /// The user closed the app: take the indicator down with it.
+  override func applicationWillTerminate(_ application: UIApplication) {
+    if #available(iOS 16.2, *) {
+      let done = DispatchSemaphore(value: 0)
+      Task {
+        for activity in Activity<GuideActivityAttributes>.activities {
+          await activity.end(nil, dismissalPolicy: .immediate)
+        }
+        done.signal()
+      }
+      _ = done.wait(timeout: .now() + 2)
+    }
+    MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
+    super.applicationWillTerminate(application)
+  }
+
   func didInitializeImplicitFlutterEngine(_ engineBridge: FlutterImplicitEngineBridge) {
     GeneratedPluginRegistrant.register(with: engineBridge.pluginRegistry)
     // Application-level channels go through the application registrar (the documented way for
@@ -183,5 +219,6 @@ import ActivityKit
     setupBackgroundTaskChannel(messenger: messenger)
     setupNowPlayingChannel(messenger: messenger)
     setupLiveActivityChannel(messenger: messenger)
+    endStaleLiveActivities()
   }
 }

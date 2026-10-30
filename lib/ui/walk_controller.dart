@@ -158,6 +158,7 @@ class WalkController extends ChangeNotifier {
     _nowPlaying.onPause = () => unawaited(pauseAudio());
     _nowPlaying.onReplay = () => unawaited(replayAudio());
     _nowPlaying.onSkip = () => unawaited(skipNarration());
+    _nowPlaying.onToggle = () => unawaited(isPlaying ? pauseAudio() : resumeAudio());
     unawaited(_visitedStore.init().then((_) => notifyListeners()));
     _allPois = [];
   }
@@ -274,11 +275,12 @@ class WalkController extends ChangeNotifier {
       final next = nearestUnvisited(excluding: poi.id, maxMeters: 400);
       return GuideLiveState(
         title: poi.name,
-        subtitle: isAudioPaused
-            ? 'Розповідь на паузі'
-            : (next != null ? 'Далі: ${next.poi.name} · ${formatDistance(next.meters)}' : 'Гід розповідає'),
-        badge: isAudioPaused ? 'II' : (next != null ? formatDistance(next.meters) : '♪'),
+        subtitle: next != null ? 'Далі: ${next.poi.name} · ${formatDistance(next.meters)}' : 'Гід розповідає',
+        badge: next != null ? formatDistance(next.meters) : '',
         speaking: true,
+        paused: isAudioPaused,
+        controls: true,
+        canSkipNext: hasNextNarration,
       );
     }
     if (_isProcessing && poi != null) {
@@ -318,6 +320,9 @@ class WalkController extends ChangeNotifier {
       final onlyDistance = last != null &&
           state.title == last.title &&
           state.speaking == last.speaking &&
+          state.paused == last.paused &&
+          state.controls == last.controls &&
+          state.canSkipNext == last.canSkipNext &&
           shape(state.subtitle) == shape(last.subtitle) &&
           shape(state.badge) == shape(last.badge);
       if (onlyDistance && now.difference(_lastLiveAt) < const Duration(seconds: 4)) return;
@@ -622,6 +627,7 @@ class WalkController extends ChangeNotifier {
   /// Pause current audio playback.
   Future<void> pauseAudio() async {
     await _audioService.pause();
+    _refreshLiveActivity();
     if (_activePoi != null) {
       _statusMessage = '⏸️ ${_activePoi!.name} — пауза';
     }
@@ -631,6 +637,7 @@ class WalkController extends ChangeNotifier {
   /// Resume current audio playback.
   Future<void> resumeAudio() async {
     await _audioService.resume();
+    _refreshLiveActivity();
     if (_activePoi != null) {
       _statusMessage = '🎧 ${_activePoi!.name}';
     }
@@ -748,7 +755,10 @@ class WalkController extends ChangeNotifier {
     _positionSub = _locationService.positionStream.listen(_onPosition);
 
     _uiTimer?.cancel();
+    var ticks = 0;
     _uiTimer = Timer.periodic(const Duration(seconds: 1), (_) {
+      // Heartbeat: the indicator turns "stale" if it is not refreshed for two minutes.
+      if (_status == WalkStatus.walking && ++ticks % 45 == 0) _refreshLiveActivity(force: true);
       if (_status == WalkStatus.walking && backgroundActivity.isNotEmpty) {
         notifyListeners();
       }

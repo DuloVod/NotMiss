@@ -13,8 +13,13 @@ class NowPlayingService {
   VoidCallback? onPause;
   VoidCallback? onReplay;
   VoidCallback? onSkip;
+  VoidCallback? onToggle;
 
   final bool _enabled;
+
+  /// Whether the system "Now Playing" card is published. Off: the Live Activity is the one
+  /// lock-screen block (with its own buttons); headphone / remote commands keep working.
+  static const bool publishSystemCard = false;
 
   NowPlayingService({bool? enabled})
       : _enabled = enabled ?? (!kIsWeb && defaultTargetPlatform == TargetPlatform.iOS) {
@@ -37,6 +42,8 @@ class NowPlayingService {
         onReplay?.call();
       case 'skip':
         onSkip?.call();
+      case 'toggle':
+        onToggle?.call();
     }
   }
 
@@ -47,7 +54,7 @@ class NowPlayingService {
     Duration elapsed = Duration.zero,
     Duration? duration,
   }) async {
-    if (!_enabled) return;
+    if (!_enabled || !publishSystemCard) return;
     try {
       await _channel.invokeMethod('update', {
         'title': title,

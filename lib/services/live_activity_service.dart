@@ -14,14 +14,26 @@ class GuideLiveState {
   /// Very short text for the Dynamic Island, e.g. "85 м".
   final String badge;
 
-  /// A narration is playing / paused right now.
+  /// "Speaking" mode: a narration is being prepared, played or paused.
   final bool speaking;
+
+  /// The narration is paused.
+  final bool paused;
+
+  /// Pause and next/stop buttons are shown (only while a narration is audible or paused).
+  final bool controls;
+
+  /// "Next" starts another narration; otherwise the button stops this one.
+  final bool canSkipNext;
 
   const GuideLiveState({
     required this.title,
     required this.subtitle,
     this.badge = '',
     this.speaking = false,
+    this.paused = false,
+    this.controls = false,
+    this.canSkipNext = false,
   });
 
   @override
@@ -30,10 +42,13 @@ class GuideLiveState {
       other.title == title &&
       other.subtitle == subtitle &&
       other.badge == badge &&
-      other.speaking == speaking;
+      other.speaking == speaking &&
+      other.paused == paused &&
+      other.controls == controls &&
+      other.canSkipNext == canSkipNext;
 
   @override
-  int get hashCode => Object.hash(title, subtitle, badge, speaking);
+  int get hashCode => Object.hash(title, subtitle, badge, speaking, paused, controls, canSkipNext);
 
   @override
   String toString() => 'GuideLiveState($title | $subtitle | $badge | speaking=$speaking)';
@@ -58,6 +73,9 @@ class LiveActivityService {
         'subtitle': state.subtitle,
         'badge': state.badge,
         'speaking': state.speaking,
+        'paused': state.paused,
+        'controls': state.controls,
+        'canSkipNext': state.canSkipNext,
       });
     } catch (_) {}
   }

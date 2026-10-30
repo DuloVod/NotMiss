@@ -49,10 +49,15 @@ class _Audio extends AudioPlayerService {
   void armArrivalCue() => cues++;
   @override
   Future<void> prepareSession() async {}
+  bool playing = false;
+  @override
+  bool get isPlaying => playing && !paused;
   @override
   Future<void> play(String source) async {
     played.add(source);
+    playing = true;
     if (gate != null) await gate!.future;
+    playing = false;
   }
 
   @override
@@ -685,6 +690,58 @@ void main() {
       final speaking = live.states.where((s) => s.speaking && s.title == 'Ратуша').toList();
       expect(speaking, isNotEmpty, reason: live.states.toString());
       expect(live.states.any((s) => s.subtitle.startsWith('Далі: Собор')), isTrue, reason: live.states.toString());
+      audio.gate!.complete();
+      c.dispose();
+    });
+
+    test('walking mode (no narration) has no controls', () async {
+      final c = ctl(_Audio(), _RecordingLive([]));
+      c.debugSetPois([_poi('a', 'Ратуша', lat: 49.8409, lng: 24.03)]);
+      await c.debugOnPosition(_pos());
+      final walking = c.liveState!;
+      expect(walking.speaking, isFalse);
+      expect(walking.controls, isFalse);
+      c.dispose();
+    });
+
+    test('lock-screen button "toggle" pauses and resumes', () async {
+      final audio = _Audio()..gate = Completer<void>();
+      final np = NowPlayingService(enabled: false);
+      final live = _RecordingLive([]);
+      final c = WalkController(
+        destination: const Destination(
+            id: 'l', name: 'Львів', centerLatitude: 49.84, centerLongitude: 24.03, defaultZoom: 16, pois: []),
+        apiKey: '',
+        researchService: ResearchService(
+          categoryService: PoiCategoryService(),
+          cacheService: PoiCacheService(),
+          queue: ResearchQueue(maxConcurrent: 2),
+          wikidataService: WikidataService(),
+          wikipediaService: WikipediaService(),
+          aiService: _Ai(),
+          researchDeadline: const Duration(milliseconds: 300),
+        ),
+        ttsService: _Tts(),
+        audioService: audio,
+        overpassService: _NoOverpass(),
+        nowPlaying: np,
+        visitedStore: VisitedStore(pathProvider: () async => '/nonexistent/x.json'),
+        liveActivity: live,
+      );
+      c.debugSetPois([_poi('p1', 'Ратуша')]);
+      unawaited(c.debugProcessPoi(_poi('p1', 'Ратуша'), _pos()));
+      await Future<void>.delayed(const Duration(milliseconds: 600));
+      expect(live.states.last.controls, isTrue);
+      expect(live.states.last.paused, isFalse);
+
+      np.handleCommand('toggle'); // pause
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+      expect(audio.paused, isTrue);
+      expect(live.states.last.paused, isTrue, reason: live.states.toString());
+
+      np.handleCommand('toggle'); // resume
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+      expect(audio.paused, isFalse);
       audio.gate!.complete();
       c.dispose();
     });
