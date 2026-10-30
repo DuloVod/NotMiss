@@ -8,6 +8,8 @@ import '../../models/enriched_poi.dart';
 import '../../models/chat_message.dart';
 import '../../services/poi_category_service.dart';
 import '../walk_controller.dart';
+import '../guide_status.dart';
+import '../poi_kind.dart';
 import '../theme/app_theme.dart';
 import 'package:geolocator/geolocator.dart'; // For Position
 
@@ -98,6 +100,8 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
     final pos = widget.controller.currentPosition;
     final activePoi = widget.controller.activePoi;
     final allPois = widget.controller.allPois;
+    final visitedIds = widget.controller.visitedPoiIds;
+    final guideStatus = widget.controller.guideStatus;
 
     return Scaffold(
       backgroundColor: NmColors.background,
@@ -129,8 +133,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
                   ...allPois.map((p) => _buildPoiMarker(
                         p,
                         isActive: p.id == activePoi?.id,
-                        isTriggered:
-                            widget.controller.triggeredPoiIds.contains(p.id),
+                        isTriggered: visitedIds.contains(p.id),
                       )),
                   if (pos != null) _buildUserMarker(pos),
                 ],
@@ -138,41 +141,15 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
             ],
           ),
 
-          // ── Status/Error Message Banner (idle/warning only) ─────
-          if (widget.controller.statusMessage != null && widget.controller.status == WalkStatus.idle)
+          // ── One calm status line (only while walking, only when it matters) ─────
+          if (guideStatus != null && widget.controller.status == WalkStatus.walking)
             Positioned(
-              top: MediaQuery.of(context).padding.top + 16,
+              top: MediaQuery.of(context).padding.top + 12,
               left: 16,
               right: 16,
-              child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-                decoration: BoxDecoration(
-                  color: NmColors.cream,
-                  borderRadius: BorderRadius.circular(16),
-                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.black.withValues(alpha: 0.08),
-                      blurRadius: 10,
-                      offset: const Offset(0, 4),
-                    ),
-                  ],
-                ),
-                child: Row(
-                  children: [
-                    Icon(Icons.location_off_outlined, color: NmColors.ink, size: 26),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: Text(
-                        widget.controller.statusMessage!,
-                        style: TextStyle(
-                          color: NmColors.ink,
-                          fontSize: 14,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
+              child: Align(
+                alignment: Alignment.topCenter,
+                child: _buildStatusPill(guideStatus),
               ),
             ),
 
@@ -326,9 +303,9 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
                 child: Icon(
                   isAudioActive
                       ? (isPaused ? Icons.pause_circle_outline : Icons.volume_up)
-                      : Icons.headphones,
+                      : poiKindOf(poi).icon,
                   color: NmColors.ink,
-                  size: 32,
+                  size: 30,
                 ),
               ),
               const SizedBox(width: 16),
@@ -337,45 +314,18 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
+                      poiKindOf(poi).label,
+                      style: const TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                        color: NmColors.muted,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
                       poi.name,
                       style: NmText.title(22),
                     ),
-                    if (widget.controller.statusMessage != null && widget.controller.statusMessage!.isNotEmpty) ...[
-                      const SizedBox(height: 6),
-                      Text(
-                        widget.controller.statusMessage!,
-                        style: TextStyle(
-                          fontSize: 16,
-                          color: NmColors.ink,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                    ],
-                    if (widget.controller.backgroundActivity.isNotEmpty) ...[
-                      const SizedBox(height: 4),
-                      Row(
-                        children: [
-                          const SizedBox(
-                            width: 12,
-                            height: 12,
-                            child: CircularProgressIndicator(strokeWidth: 2),
-                          ),
-                          const SizedBox(width: 8),
-                          Expanded(
-                            child: Text(
-                              widget.controller.backgroundActivity,
-                              style: TextStyle(
-                                fontSize: 13,
-                                color: NmColors.muted,
-                                fontStyle: FontStyle.italic,
-                              ),
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ],
                   ],
                 ),
               ),
@@ -440,44 +390,9 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
             ),
           ],
           const SizedBox(height: 20),
-          // Audio Playback Controls (Pause / Resume / Stop / Play)
+          // Audio controls: replay / pause-resume / skip (same actions as on the lock screen)
           if (isAudioActive) ...[
-            Row(
-              children: [
-                Expanded(
-                  child: ElevatedButton.icon(
-                    onPressed: () {
-                      if (isPlaying) {
-                        widget.controller.pauseAudio();
-                      } else {
-                        widget.controller.resumeAudio();
-                      }
-                    },
-                    icon: Icon(
-                      isPlaying ? Icons.pause_circle_filled_rounded : Icons.play_circle_filled_rounded,
-                      size: 22,
-                    ),
-                    label: Text(
-                      isPlaying ? 'Пауза' : 'Продовжити',
-                      style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
-                    ),
-                    style: NmButtons.secondary(),
-                  ),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: ElevatedButton.icon(
-                    onPressed: () => widget.controller.stopAudio(),
-                    icon: const Icon(Icons.stop_circle_outlined, size: 22),
-                    label: const Text(
-                      'Зупинити',
-                      style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
-                    ),
-                    style: NmButtons.destructive(),
-                  ),
-                ),
-              ],
-            ),
+            _buildAudioControls(),
             const SizedBox(height: 10),
             OutlinedButton.icon(
               onPressed: () => _showAiChatSheet(context, poi),
@@ -532,6 +447,122 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
     );
   }
 
+  Widget _buildStatusPill(GuideStatus status) {
+    return Container(
+      padding: EdgeInsets.fromLTRB(16, 6, status.hasAction ? 6 : 16, 6),
+      decoration: BoxDecoration(
+        color: NmColors.cream,
+        borderRadius: BorderRadius.circular(24),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.10),
+            blurRadius: 10,
+            offset: const Offset(0, 3),
+          ),
+        ],
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (status.tone == GuideTone.busy)
+            const SizedBox(
+              width: 14,
+              height: 14,
+              child: CircularProgressIndicator(strokeWidth: 2, color: NmColors.ink),
+            )
+          else
+            const Icon(Icons.info_outline, size: 18, color: NmColors.ink),
+          const SizedBox(width: 10),
+          Flexible(
+            child: Text(
+              status.text,
+              style: const TextStyle(
+                fontSize: 14,
+                fontWeight: FontWeight.w600,
+                color: NmColors.ink,
+              ),
+            ),
+          ),
+          if (status.hasAction) ...[
+            const SizedBox(width: 6),
+            TextButton(
+              onPressed: () => widget.controller.runStatusAction(),
+              child: Text(
+                status.actionLabel!,
+                style: const TextStyle(fontWeight: FontWeight.w700),
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _audioKey({
+    required IconData icon,
+    required String label,
+    required VoidCallback onTap,
+    bool primary = false,
+  }) {
+    final fg = primary ? Colors.white : NmColors.ink;
+    return Expanded(
+      flex: primary ? 5 : 4,
+      child: Semantics(
+        button: true,
+        label: label,
+        child: InkWell(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(16),
+          child: Container(
+            height: 62,
+            decoration: BoxDecoration(
+              color: primary ? NmColors.ink : NmColors.cream,
+              borderRadius: BorderRadius.circular(16),
+            ),
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(icon, size: 26, color: fg),
+                const SizedBox(height: 2),
+                Text(
+                  label,
+                  style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: fg),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// Replay · pause/resume · skip — mirrors the lock-screen controls.
+  Widget _buildAudioControls() {
+    final c = widget.controller;
+    return Row(
+      children: [
+        _audioKey(
+          icon: Icons.replay_rounded,
+          label: 'Ще раз',
+          onTap: () => c.replayAudio(),
+        ),
+        const SizedBox(width: 10),
+        _audioKey(
+          icon: c.isPlaying ? Icons.pause_rounded : Icons.play_arrow_rounded,
+          label: c.isPlaying ? 'Пауза' : 'Продовжити',
+          primary: true,
+          onTap: () => c.isPlaying ? c.pauseAudio() : c.resumeAudio(),
+        ),
+        const SizedBox(width: 10),
+        _audioKey(
+          icon: Icons.skip_next_rounded,
+          label: 'Далі',
+          onTap: () => c.skipNarration(),
+        ),
+      ],
+    );
+  }
+
   Widget _buildIdleCard() {
     final isPlaying = widget.controller.isPlaying;
     final isPaused = widget.controller.isAudioPaused;
@@ -571,10 +602,9 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
                       ),
                       const SizedBox(height: 4),
                       Text(
-                        widget.controller.statusMessage ??
-                            (isStopped
-                                ? 'Ви завжди можете розпочати новий маршрут!'
-                                : 'Для роботи аудіогіда надайте доступ до геопозиції.'),
+                        isStopped
+                            ? 'Відвідано місць: ${widget.controller.totalVisitedCount}. Ви завжди можете розпочати новий маршрут!'
+                            : 'Для роботи аудіогіда надайте доступ до геопозиції.',
                         style: const TextStyle(
                           fontSize: 14,
                           color: NmColors.muted,
@@ -615,6 +645,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
     }
 
     // Walking mode
+    final visitedIds = widget.controller.visitedPoiIds;
     final visitedPois = widget.controller.allPois
         .where((p) =>
             widget.controller.triggeredPoiIds.contains(p.id) &&
@@ -626,7 +657,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
     final pos = widget.controller.currentPosition;
     if (pos != null) {
       for (final p in widget.controller.allPois) {
-        if (!widget.controller.triggeredPoiIds.contains(p.id)) {
+        if (!visitedIds.contains(p.id)) {
           final d = Geolocator.distanceBetween(
             pos.latitude, pos.longitude, p.latitude, p.longitude,
           );
@@ -639,7 +670,10 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
     }
 
     String idleTitle = 'Шукаємо цікаві місця...';
-    String? idleSubtitle = widget.controller.statusMessage;
+    String? idleSubtitle;
+    final totalNearby = widget.controller.allPois.length;
+    final doneNearby =
+        widget.controller.allPois.where((p) => visitedIds.contains(p.id)).length;
 
     if (!isAudioActive) {
       if (widget.controller.allPois.isEmpty) {
@@ -698,31 +732,6 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
                         ),
                       ),
                     ],
-                    if (widget.controller.backgroundActivity.isNotEmpty) ...[
-                      const SizedBox(height: 4),
-                      Row(
-                        children: [
-                          const SizedBox(
-                            width: 12,
-                            height: 12,
-                            child: CircularProgressIndicator(strokeWidth: 2),
-                          ),
-                          const SizedBox(width: 8),
-                          Expanded(
-                            child: Text(
-                              widget.controller.backgroundActivity,
-                              style: TextStyle(
-                                fontSize: 13,
-                                color: NmColors.muted,
-                                fontStyle: FontStyle.italic,
-                              ),
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ],
                   ],
                 ),
               ),
@@ -737,41 +746,25 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
           ),
           if (isAudioActive) ...[
             const SizedBox(height: 16),
-            Row(
-              children: [
-                Expanded(
-                  child: ElevatedButton.icon(
-                    onPressed: () {
-                      if (isPlaying) {
-                        widget.controller.pauseAudio();
-                      } else {
-                        widget.controller.resumeAudio();
-                      }
-                    },
-                    icon: Icon(
-                      isPlaying ? Icons.pause_circle_filled_rounded : Icons.play_circle_filled_rounded,
-                      size: 20,
-                    ),
-                    label: Text(
-                      isPlaying ? 'Пауза' : 'Продовжити',
-                      style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
-                    ),
-                    style: NmButtons.secondary(),
-                  ),
-                ),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: ElevatedButton.icon(
-                    onPressed: () => widget.controller.stopAudio(),
-                    icon: const Icon(Icons.stop_circle_outlined, size: 20),
-                    label: const Text(
-                      'Зупинити',
-                      style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
-                    ),
-                    style: NmButtons.destructive(),
-                  ),
-                ),
-              ],
+            _buildAudioControls(),
+          ],
+
+          // ── Progress: how many nearby places are already done ────────────
+          if (totalNearby > 0) ...[
+            const SizedBox(height: 14),
+            ClipRRect(
+              borderRadius: BorderRadius.circular(4),
+              child: LinearProgressIndicator(
+                value: doneNearby / totalNearby,
+                minHeight: 6,
+                backgroundColor: NmColors.line,
+                color: NmColors.ochre,
+              ),
+            ),
+            const SizedBox(height: 6),
+            Text(
+              'Пройдено $doneNearby з $totalNearby поруч · всього прослухано ${widget.controller.totalVisitedCount}',
+              style: const TextStyle(fontSize: 12, color: NmColors.muted),
             ),
           ],
 
@@ -802,7 +795,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
                 itemBuilder: (context, index) {
                   final poi = visitedPois[index];
                   return ActionChip(
-                    avatar: const Icon(Icons.place, size: 16),
+                    avatar: Icon(poiKindOf(poi).icon, size: 16),
                     label: Text(
                       poi.name,
                       maxLines: 1,
@@ -847,7 +840,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
         },
         child: Center(
           child: Tooltip(
-            message: poi.name,
+            message: '${poiKindOf(poi).label}: ${poi.name}',
             child: Container(
               width: 36,
               height: 36,
@@ -863,10 +856,27 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
                   ),
                 ],
               ),
-              child: Icon(
-                (isTriggered && !isActive) ? Icons.check : Icons.place,
-                color: Colors.white,
-                size: 18,
+              child: Stack(
+                alignment: Alignment.center,
+                clipBehavior: Clip.none,
+                children: [
+                  Icon(poiKindOf(poi).icon, color: Colors.white, size: 19),
+                  if (isTriggered && !isActive)
+                    Positioned(
+                      right: -5,
+                      bottom: -5,
+                      child: Container(
+                        width: 15,
+                        height: 15,
+                        decoration: BoxDecoration(
+                          color: NmColors.ink,
+                          shape: BoxShape.circle,
+                          border: Border.all(color: Colors.white, width: 1.5),
+                        ),
+                        child: const Icon(Icons.check, color: Colors.white, size: 10),
+                      ),
+                    ),
+                ],
               ),
             ),
           ),

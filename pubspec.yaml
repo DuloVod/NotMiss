@@ -1,7 +1,7 @@
 name: notmiss
 description: AI Voice Guide for Walking Tours
 publish_to: none
-version: 0.2.4+4
+version: 0.2.4+5
 
 environment:
   sdk: ">=3.3.0 <4.0.0"
@@ -40,6 +40,7 @@ flutter:
   assets:
     - .env
     - assets/data/stryiskyi_park.json
+    - assets/audio/arrival_chime.wav
 
   # NotMiss design fonts (SIL Open Font License, see assets/fonts/OFL-*.txt)
   fonts:

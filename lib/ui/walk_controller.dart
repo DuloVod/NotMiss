@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:math' as math;
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart' show HapticFeedback;
 import 'package:geolocator/geolocator.dart';
 import '../models/destination.dart';
 import '../models/poi.dart';
@@ -23,6 +24,9 @@ import '../services/wikidata_service.dart';
 import '../services/wikipedia_service.dart';
 import '../services/ios_background_task.dart';
 import '../services/text_quality.dart';
+import '../services/now_playing_service.dart';
+import '../services/visited_store.dart';
+import 'guide_status.dart';
 
 enum WalkStatus { idle, walking, stopped }
 
@@ -45,6 +49,8 @@ class WalkController extends ChangeNotifier {
   final AudioPlayerService _audioService;
   final OverpassService _overpassService;
   final ResearchService _researchService;
+  final NowPlayingService _nowPlaying;
+  final VisitedStore _visitedStore;
 
   WalkStatus _status = WalkStatus.idle;
   Position? _currentPosition;
@@ -70,6 +76,9 @@ class WalkController extends ChangeNotifier {
 
   /// Pause before re-trying a failed POI search (public so tests can shorten it).
   Duration osmRetryDelay = const Duration(seconds: 6);
+
+  /// Vibration + soft chime before an automatically triggered narration.
+  bool playArrivalCue = true;
 
   /// TTS retry policy (public so tests can shorten it).
   int ttsAttempts = 3;
@@ -101,7 +110,11 @@ class WalkController extends ChangeNotifier {
     AudioPlayerService? audioService,
     OverpassService? overpassService,
     ResearchService? researchService,
-  })  : _locationService = locationService ?? LocationService(),
+    NowPlayingService? nowPlaying,
+    VisitedStore? visitedStore,
+  })  : _nowPlaying = nowPlaying ?? NowPlayingService(),
+        _visitedStore = visitedStore ?? VisitedStore(),
+        _locationService = locationService ?? LocationService(),
         _poiEngine = poiEngine ?? PoiEngine(),
         _aiService = aiService ?? AiService(apiKey: apiKey),
         _ttsService = ttsService ?? TtsService(apiKey: apiKey),
@@ -127,8 +140,14 @@ class WalkController extends ChangeNotifier {
     };
     _researchService.init();
     _playerStateSub = _audioService.playerStateStream.listen((_) {
+      _syncNowPlaying();
       notifyListeners();
     });
+    _nowPlaying.onPlay = () => unawaited(resumeAudio());
+    _nowPlaying.onPause = () => unawaited(pauseAudio());
+    _nowPlaying.onReplay = () => unawaited(replayAudio());
+    _nowPlaying.onSkip = () => unawaited(skipNarration());
+    unawaited(_visitedStore.init().then((_) => notifyListeners()));
     _allPois = [];
   }
 
@@ -141,6 +160,84 @@ class WalkController extends ChangeNotifier {
   bool get isAudioPaused => _audioService.isPaused;
   bool get isAudioActive => isPlaying || isAudioPaused;
   Set<String> get triggeredPoiIds => _poiEngine.triggeredPoiIds;
+
+  /// Places already told about: this walk plus all earlier walks (persisted).
+  Set<String> get visitedPoiIds => {..._visitedStore.ids, ..._poiEngine.triggeredPoiIds};
+
+  /// How many different places the user has heard about in total.
+  int get totalVisitedCount => _visitedStore.count;
+
+  void _markVisited(String poiId) {
+    unawaited(_visitedStore.add(poiId).then((_) => notifyListeners()));
+  }
+
+  /// Updates the lock-screen card (title, play/pause state, progress).
+  void _syncNowPlaying() {
+    final poi = _activePoi;
+    if (poi != null && isAudioActive) {
+      unawaited(_nowPlaying.update(
+        title: poi.name,
+        playing: isPlaying,
+        elapsed: _audioService.position,
+        duration: _audioService.duration,
+      ));
+    } else if (!_isProcessing) {
+      unawaited(_nowPlaying.clear());
+    }
+  }
+
+  // ── Calm status (one indicator instead of a log of steps) ────────────────────
+  bool _permissionDenied = false;
+  bool _narrationFailed = false;
+  bool _waitingForGps = false;
+  int _osmFailures = 0;
+
+  /// After this many failed place searches in a row the user is told (and can retry).
+  static const int osmFailuresBeforeNotice = 3;
+
+  /// What to tell the user right now, or null when there is nothing worth saying.
+  /// Self-healing situations show a quiet "busy" line; only things the user can act
+  /// on come with a button.
+  GuideStatus? get guideStatus {
+    if (_status == WalkStatus.idle) {
+      return _permissionDenied
+          ? const GuideStatus('Потрібен доступ до геолокації', GuideTone.attention,
+              actionLabel: 'Дозволити')
+          : null;
+    }
+    if (_status == WalkStatus.stopped) return null;
+
+    if (_narrationFailed && _activePoi != null && !_isProcessing) {
+      return const GuideStatus('Не вдалося озвучити — розповідь текстом', GuideTone.attention,
+          actionLabel: 'Повторити');
+    }
+    if (isAudioActive) return null;
+    if (_isProcessing) return const GuideStatus('Готуємо розповідь…', GuideTone.busy);
+    if (!_osmLoaded) {
+      if (_waitingForGps) {
+        return const GuideStatus('Шукаємо GPS-сигнал…', GuideTone.busy);
+      }
+      if (_osmFailures >= osmFailuresBeforeNotice) {
+        return const GuideStatus('Немає зв\'язку — місця не завантажились', GuideTone.attention,
+            actionLabel: 'Повторити');
+      }
+      return const GuideStatus('Шукаємо місця поруч…', GuideTone.busy);
+    }
+    return null;
+  }
+
+  /// The button next to [guideStatus].
+  Future<void> runStatusAction() async {
+    if (_status == WalkStatus.idle && _permissionDenied) {
+      await startWalk();
+    } else if (_narrationFailed && _activePoi != null) {
+      await replayAudio();
+    } else if (!_osmLoaded) {
+      _osmFailures = 0;
+      notifyListeners();
+      await reloadOsmPois();
+    }
+  }
 
   /// All POIs available for the current walk (static + OSM).
   List<Poi> get allPois => List.unmodifiable(_allPois);
@@ -226,7 +323,7 @@ class WalkController extends ChangeNotifier {
           : poi.shortDescription,
       facts: facts.isNotEmpty ? facts : poi.facts,
       narrationText: (narr != null && narr.isNotEmpty && !TextQuality.isBadStoredNarration(narr))
-          ? narr
+          ? TextQuality.finalizeNarration(narr)
           : poi.narrationText,
     );
   }
@@ -234,9 +331,9 @@ class WalkController extends ChangeNotifier {
   int _manualPlayGen = 0;
 
   /// Triggers playback of the narration for a specific POI (e.g. from popup or card).
-  Future<void> playNarrationForPoi(Poi poi) async {
+  Future<void> playNarrationForPoi(Poi poi, {bool restart = false}) async {
     // If this POI is currently paused, simply resume it
-    if (_audioService.isPaused && _activePoi?.id == poi.id) {
+    if (!restart && _audioService.isPaused && _activePoi?.id == poi.id) {
       await resumeAudio();
       return;
     }
@@ -245,8 +342,13 @@ class WalkController extends ChangeNotifier {
     _processGen++; // Invalidate any running automated POI processing
     await _audioService.stop();
 
-    final updated = getUpdatedPoi(poi);
+    var updated = getUpdatedPoi(poi);
+    if (updated.narrationText.isEmpty && poi.narrationText.isNotEmpty) {
+      updated = updated.copyWith(narrationText: poi.narrationText);
+    }
+    _narrationFailed = false;
     _poiEngine.markTriggered(updated.id);
+    _markVisited(updated.id);
     _pendingPoiIds.remove(updated.id);
     _nearbyUnplayedPois.removeWhere((p) => p.id == updated.id);
     if (_currentPosition != null && !_proximityEvents.any((e) => e.poiId == updated.id)) {
@@ -325,6 +427,7 @@ class WalkController extends ChangeNotifier {
       debugPrint('[WalkController] Play narration error: $e');
       if (gen == _manualPlayGen) {
         failed = true;
+        _narrationFailed = true;
         _statusMessage = '📍 ${updated.name} — озвучення недоступне, розповідь текстом';
         notifyListeners();
       }
@@ -364,12 +467,29 @@ class WalkController extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Play the current narration again from the beginning.
+  Future<void> replayAudio() async {
+    final poi = _activePoi;
+    if (poi == null) return;
+    await playNarrationForPoi(poi, restart: true);
+  }
+
+  /// Drop the current narration and move on: the next waiting place (if any) starts at once.
+  Future<void> skipNarration() async {
+    await stopAudio();
+    final pos = _currentPosition;
+    if (pos != null && _status == WalkStatus.walking) {
+      await _onPosition(pos);
+    }
+  }
+
   /// Stop current audio playback and cancel in-flight narration generation.
   Future<void> stopAudio() async {
     _processGen++;
     _manualPlayGen++;
     await _audioService.stop();
     _activePoi = null;
+    _narrationFailed = false;
     _isProcessing = false;
     if (_status == WalkStatus.walking) {
       _statusMessage = 'Прогулянка — слухаю (${_proximityEvents.length} зафіксовано)';
@@ -417,6 +537,7 @@ class WalkController extends ChangeNotifier {
   Future<void> startWalk() async {
     if (_status == WalkStatus.walking) return;
     final granted = await _locationService.requestPermission();
+    _permissionDenied = !granted;
     if (!granted) {
       _statusMessage = 'Для роботи аудіогіда потрібен доступ до геолокації.';
       notifyListeners();
@@ -429,6 +550,9 @@ class WalkController extends ChangeNotifier {
     _poiEngine.resetSession();
     _pendingPoiIds.clear();
     _proximityEvents.clear();
+    _narrationFailed = false;
+    _waitingForGps = false;
+    _osmFailures = 0;
     _osmLoaded = false;
     _status = WalkStatus.walking;
     _activePoi = null;
@@ -511,6 +635,8 @@ class WalkController extends ChangeNotifier {
 
       _allPois.addAll(deduped);
       _osmLoaded = true;
+      _osmFailures = 0;
+      _waitingForGps = false;
 
       // Queue only the NEW POIs for background research (Wikidata, Wikipedia)
       _researchService.processDiscoveredPois(deduped);
@@ -525,6 +651,8 @@ class WalkController extends ChangeNotifier {
     } catch (e) {
       debugPrint('[WalkController] OSM load failed: $e');
       _osmLoaded = false;
+      _waitingForGps = e is TimeoutException;
+      if (e is! TimeoutException) _osmFailures++;
       if (_status == WalkStatus.walking) {
         _statusMessage = e is TimeoutException
             ? 'Очікую GPS-сигнал… (вийдіть на відкрите місце)'
@@ -556,6 +684,8 @@ class WalkController extends ChangeNotifier {
     _status = WalkStatus.stopped;
     _isProcessing = false;
     _activePoi = null;
+    _narrationFailed = false;
+    unawaited(_nowPlaying.clear());
     _pendingPoiIds.clear();
     _statusMessage =
         'Прогулянка завершена. ${_poiEngine.triggeredPoiIds.length} місць відвідано.';
@@ -681,8 +811,10 @@ class WalkController extends ChangeNotifier {
     final gen = ++_processGen;
 
     _poiEngine.markTriggered(poi.id);
+    _markVisited(poi.id);
     _pendingPoiIds.remove(poi.id);
     _isProcessing = true;
+    _narrationFailed = false;
 
     // Merge enriched research data if available
     final activePoi = getUpdatedPoi(poi);
@@ -757,6 +889,12 @@ class WalkController extends ChangeNotifier {
         'Now playing audio narration 🎧',
       );
 
+      // "You are at a place": a vibration and a soft chime just before the voice, so the
+      // narration never cuts in abruptly (the chime plays inside the same audio session).
+      if (playArrivalCue) {
+        unawaited(HapticFeedback.mediumImpact().catchError((_) {}));
+        _audioService.armArrivalCue();
+      }
       await _audioService.play(audioPath);
       if (gen != _processGen) return; // Відмінено
 
@@ -769,6 +907,7 @@ class WalkController extends ChangeNotifier {
         // The POI stays marked as triggered (unmarking would retry forever when offline),
         // but the card with the narration text stays on screen so nothing is lost.
         failed = true;
+        _narrationFailed = true;
         debugPrint('[WalkController] Error processing POI ${currentPoi.name}: $e');
         _statusMessage = '📍 ${currentPoi.name} — озвучення недоступне, розповідь текстом';
         notifyListeners();
@@ -832,6 +971,7 @@ class WalkController extends ChangeNotifier {
     );
     if (dist > math.max(active.triggerRadius * 3, 80.0)) {
       _activePoi = null;
+      _narrationFailed = false;
       if (_status == WalkStatus.walking) {
         _statusMessage = 'Прогулянка — слухаю (${_proximityEvents.length} зафіксовано)';
       }
@@ -864,6 +1004,7 @@ class WalkController extends ChangeNotifier {
     _osmRetryTimer?.cancel();
     _playerStateSub?.cancel();
     _positionSub?.cancel();
+    unawaited(_nowPlaying.clear());
     _locationService.dispose();
     _audioService.dispose();
     _researchService.dispose();

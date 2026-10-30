@@ -30,12 +30,46 @@ class AudioPlayerService {
 
   Stream<PlayerState> get playerStateStream => _player.playerStateStream;
 
+  Duration get position => _player.position;
+  Duration? get duration => _player.duration;
+
+  bool _cueNext = false;
+  int _stopToken = 0;
+
+  /// The next [play] starts with a short soft chime ("you are at a place"), so the
+  /// voice never cuts in abruptly. One-shot; plays inside the same audio session as the
+  /// narration, so other apps' audio is not un-ducked in between.
+  void armArrivalCue() => _cueNext = true;
+
+  static const _chimeAsset = 'assets/audio/arrival_chime.wav';
+
+  Future<void> _playChime() async {
+    try {
+      await _player.setAsset(_chimeAsset);
+      _player.play();
+      await _player.playerStateStream
+          .firstWhere((state) =>
+              state.processingState == ProcessingState.completed ||
+              state.processingState == ProcessingState.idle)
+          .timeout(const Duration(seconds: 3));
+    } catch (_) {
+      // The cue is a nicety: never let it block the narration.
+    }
+  }
+
   /// Play audio from [source].
   ///
   /// [source] can be a file path or a data/https URI.
   /// Returns when playback completes, is stopped, or is interrupted by another play().
   Future<void> play(String source) => _session.around(() async {
+        final token = _stopToken;
         await _player.stop();
+
+        if (_cueNext) {
+          _cueNext = false;
+          await _playChime();
+          if (token != _stopToken) return; // stopped / skipped during the chime
+        }
 
         if (kIsWeb || source.startsWith('data:') || source.startsWith('http')) {
           await _player.setUrl(source);
@@ -70,6 +104,8 @@ class AudioPlayerService {
 
   /// Stop playback.
   Future<void> stop() async {
+    _stopToken++;
+    _cueNext = false;
     await _player.stop();
   }
 

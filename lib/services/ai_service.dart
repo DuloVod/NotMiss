@@ -106,7 +106,7 @@ class AiService {
           final json = jsonDecode(response.body) as Map<String, dynamic>;
           final raw = _extractText(json);
           if (raw != null && raw.isNotEmpty) {
-            final text = TextQuality.sanitizeNarration(raw);
+            final text = TextQuality.finalizeNarration(raw);
             final problem = _finishReason(json) == 'MAX_TOKENS'
                 ? 'cut off (MAX_TOKENS)'
                 : TextQuality.narrationProblem(text);
@@ -141,7 +141,7 @@ class AiService {
 Теги OpenStreetMap: $tagsContext
 
 Підготуй для туриста інформацію українською мовою:
-1. "narration": захопливий текст для озвучення аудіогідом на 30–45 секунд (живий, атмосферний стиль від другої особи: "Перед вами...", "Погляньте на...", розмовний стиль для вух, без списків).
+1. "narration": захопливий текст для озвучення аудіогідом на 30–45 секунд (до 90 слів, не довше 650 символів; живий, атмосферний стиль від другої особи, розмовний стиль для вух, без списків). Починай одразу з місця, БЕЗ вітань ("Привіт", "Вітаю", "Ласкаво просимо") — це не перша зупинка екскурсії, а лише одна з багатьох.
 2. "description": короткий змістовний опис (1–2 красивих речення українською: що це за місце).
 3. "facts": 3 факти про нього.
 
@@ -190,7 +190,7 @@ class AiService {
               // Never hand a broken narration downstream: drop it so a proper one is generated.
               final narr = decoded['narration'];
               if (narr is String) {
-                final clean = TextQuality.sanitizeNarration(narr);
+                final clean = TextQuality.finalizeNarration(narr);
                 if (TextQuality.isValidNarration(clean) && _finishReason(json) != 'MAX_TOKENS') {
                   decoded['narration'] = clean;
                 } else {
