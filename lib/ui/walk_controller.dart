@@ -27,6 +27,7 @@ import '../services/ios_background_task.dart';
 import '../services/text_quality.dart';
 import '../services/now_playing_service.dart';
 import '../services/visited_store.dart';
+import '../services/live_activity_service.dart';
 import '../services/place_context_service.dart';
 import 'guide_status.dart';
 import 'poi_kind.dart';
@@ -54,6 +55,7 @@ class WalkController extends ChangeNotifier {
   final ResearchService _researchService;
   final NowPlayingService _nowPlaying;
   final VisitedStore _visitedStore;
+  final LiveActivityService _liveActivity;
   final PlaceContextService _placeService;
 
   WalkStatus _status = WalkStatus.idle;
@@ -117,7 +119,9 @@ class WalkController extends ChangeNotifier {
     NowPlayingService? nowPlaying,
     VisitedStore? visitedStore,
     PlaceContextService? placeService,
-  })  : _placeService = placeService ?? PlaceContextService(),
+    LiveActivityService? liveActivity,
+  })  : _liveActivity = liveActivity ?? LiveActivityService(),
+        _placeService = placeService ?? PlaceContextService(),
          _nowPlaying = nowPlaying ?? NowPlayingService(),
         _visitedStore = visitedStore ?? VisitedStore(),
         _locationService = locationService ?? LocationService(),
@@ -147,6 +151,7 @@ class WalkController extends ChangeNotifier {
     _researchService.init();
     _playerStateSub = _audioService.playerStateStream.listen((_) {
       _syncNowPlaying();
+      _refreshLiveActivity();
       notifyListeners();
     });
     _nowPlaying.onPlay = () => unawaited(resumeAudio());
@@ -167,72 +172,179 @@ class WalkController extends ChangeNotifier {
   bool get isAudioActive => isPlaying || isAudioPaused;
   Set<String> get triggeredPoiIds => _poiEngine.triggeredPoiIds;
 
-  /// Places already told about: this walk plus all earlier walks (persisted).
+  /// Places the user has physically passed (this walk + earlier walks, persisted).
+  Set<String> get passedPoiIds => {
+        ..._visitedStore.places.where((p) => p.passed).map((p) => p.id),
+        ..._poiEngine.triggeredPoiIds,
+      };
+
+  /// Places whose narration the user has heard to the end.
+  Set<String> get listenedPoiIds =>
+      _visitedStore.places.where((p) => p.listened).map((p) => p.id).toSet();
+
+  /// Passed or listened — anything the guide has already dealt with.
   Set<String> get visitedPoiIds => {..._visitedStore.ids, ..._poiEngine.triggeredPoiIds};
 
-  /// How many different places the user has heard about in total.
+  /// How many different places the user has dealt with in total.
   int get totalVisitedCount => _visitedStore.count;
 
-  /// Everything the user has been told about, newest first (for the "visited" list).
+  /// Everything the user has dealt with, newest first.
   List<VisitedPlace> get visitedPlaces => _visitedStore.places;
 
-  void _markVisited(Poi poi) {
+  /// Narration heard to the end.
+  List<VisitedPlace> get listenedPlaces => _visitedStore.listenedPlaces;
+
+  /// Walked past, narration not heard.
+  List<VisitedPlace> get passedOnlyPlaces => _visitedStore.passedOnlyPlaces;
+
+  void _markPassed(Poi poi) {
     unawaited(_visitedStore
-        .add(poi.id, name: poi.name, kind: poiKindOf(poi).name)
+        .markPassed(poi.id, name: poi.name, kind: poiKindOf(poi).name)
+        .then((isNew) => isNew ? notifyListeners() : null));
+  }
+
+  void _markListened(Poi poi) {
+    unawaited(_visitedStore
+        .markListened(poi.id, name: poi.name, kind: poiKindOf(poi).name)
         .then((_) => notifyListeners()));
   }
+
+  /// The closest place the user has not dealt with yet, with the distance in metres.
+  ({Poi poi, double meters})? nearestUnvisited({String? excluding, double maxMeters = 1500}) {
+    final pos = _currentPosition;
+    if (pos == null) return null;
+    final visited = visitedPoiIds;
+    Poi? best;
+    var bestD = maxMeters;
+    for (final p in _allPois) {
+      if (p.id == excluding || visited.contains(p.id)) continue;
+      final d = Geolocator.distanceBetween(pos.latitude, pos.longitude, p.latitude, p.longitude);
+      if (d < bestD) {
+        bestD = d;
+        best = p;
+      }
+    }
+    return best == null ? null : (poi: best, meters: bestD);
+  }
+
+  /// Whether "next" would start another narration (otherwise it simply stops this one).
+  bool get hasNextNarration => _nearbyUnplayedPois.isNotEmpty || _pendingPoiIds.isNotEmpty;
 
   bool _appInBackground = false;
 
   /// Whether the app is in the background / the screen is locked.
   bool get appInBackground => _appInBackground;
 
-  /// Called by the UI on every app lifecycle change. In the background the lock-screen card
-  /// is refreshed and arrival notifications are allowed; on return they are cleared.
+  /// Called by the UI on every app lifecycle change. Going to the background refreshes the
+  /// lock-screen card.
   void setAppLifecycle(AppLifecycleState state) {
     final background = state == AppLifecycleState.paused ||
         state == AppLifecycleState.hidden ||
         state == AppLifecycleState.detached;
     if (background == _appInBackground) return;
     _appInBackground = background;
-    if (background) {
-      _syncNowPlaying();
-    } else {
-      unawaited(_nowPlaying.clearNotifications());
-    }
-  }
-
-  /// Lock screen: "Поруч: <place>" + the first sentence of what the guide says. Shown only
-  /// while the app is in the background (in the foreground the card on screen says it).
-  void _notifyArrival(Poi poi, String narration) {
-    if (!_appInBackground) return;
-    final first = TextQuality.finalizeNarration(narration).split(RegExp(r'(?<=[.!?…])\s')).first;
-    final body = first.length > 140 ? '${first.substring(0, 137)}…' : first;
-    unawaited(_nowPlaying.notifyArrival(
-      id: poi.id,
-      title: 'Поруч: ${poi.name}',
-      body: body.isEmpty ? poiKindOf(poi).label : body,
-    ));
+    if (background) _syncNowPlaying();
   }
 
   /// Publishes the lock-screen card for [poi] right away (before audio actually starts).
   void _publishNowPlaying(Poi poi, {required bool playing}) {
+    _audioRequested = playing;
+    _refreshLiveActivity();
     unawaited(_nowPlaying.update(
       title: poi.name,
-      subtitle: poiKindOf(poi).label,
+      subtitle: _lockScreenSubtitle(poi),
       playing: playing,
       elapsed: _audioService.position,
       duration: _audioService.duration,
     ));
   }
 
+  /// "85 м" / "1,2 км" — rounded so that the always-on indicator does not flicker.
+  static String formatDistance(double meters) {
+    if (meters >= 1000) return '${(meters / 1000).toStringAsFixed(1).replaceAll('.', ',')} км';
+    final rounded = meters < 100 ? (meters / 5).round() * 5 : (meters / 10).round() * 10;
+    return '$rounded м';
+  }
+
+  /// What the always-on indicator (Live Activity) should say right now; null when no walk.
+  GuideLiveState? get liveState {
+    if (_status != WalkStatus.walking) return null;
+    final poi = _activePoi;
+    if (poi != null && (isAudioActive || _audioRequested)) {
+      final next = nearestUnvisited(excluding: poi.id, maxMeters: 400);
+      return GuideLiveState(
+        title: poi.name,
+        subtitle: isAudioPaused
+            ? 'Розповідь на паузі'
+            : (next != null ? 'Далі: ${next.poi.name} · ${formatDistance(next.meters)}' : 'Гід розповідає'),
+        badge: isAudioPaused ? 'II' : (next != null ? formatDistance(next.meters) : '♪'),
+        speaking: true,
+      );
+    }
+    if (_isProcessing && poi != null) {
+      return GuideLiveState(title: poi.name, subtitle: 'Готуємо розповідь…', speaking: true);
+    }
+    final near = nearestUnvisited();
+    if (near != null) {
+      return GuideLiveState(
+        title: near.poi.name,
+        subtitle: 'Найближче місце · ${poiKindOf(near.poi).label}',
+        badge: formatDistance(near.meters),
+      );
+    }
+    return GuideLiveState(
+      title: 'Гід працює',
+      subtitle: _osmLoaded ? 'Поруч немає нових місць' : 'Шукаємо місця поруч…',
+    );
+  }
+
+  /// True from the moment playback is requested until the narration ends or is cut.
+  bool _audioRequested = false;
+
+  GuideLiveState? _lastLive;
+  DateTime _lastLiveAt = DateTime.fromMillisecondsSinceEpoch(0);
+
+  /// Pushes the indicator when it changed (and at most every few seconds).
+  void _refreshLiveActivity({bool force = false}) {
+    final state = liveState;
+    if (state == null) return;
+    final now = DateTime.now();
+    if (!force) {
+      final last = _lastLive;
+      if (state == last) return;
+      // A changed meaning (other place, narration started / ended) goes out at once; mere
+      // distance changes ("85 м" → "80 м") are limited to one update every few seconds.
+      String shape(String t) => t.replaceAll(RegExp(r'[\d,]+'), '#');
+      final onlyDistance = last != null &&
+          state.title == last.title &&
+          state.speaking == last.speaking &&
+          shape(state.subtitle) == shape(last.subtitle) &&
+          shape(state.badge) == shape(last.badge);
+      if (onlyDistance && now.difference(_lastLiveAt) < const Duration(seconds: 4)) return;
+    }
+    _lastLive = state;
+    _lastLiveAt = now;
+    unawaited(_liveActivity.show(state));
+  }
+
+  /// "Далі: <nearest place not yet visited> · 85 м" for the lock-screen card; falls back to the
+  /// kind of the current place when nothing is close.
+  String _lockScreenSubtitle(Poi current) {
+    final next = nearestUnvisited(excluding: current.id, maxMeters: 400);
+    if (next != null) return 'Далі: ${next.poi.name} · ${next.meters.round()} м';
+    return poiKindOf(current).label;
+  }
+
+  DateTime _lastLockScreenRefresh = DateTime.fromMillisecondsSinceEpoch(0);
+
   /// Updates the lock-screen card (title, play/pause state, progress).
   void _syncNowPlaying() {
     final poi = _activePoi;
     if (poi != null && isAudioActive) {
+      _lastLockScreenRefresh = DateTime.now();
       unawaited(_nowPlaying.update(
         title: poi.name,
-        subtitle: poiKindOf(poi).label,
+        subtitle: _lockScreenSubtitle(poi),
         playing: isPlaying,
         elapsed: _audioService.position,
         duration: _audioService.duration,
@@ -404,7 +516,6 @@ class WalkController extends ChangeNotifier {
     }
     _narrationFailed = false;
     _poiEngine.markTriggered(updated.id);
-    _markVisited(updated);
     _pendingPoiIds.remove(updated.id);
     _nearbyUnplayedPois.removeWhere((p) => p.id == updated.id);
     if (_currentPosition != null && !_proximityEvents.any((e) => e.poiId == updated.id)) {
@@ -479,6 +590,7 @@ class WalkController extends ChangeNotifier {
         _publishNowPlaying(currentPoi, playing: true);
         await _audioService.play(audioPath);
         if (gen != _manualPlayGen) return;
+        _markListened(currentPoi);
       }
     } catch (e) {
       debugPrint('[WalkController] Play narration error: $e');
@@ -490,6 +602,7 @@ class WalkController extends ChangeNotifier {
       }
     } finally {
       await IosBackgroundTask.end();
+      if (gen == _manualPlayGen) _audioRequested = false;
       if (gen == _manualPlayGen && _activePoi?.id == updated.id) {
         _isProcessing = false;
         // Keep the card (and its text) after a failure so the user can read / retry.
@@ -545,6 +658,7 @@ class WalkController extends ChangeNotifier {
     _processGen++;
     _manualPlayGen++;
     await _audioService.stop();
+    _audioRequested = false;
     _activePoi = null;
     _narrationFailed = false;
     _isProcessing = false;
@@ -603,8 +717,6 @@ class WalkController extends ChangeNotifier {
 
     // Set the audio category while the app is still in the foreground.
     unawaited(_audioService.prepareSession());
-    // Ask for lock-screen notifications now, while the user is looking at the app.
-    unawaited(_nowPlaying.requestNotificationPermission());
 
     _poiEngine.resetSession();
     _pendingPoiIds.clear();
@@ -619,6 +731,10 @@ class WalkController extends ChangeNotifier {
     _allPois = [];
     _statusMessage = 'Завантаження точок інтересу…';
     notifyListeners();
+
+    // Always-on indicator (lock screen / Dynamic Island) — must be started in the foreground.
+    _lastLive = null;
+    _refreshLiveActivity(force: true);
 
     // Start Android foreground service (keeps GPS alive when screen is off)
     await BackgroundService.start();
@@ -745,7 +861,8 @@ class WalkController extends ChangeNotifier {
     _activePoi = null;
     _narrationFailed = false;
     unawaited(_nowPlaying.clear());
-    unawaited(_nowPlaying.clearNotifications());
+    _lastLive = null;
+    unawaited(_liveActivity.end());
     _pendingPoiIds.clear();
     _statusMessage =
         'Прогулянка завершена. ${_poiEngine.triggeredPoiIds.length} місць відвідано.';
@@ -803,6 +920,12 @@ class WalkController extends ChangeNotifier {
   Future<void> _onPosition(Position pos) async {
     _currentPosition = pos;
     _refreshPlaceContext(pos);
+    _refreshLiveActivity();
+    // The lock-screen card shows the nearest next place: keep it fresh while narrating.
+    if (isAudioActive &&
+        DateTime.now().difference(_lastLockScreenRefresh) > const Duration(seconds: 5)) {
+      _syncNowPlaying();
+    }
 
     // Dynamically reload OSM POIs if user has moved significantly or if initial load timed out
     if (!_isOsmLoading && (!_osmLoaded || _overpassService.shouldReload(pos.latitude, pos.longitude))) {
@@ -841,6 +964,11 @@ class WalkController extends ChangeNotifier {
       pos.latitude,
       pos.longitude,
     );
+
+    // Walking through a place's radius counts as "passed", whether or not it gets narrated.
+    for (final p in triggerable) {
+      _markPassed(p);
+    }
 
     // Виключаємо активну точку
     if (_activePoi != null) {
@@ -893,7 +1021,7 @@ class WalkController extends ChangeNotifier {
     final gen = ++_processGen;
 
     _poiEngine.markTriggered(poi.id);
-    _markVisited(poi);
+    _markPassed(poi);
     _pendingPoiIds.remove(poi.id);
     _isProcessing = true;
     _narrationFailed = false;
@@ -959,7 +1087,6 @@ class WalkController extends ChangeNotifier {
       _activePoi = currentPoi;
       _statusMessage = '🔊 ${currentPoi.name} — озвучення…';
       notifyListeners();
-      _notifyArrival(currentPoi, narration);
 
       final audioPath = await _synthesizeWithRetry(narration, currentPoi.id, () => gen != _processGen);
       if (gen != _processGen || audioPath == null) return; // Відмінено
@@ -981,6 +1108,7 @@ class WalkController extends ChangeNotifier {
       _publishNowPlaying(currentPoi, playing: true);
       await _audioService.play(audioPath);
       if (gen != _processGen) return; // Відмінено
+      _markListened(currentPoi);
 
       BackgroundService.updateNotification(
         'NotMiss — Walk in progress',
@@ -1003,6 +1131,7 @@ class WalkController extends ChangeNotifier {
     } finally {
       await IosBackgroundTask.end();
       if (gen == _processGen) {
+        _audioRequested = false;
         _isProcessing = false;
         // _activePoi is intentionally kept: the card with the text stays until the user
         // walks away (see _dismissStaleCard), starts another POI or closes it.
@@ -1063,7 +1192,10 @@ class WalkController extends ChangeNotifier {
   }
 
   @visibleForTesting
-  Future<void> debugProcessPoi(Poi poi, Position pos) => _processPoi(poi, pos);
+  Future<void> debugProcessPoi(Poi poi, Position pos) {
+    _currentPosition ??= pos;
+    return _processPoi(poi, pos);
+  }
 
   @visibleForTesting
   Future<void> debugOnPosition(Position pos) => _onPosition(pos);
@@ -1089,6 +1221,7 @@ class WalkController extends ChangeNotifier {
     _playerStateSub?.cancel();
     _positionSub?.cancel();
     unawaited(_nowPlaying.clear());
+    unawaited(_liveActivity.end());
     _locationService.dispose();
     _audioService.dispose();
     _researchService.dispose();

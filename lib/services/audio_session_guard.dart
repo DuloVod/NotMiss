@@ -10,20 +10,27 @@ abstract class SessionAdapter {
 /// Real implementation: category `playback` + mode `spokenAudio` (keeps narrating with the
 /// screen locked / app in background, ignores the silent switch), ducking other audio.
 class PlatformSessionAdapter implements SessionAdapter {
+  /// iOS: NO `duckOthers` / `mixWithOthers`. Those options make the session "mixable", and iOS
+  /// never shows a mixable session as the Now Playing app — the lock-screen player (pause,
+  /// replay, skip, place name) would not appear. Other audio is paused during a narration
+  /// and resumes afterwards (the session deactivation notifies the other apps).
+  static const AudioSessionConfiguration configuration = AudioSessionConfiguration(
+    avAudioSessionCategory: AVAudioSessionCategory.playback,
+    avAudioSessionMode: AVAudioSessionMode.spokenAudio,
+    // Lets the paused music app resume once the narration is over.
+    avAudioSessionSetActiveOptions: AVAudioSessionSetActiveOptions.notifyOthersOnDeactivation,
+    androidAudioAttributes: AndroidAudioAttributes(
+      contentType: AndroidAudioContentType.speech,
+      usage: AndroidAudioUsage.media,
+    ),
+    androidAudioFocusGainType: AndroidAudioFocusGainType.gainTransientMayDuck,
+    androidWillPauseWhenDucked: false,
+  );
+
   @override
   Future<void> configure() async {
     final session = await AudioSession.instance;
-    await session.configure(const AudioSessionConfiguration(
-      avAudioSessionCategory: AVAudioSessionCategory.playback,
-      avAudioSessionMode: AVAudioSessionMode.spokenAudio,
-      avAudioSessionCategoryOptions: AVAudioSessionCategoryOptions.duckOthers,
-      androidAudioAttributes: AndroidAudioAttributes(
-        contentType: AndroidAudioContentType.speech,
-        usage: AndroidAudioUsage.media,
-      ),
-      androidAudioFocusGainType: AndroidAudioFocusGainType.gainTransientMayDuck,
-      androidWillPauseWhenDucked: false,
-    ));
+    await session.configure(configuration);
   }
 
   @override

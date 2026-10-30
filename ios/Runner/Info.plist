@@ -34,6 +34,8 @@
 	<string>NotMiss needs your location to detect nearby points of interest and trigger audio narrations during your walk.</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>NotMiss needs access to audio session features for tour guide narration playback.</string>
+	<key>NSSupportsLiveActivities</key>
+	<true/>
 	<key>ITSAppUsesNonExemptEncryption</key>
 	<false/>
 	<key>UIApplicationSceneManifest</key>

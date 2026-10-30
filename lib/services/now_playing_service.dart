@@ -59,31 +59,6 @@ class NowPlayingService {
     } catch (_) {}
   }
 
-  /// Asks (once) for permission to show notifications on the lock screen.
-  Future<bool> requestNotificationPermission() async {
-    if (!_enabled) return false;
-    try {
-      return (await _channel.invokeMethod<bool>('requestNotifications')) ?? false;
-    } catch (_) {
-      return false;
-    }
-  }
-
-  /// "You are at <place>" on the lock screen while the app is in the background.
-  Future<void> notifyArrival({required String id, required String title, required String body}) async {
-    if (!_enabled) return;
-    try {
-      await _channel.invokeMethod('notify', {'id': id, 'title': title, 'body': body});
-    } catch (_) {}
-  }
-
-  Future<void> clearNotifications() async {
-    if (!_enabled) return;
-    try {
-      await _channel.invokeMethod('clearNotifications');
-    } catch (_) {}
-  }
-
   Future<void> clear() async {
     if (!_enabled) return;
     try {

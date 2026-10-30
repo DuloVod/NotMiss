@@ -103,6 +103,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
     final activePoi = widget.controller.activePoi;
     final allPois = widget.controller.allPois;
     final visitedIds = widget.controller.visitedPoiIds;
+    final listenedIds = widget.controller.listenedPoiIds;
     final guideStatus = widget.controller.guideStatus;
 
     return Scaffold(
@@ -136,6 +137,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
                         p,
                         isActive: p.id == activePoi?.id,
                         isTriggered: visitedIds.contains(p.id),
+                        isListened: listenedIds.contains(p.id),
                       )),
                   if (pos != null) _buildUserMarker(pos),
                 ],
@@ -187,7 +189,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
                                     heroTag: 'walkVisitedList',
                                     backgroundColor: Colors.white,
                                     elevation: 4,
-                                    tooltip: 'Пройдені місця',
+                                    tooltip: 'Мої місця',
                                     onPressed: () => _showVisitedSheet(context),
                                     child: const Icon(Icons.checklist_rounded,
                                         color: NmColors.ink, size: 26),
@@ -435,6 +437,25 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
             ),
           ],
           const SizedBox(height: 20),
+          // Where the next place is
+          if (widget.controller.nearestUnvisited(excluding: poi.id) case final next?) ...[
+            const SizedBox(height: 10),
+            Row(
+              children: [
+                const Icon(Icons.near_me_outlined, size: 16, color: NmColors.muted),
+                const SizedBox(width: 6),
+                Expanded(
+                  child: Text(
+                    'Далі: ${next.poi.name} · ${next.meters.round()} м',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(fontSize: 13, color: NmColors.muted),
+                  ),
+                ),
+              ],
+            ),
+          ],
+          const SizedBox(height: 10),
           // Audio controls: replay / pause-resume / skip (same actions as on the lock screen)
           if (isAudioActive) ...[
             _buildAudioControls(),
@@ -499,7 +520,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
       onPressed: () => _showVisitedSheet(context),
       icon: const Icon(Icons.check_circle_outline, size: 20),
       label: Text(
-        'Пройдені місця · $count',
+        'Мої місця · $count',
         style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
       ),
       style: NmButtons.secondary(),
@@ -507,98 +528,138 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
   }
 
   void _showVisitedSheet(BuildContext context) {
+    var tab = 0; // 0 = listened, 1 = passed but not listened
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
-      builder: (ctx) => ListenableBuilder(
-        listenable: widget.controller,
-        builder: (ctx, _) {
-          final places = widget.controller.visitedPlaces;
-          return Container(
-            constraints: BoxConstraints(maxHeight: MediaQuery.of(ctx).size.height * 0.75),
-            decoration: const BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
-            ),
-            child: SafeArea(
-              top: false,
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  const SizedBox(height: 12),
-                  Center(
-                    child: Container(
-                      width: 44,
-                      height: 4,
-                      decoration: BoxDecoration(
-                        color: NmColors.sand,
-                        borderRadius: BorderRadius.circular(2),
-                      ),
-                    ),
-                  ),
-                  Padding(
-                    padding: const EdgeInsets.fromLTRB(24, 16, 24, 8),
-                    child: Text('Пройдені місця', style: NmText.title(22)),
-                  ),
-                  if (places.isEmpty)
-                    const Padding(
-                      padding: EdgeInsets.fromLTRB(24, 8, 24, 32),
-                      child: Text(
-                        'Поки що порожньо — місця з\'являться тут, коли гід розповість про них.',
-                        style: TextStyle(fontSize: 15, color: NmColors.muted),
-                      ),
-                    )
-                  else
-                    Flexible(
-                      child: ListView.separated(
-                        shrinkWrap: true,
-                        padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-                        itemCount: places.length,
-                        separatorBuilder: (_, __) => const Divider(height: 1, color: NmColors.line),
-                        itemBuilder: (ctx, i) {
-                          final place = places[i];
-                          final kind = PoiKind.values.asNameMap()[place.kind] ?? PoiKind.other;
-                          Poi? poi;
-                          for (final p in widget.controller.allPois) {
-                            if (p.id == place.id) {
-                              poi = p;
-                              break;
-                            }
-                          }
-                          return ListTile(
-                            leading: Container(
-                              width: 40,
-                              height: 40,
-                              decoration: const BoxDecoration(
-                                color: NmColors.cream,
-                                shape: BoxShape.circle,
-                              ),
-                              child: Icon(kind.icon, size: 22, color: NmColors.ink),
-                            ),
-                            title: Text(
-                              place.name,
-                              style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
-                            ),
-                            subtitle: Text(kind.label,
-                                style: const TextStyle(fontSize: 12, color: NmColors.muted)),
-                            trailing: const Icon(Icons.check, size: 18, color: NmColors.stone),
-                            onTap: poi == null
-                                ? null
-                                : () {
-                                    Navigator.of(ctx).pop();
-                                    _showPoiDetails(context, poi!);
-                                  },
-                          );
-                        },
-                      ),
-                    ),
-                ],
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setSheet) => ListenableBuilder(
+          listenable: widget.controller,
+          builder: (ctx, _) {
+            final listened = widget.controller.listenedPlaces;
+            final passed = widget.controller.passedOnlyPlaces;
+            final places = tab == 0 ? listened : passed;
+            return Container(
+              constraints: BoxConstraints(maxHeight: MediaQuery.of(ctx).size.height * 0.75),
+              decoration: const BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
               ),
-            ),
-          );
-        },
+              child: SafeArea(
+                top: false,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    const SizedBox(height: 12),
+                    Center(
+                      child: Container(
+                        width: 44,
+                        height: 4,
+                        decoration: BoxDecoration(
+                          color: NmColors.sand,
+                          borderRadius: BorderRadius.circular(2),
+                        ),
+                      ),
+                    ),
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(24, 16, 24, 8),
+                      child: Text('Мої місця', style: NmText.title(22)),
+                    ),
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(20, 0, 20, 8),
+                      child: Row(
+                        children: [
+                          ChoiceChip(
+                            avatar: const Icon(Icons.headphones, size: 16),
+                            label: Text('Прослухані · ${listened.length}'),
+                            selected: tab == 0,
+                            onSelected: (_) => setSheet(() => tab = 0),
+                          ),
+                          const SizedBox(width: 8),
+                          ChoiceChip(
+                            avatar: const Icon(Icons.directions_walk, size: 16),
+                            label: Text('Пройдені · ${passed.length}'),
+                            selected: tab == 1,
+                            onSelected: (_) => setSheet(() => tab = 1),
+                          ),
+                        ],
+                      ),
+                    ),
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(24, 0, 24, 8),
+                      child: Text(
+                        tab == 0
+                            ? 'Розповідь прослухано до кінця.'
+                            : 'Ви були поруч, але розповідь не прослухали — натисніть, щоб послухати.',
+                        style: const TextStyle(fontSize: 12, color: NmColors.muted),
+                      ),
+                    ),
+                    if (places.isEmpty)
+                      Padding(
+                        padding: const EdgeInsets.fromLTRB(24, 8, 24, 32),
+                        child: Text(
+                          tab == 0
+                              ? 'Поки що порожньо — місця з\'являться тут, коли ви дослухаєте розповідь.'
+                              : 'Поки що порожньо.',
+                          style: const TextStyle(fontSize: 15, color: NmColors.muted),
+                        ),
+                      )
+                    else
+                      Flexible(
+                        child: ListView.separated(
+                          shrinkWrap: true,
+                          padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+                          itemCount: places.length,
+                          separatorBuilder: (_, __) => const Divider(height: 1, color: NmColors.line),
+                          itemBuilder: (ctx, i) {
+                            final place = places[i];
+                            final kind = PoiKind.values.asNameMap()[place.kind] ?? PoiKind.other;
+                            Poi? poi;
+                            for (final p in widget.controller.allPois) {
+                              if (p.id == place.id) {
+                                poi = p;
+                                break;
+                              }
+                            }
+                            return ListTile(
+                              leading: Container(
+                                width: 40,
+                                height: 40,
+                                decoration: const BoxDecoration(
+                                  color: NmColors.cream,
+                                  shape: BoxShape.circle,
+                                ),
+                                child: Icon(kind.icon, size: 22, color: NmColors.ink),
+                              ),
+                              title: Text(
+                                place.name.isEmpty ? 'Місце' : place.name,
+                                style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
+                              ),
+                              subtitle: Text(kind.label,
+                                  style: const TextStyle(fontSize: 12, color: NmColors.muted)),
+                              trailing: Icon(
+                                place.listened ? Icons.headphones : Icons.directions_walk,
+                                size: 18,
+                                color: NmColors.stone,
+                              ),
+                              onTap: poi == null
+                                  ? null
+                                  : () {
+                                      Navigator.of(ctx).pop();
+                                      _showPoiDetails(context, poi!);
+                                    },
+                            );
+                          },
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+            );
+          },
+        ),
       ),
     );
   }
@@ -711,8 +772,8 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
         ),
         const SizedBox(width: 10),
         _audioKey(
-          icon: Icons.skip_next_rounded,
-          label: 'Далі',
+          icon: c.hasNextNarration ? Icons.skip_next_rounded : Icons.stop_rounded,
+          label: c.hasNextNarration ? 'Наступне' : 'Зупинити',
           onTap: () => c.skipNarration(),
         ),
       ],
@@ -916,7 +977,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
   }
 
   Marker _buildPoiMarker(Poi poi,
-      {required bool isActive, required bool isTriggered}) {
+      {required bool isActive, required bool isTriggered, required bool isListened}) {
     Color color = NmColors.ink; // Unvisited place
     if (isActive) color = NmColors.ochre;
     if (isTriggered && !isActive) color = NmColors.stone;
@@ -935,7 +996,8 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
         },
         child: Center(
           child: Tooltip(
-            message: '${poiKindOf(poi).label}: ${poi.name}',
+            message:
+                '${poiKindOf(poi).label}: ${poi.name}${isTriggered ? (isListened ? ' — прослухано' : ' — пройдено') : ''}',
             child: Container(
               width: 36,
               height: 36,
@@ -964,11 +1026,13 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
                         width: 15,
                         height: 15,
                         decoration: BoxDecoration(
-                          color: NmColors.ink,
+                          // Headphones: the story was heard. Walking figure: passed, not heard.
+                          color: isListened ? NmColors.ink : NmColors.muted,
                           shape: BoxShape.circle,
                           border: Border.all(color: Colors.white, width: 1.5),
                         ),
-                        child: const Icon(Icons.check, color: Colors.white, size: 10),
+                        child: Icon(isListened ? Icons.headphones : Icons.directions_walk,
+                            color: Colors.white, size: 10),
                       ),
                     ),
                 ],

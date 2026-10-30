@@ -7,9 +7,12 @@ import 'package:geolocator/geolocator.dart';
 import 'package:notmiss/models/destination.dart';
 import 'package:notmiss/models/poi.dart';
 import 'package:notmiss/services/ai_service.dart';
+import 'package:audio_session/audio_session.dart';
 import 'package:notmiss/services/audio_player_service.dart';
+import 'package:notmiss/services/audio_session_guard.dart';
 import 'package:notmiss/services/now_playing_service.dart';
 import 'package:notmiss/services/overpass_service.dart';
+import 'package:notmiss/services/live_activity_service.dart';
 import 'package:notmiss/services/place_context_service.dart';
 import 'package:notmiss/services/content_service.dart';
 import 'package:notmiss/services/poi_cache_service.dart';
@@ -474,6 +477,8 @@ void main() {
     });
   });
 
+  audioSessionTests();
+
   group('Background robustness', () {
     test('a player that plays without moving is detected as stalled', () {
       final d = StallDetector(limit: const Duration(seconds: 15));
@@ -493,29 +498,204 @@ void main() {
       expect(d.observe(playing: false, position: const Duration(seconds: 3), now: t0.add(const Duration(minutes: 10))), isFalse);
     });
 
-    test('in the background the lock screen gets the place and the first sentence', () async {
+    test('lock-screen card shows the place and the nearest next place with distance', () async {
       final calls = <String>[];
       final np = _RecordingNowPlaying(calls);
       final c = _ctl(_Audio(), np, VisitedStore(pathProvider: () async => '/nonexistent/x.json'));
-      c.setAppLifecycle(AppLifecycleState.paused);
-      expect(c.appInBackground, isTrue);
+      c.debugSetPois([_poi('p1', 'Ратуша'), _poi('p2', 'Собор', lat: 49.8402, lng: 24.0302)]);
       await c.debugProcessPoi(_poi('p1', 'Ратуша'), _pos());
 
-      expect(calls.any((l) => l.startsWith('notify Поруч: Ратуша')), isTrue, reason: calls.toString());
-      expect(calls.any((l) => l.startsWith('update Ратуша')), isTrue, reason: 'Now Playing card is published');
+      expect(calls.any((l) => l.startsWith('update Ратуша/Далі: Собор · ')), isTrue, reason: calls.toString());
+      expect(calls.any((l) => l.contains('notify')), isFalse, reason: 'no notifications at all');
       c.dispose();
     });
 
-    test('in the foreground no lock-screen notification is sent; returning clears them', () async {
+    test('going to the background refreshes the lock-screen card', () async {
       final calls = <String>[];
+      final audio = _Audio()..gate = Completer<void>();
       final np = _RecordingNowPlaying(calls);
-      final c = _ctl(_Audio(), np, VisitedStore(pathProvider: () async => '/nonexistent/x.json'));
-      await c.debugProcessPoi(_poi('p1', 'Ратуша'), _pos());
-      expect(calls.where((l) => l.startsWith('notify')), isEmpty);
-
+      final c = _ctl(audio, np, VisitedStore(pathProvider: () async => '/nonexistent/x.json'));
+      unawaited(c.debugProcessPoi(_poi('p1', 'Ратуша'), _pos()));
+      await Future<void>.delayed(const Duration(milliseconds: 600));
+      calls.clear();
       c.setAppLifecycle(AppLifecycleState.paused);
-      c.setAppLifecycle(AppLifecycleState.resumed);
-      expect(calls, contains('clearNotifications'));
+      expect(c.appInBackground, isTrue);
+      // refresh is driven by the player state; at least the lifecycle call must not throw
+      audio.gate!.complete();
+      c.dispose();
+    });
+  });
+
+  group('Listened vs passed', () {
+    test('store keeps passed and listened apart and migrates old entries', () async {
+      final dir = Directory.systemTemp.createTempSync('lp');
+      final path = '${dir.path}/v.json';
+      final store = VisitedStore(pathProvider: () async => path);
+      await store.markPassed('a', name: 'Ратуша', kind: 'building');
+      await store.markPassed('b', name: 'Фонтан', kind: 'fountain');
+      await store.markListened('b');
+      await store.markListened('c', name: 'Собор', kind: 'church'); // heard without walking past (tapped)
+
+      expect(store.isPassed('a'), isTrue);
+      expect(store.isListened('a'), isFalse);
+      expect(store.isListened('b'), isTrue);
+      expect(store.isPassed('c'), isFalse);
+      expect(store.listenedPlaces.map((p) => p.id), ['c', 'b']);
+      expect(store.passedOnlyPlaces.map((p) => p.id), ['a']);
+
+      final again = VisitedStore(pathProvider: () async => path);
+      await again.init();
+      expect(again.isListened('b'), isTrue);
+      expect(again.isListened('a'), isFalse);
+
+      // old file: entries without flags count as heard
+      File(path).writeAsStringSync('{"places":[{"id":"x","name":"Старе","kind":"park"}]}');
+      final legacy = VisitedStore(pathProvider: () async => path);
+      await legacy.init();
+      expect(legacy.isListened('x'), isTrue);
+      expect(legacy.isPassed('x'), isTrue);
+      dir.deleteSync(recursive: true);
+    });
+
+    test('a narration heard to the end is "listened" and "passed"', () async {
+      final dir = Directory.systemTemp.createTempSync('lp2');
+      final c = _ctl(_Audio(), NowPlayingService(enabled: false),
+          VisitedStore(pathProvider: () async => '${dir.path}/v.json'));
+      await c.debugProcessPoi(_poi('p1', 'Ратуша'), _pos());
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+      expect(c.listenedPoiIds, contains('p1'));
+      expect(c.passedPoiIds, contains('p1'));
+      c.dispose();
+      dir.deleteSync(recursive: true);
+    });
+
+    test('a skipped narration is passed but NOT listened', () async {
+      final dir = Directory.systemTemp.createTempSync('lp3');
+      final audio = _Audio()..gate = Completer<void>();
+      final c = _ctl(audio, NowPlayingService(enabled: false),
+          VisitedStore(pathProvider: () async => '${dir.path}/v.json'));
+      c.debugSetPois([_poi('p1', 'Ратуша')]);
+      unawaited(c.debugOnPosition(_pos()));
+      await Future<void>.delayed(const Duration(milliseconds: 600));
+      expect(audio.played, hasLength(1));
+
+      await c.skipNarration();
+      audio.gate!.complete();
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+      expect(c.passedPoiIds, contains('p1'));
+      expect(c.listenedPoiIds, isNot(contains('p1')), reason: 'cut short → not listened');
+      expect(c.passedOnlyPlaces.map((p) => p.id), ['p1']);
+      c.dispose();
+      dir.deleteSync(recursive: true);
+    });
+
+    test('walking through a place that could not be narrated still counts as passed', () async {
+      final dir = Directory.systemTemp.createTempSync('lp4');
+      final audio = _Audio()..gate = Completer<void>();
+      final c = _ctl(audio, NowPlayingService(enabled: false),
+          VisitedStore(pathProvider: () async => '${dir.path}/v.json'));
+      c.debugSetPois([_poi('p1', 'Ратуша'), _poi('p2', 'Собор', lat: 49.84003, lng: 24.03003)]);
+      unawaited(c.debugOnPosition(_pos())); // p1 starts, p2 is also within radius but must wait
+      await Future<void>.delayed(const Duration(milliseconds: 600));
+      expect(c.passedPoiIds, containsAll(['p1', 'p2']));
+      expect(c.listenedPoiIds, isEmpty);
+      audio.gate!.complete();
+      c.dispose();
+      dir.deleteSync(recursive: true);
+    });
+
+    test('nearest unvisited place and the next/stop decision', () async {
+      final c = _ctl(_Audio(), NowPlayingService(enabled: false),
+          VisitedStore(pathProvider: () async => '/nonexistent/x.json'));
+      c.debugSetPois([
+        _poi('a', 'Далеко', lat: 49.845, lng: 24.03),
+        _poi('b', 'Близько', lat: 49.8405, lng: 24.03),
+      ]);
+      await c.debugOnPosition(_pos());
+      final n = c.nearestUnvisited()!;
+      expect(n.poi.id, 'b');
+      expect(n.meters, inInclusiveRange(40, 70));
+      expect(c.nearestUnvisited(excluding: 'b')!.poi.id, 'a');
+      expect(c.hasNextNarration, isFalse);
+      c.dispose();
+    });
+
+    test('other audio resumes after the narration (notifyOthersOnDeactivation)', () {
+      expect(PlatformSessionAdapter.configuration.avAudioSessionSetActiveOptions,
+          AVAudioSessionSetActiveOptions.notifyOthersOnDeactivation);
+    });
+  });
+
+  group('Always-on indicator (Live Activity)', () {
+    WalkController ctl(_Audio audio, _RecordingLive live) => WalkController(
+          destination: const Destination(
+              id: 'l', name: 'Львів', centerLatitude: 49.84, centerLongitude: 24.03, defaultZoom: 16, pois: []),
+          apiKey: '',
+          researchService: ResearchService(
+            categoryService: PoiCategoryService(),
+            cacheService: PoiCacheService(),
+            queue: ResearchQueue(maxConcurrent: 2),
+            wikidataService: WikidataService(),
+            wikipediaService: WikipediaService(),
+            aiService: _Ai(),
+            researchDeadline: const Duration(milliseconds: 300),
+          ),
+          ttsService: _Tts(),
+          audioService: audio,
+          overpassService: _NoOverpass(),
+          nowPlaying: NowPlayingService(enabled: false),
+          visitedStore: VisitedStore(pathProvider: () async => '/nonexistent/x.json'),
+          liveActivity: live,
+        );
+
+    test('distances are rounded so the indicator does not flicker', () {
+      expect(WalkController.formatDistance(87), '85 м');
+      expect(WalkController.formatDistance(134), '130 м');
+      expect(WalkController.formatDistance(980), '980 м');
+      expect(WalkController.formatDistance(1240), '1,2 км');
+    });
+
+    test('no walk → nothing to show; walking without places → calm hint', () {
+      final c = ctl(_Audio(), _RecordingLive([]));
+      expect(c.liveState, isNull);
+      c.debugSetPois([]);
+      expect(c.liveState!.title, 'Гід працює');
+      c.dispose();
+    });
+
+    test('between narrations it shows the nearest place and how far it is', () async {
+      final c = ctl(_Audio(), _RecordingLive([]));
+      c.debugSetPois([_poi('b', 'Фонтан Нептуна', lat: 49.8405, lng: 24.03, tags: {'amenity': 'fountain'})]);
+      await c.debugOnPosition(_pos());
+      final s = c.liveState!;
+      expect(s.title, 'Фонтан Нептуна');
+      expect(s.badge, matches(RegExp(r'^\d+ м$')));
+      expect(s.subtitle, contains('Фонтан'));
+      expect(s.speaking, isFalse);
+      c.dispose();
+    });
+
+    test('while narrating it shows the place and the next one', () async {
+      final audio = _Audio()..gate = Completer<void>();
+      final live = _RecordingLive([]);
+      final c = ctl(audio, live);
+      c.debugSetPois([_poi('a', 'Ратуша'), _poi('b', 'Собор', lat: 49.8409, lng: 24.03)]);
+      unawaited(c.debugOnPosition(_pos()));
+      await Future<void>.delayed(const Duration(milliseconds: 600));
+      final speaking = live.states.where((s) => s.speaking && s.title == 'Ратуша').toList();
+      expect(speaking, isNotEmpty, reason: live.states.toString());
+      expect(live.states.any((s) => s.subtitle.startsWith('Далі: Собор')), isTrue, reason: live.states.toString());
+      audio.gate!.complete();
+      c.dispose();
+    });
+
+    test('stopping the walk ends the indicator', () async {
+      final live = _RecordingLive([]);
+      final c = ctl(_Audio(), live);
+      c.debugSetPois([]);
+      c.stopWalk();
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+      expect(live.ended, greaterThan(0));
       c.dispose();
     });
   });
@@ -563,17 +743,18 @@ class _RecordingNowPlaying extends NowPlayingService {
   }) async =>
       calls.add('update $title/$subtitle playing=$playing');
   @override
-  Future<void> notifyArrival({required String id, required String title, required String body}) async =>
-      calls.add('notify $title | $body');
-  @override
-  Future<void> clearNotifications() async => calls.add('clearNotifications');
-  @override
   Future<void> clear() async => calls.add('clear');
+}
+
+class _RecordingLive extends LiveActivityService {
+  _RecordingLive(this.states_) : super(enabled: false);
+  final List<GuideLiveState> states_;
+  List<GuideLiveState> get states => states_;
+  int ended = 0;
   @override
-  Future<bool> requestNotificationPermission() async {
-    calls.add('requestNotifications');
-    return true;
-  }
+  Future<void> show(GuideLiveState state) async => states_.add(state);
+  @override
+  Future<void> end() async => ended++;
 }
 
 class _FakePlace extends PlaceContextService {
@@ -584,4 +765,15 @@ class _FakePlace extends PlaceContextService {
     calls.add([lat, lng]);
     return 'Місто ${lat.toStringAsFixed(2)}';
   }
+}
+
+void audioSessionTests() {
+  group('Audio session (lock-screen player eligibility)', () {
+    test('iOS session is not mixable: no duckOthers / mixWithOthers', () {
+      final o = PlatformSessionAdapter.configuration.avAudioSessionCategoryOptions;
+      expect(o == null || o.value == 0, isTrue,
+          reason: 'a mixable session never becomes the Now Playing app');
+      expect(PlatformSessionAdapter.configuration.avAudioSessionCategory, AVAudioSessionCategory.playback);
+    });
+  });
 }

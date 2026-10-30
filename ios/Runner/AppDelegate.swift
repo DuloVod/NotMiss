@@ -2,7 +2,7 @@ import Flutter
 import UIKit
 import AVFoundation
 import MediaPlayer
-import UserNotifications
+import ActivityKit
 
 @main
 @objc class AppDelegate: FlutterAppDelegate, FlutterImplicitEngineDelegate {
@@ -22,7 +22,7 @@ import UserNotifications
       try audioSession.setCategory(
         .playback,
         mode: .spokenAudio,
-        options: [.duckOthers]
+        options: []
       )
     } catch {
       print("[AppDelegate] Failed to configure AVAudioSession: \(error)")
@@ -33,9 +33,9 @@ import UserNotifications
 
   /// Registered from the implicit engine callback: with the implicit-engine lifecycle the
   /// registrar is not reliably available inside didFinishLaunchingWithOptions.
-  private func setupBackgroundTaskChannel(registry: FlutterPluginRegistry) {
-    if let registrar = registry.registrar(forPlugin: "NotMissBackgroundTask") {
-      let channel = FlutterMethodChannel(name: "com.dulo.notmiss/background_task", binaryMessenger: registrar.messenger())
+  private func setupBackgroundTaskChannel(messenger: FlutterBinaryMessenger) {
+    do {
+      let channel = FlutterMethodChannel(name: "com.dulo.notmiss/background_task", binaryMessenger: messenger)
       channel.setMethodCallHandler { [weak self] (call, result) in
         guard let self = self else { return }
         if call.method == "beginBackgroundTask" {
@@ -62,9 +62,8 @@ import UserNotifications
 
   /// Lock-screen "Now Playing" card + remote commands (play / pause / previous = replay /
   /// next = skip). Commands are forwarded to Dart over the same channel.
-  private func setupNowPlayingChannel(registry: FlutterPluginRegistry) {
-    guard let registrar = registry.registrar(forPlugin: "NotMissNowPlaying") else { return }
-    let channel = FlutterMethodChannel(name: "com.dulo.notmiss/now_playing", binaryMessenger: registrar.messenger())
+  private func setupNowPlayingChannel(messenger: FlutterBinaryMessenger) {
+    let channel = FlutterMethodChannel(name: "com.dulo.notmiss/now_playing", binaryMessenger: messenger)
 
     let center = MPRemoteCommandCenter.shared()
     func bind(_ command: MPRemoteCommand, _ name: String) {
@@ -117,28 +116,59 @@ import UserNotifications
         info.nowPlayingInfo = nil
         info.playbackState = .stopped
         result(true)
-      case "requestNotifications":
-        // Local notifications are the lock-screen fallback: they show which place the
-        // user is at (and what the guide says) even when no audio is playing.
-        UNUserNotificationCenter.current().requestAuthorization(options: [.alert]) { granted, _ in
-          DispatchQueue.main.async { result(granted) }
+      default:
+        result(FlutterMethodNotImplemented)
+      }
+    }
+  }
+
+  /// Always-on indicator (Live Activity) on the lock screen and in the Dynamic Island, like
+  /// navigation apps: what the guide is telling about / the nearest place and its distance.
+  /// Needs iOS 16.2+; on older systems every call just reports `false`.
+  private func setupLiveActivityChannel(messenger: FlutterBinaryMessenger) {
+    let channel = FlutterMethodChannel(name: "com.dulo.notmiss/live_activity", binaryMessenger: messenger)
+    channel.setMethodCallHandler { call, result in
+      guard #available(iOS 16.2, *) else { result(false); return }
+      let args = call.arguments as? [String: Any] ?? [:]
+      switch call.method {
+      case "show":
+        let state = GuideActivityAttributes.ContentState(
+          title: args["title"] as? String ?? "",
+          subtitle: args["subtitle"] as? String ?? "",
+          badge: args["badge"] as? String ?? "",
+          speaking: args["speaking"] as? Bool ?? false
+        )
+        let content = ActivityContent(state: state, staleDate: nil)
+        Task {
+          if let existing = Activity<GuideActivityAttributes>.activities.first {
+            await existing.update(content)
+            DispatchQueue.main.async { result(true) }
+            return
+          }
+          guard ActivityAuthorizationInfo().areActivitiesEnabled else {
+            NSLog("[NotMiss.LiveActivity] disabled by the user")
+            DispatchQueue.main.async { result(false) }
+            return
+          }
+          do {
+            _ = try Activity.request(
+              attributes: GuideActivityAttributes(name: "NotMiss"),
+              content: content,
+              pushType: nil
+            )
+            DispatchQueue.main.async { result(true) }
+          } catch {
+            NSLog("[NotMiss.LiveActivity] request failed: %@", error.localizedDescription)
+            DispatchQueue.main.async { result(false) }
+          }
         }
-      case "notify":
-        guard let args = call.arguments as? [String: Any] else { result(false); return }
-        let content = UNMutableNotificationContent()
-        content.title = args["title"] as? String ?? ""
-        content.body = args["body"] as? String ?? ""
-        content.threadIdentifier = "notmiss.walk"
-        let id = args["id"] as? String ?? UUID().uuidString
-        let request = UNNotificationRequest(identifier: id, content: content, trigger: nil)
-        UNUserNotificationCenter.current().add(request) { error in
-          if let error = error { NSLog("[NotMiss.LockScreen] notify failed: %@", error.localizedDescription) }
-          DispatchQueue.main.async { result(error == nil) }
+      case "end":
+        Task {
+          for activity in Activity<GuideActivityAttributes>.activities {
+            await activity.end(nil, dismissalPolicy: .immediate)
+          }
+          DispatchQueue.main.async { result(true) }
         }
-      case "clearNotifications":
-        UNUserNotificationCenter.current().removeAllDeliveredNotifications()
-        UNUserNotificationCenter.current().removeAllPendingNotificationRequests()
-        result(true)
       default:
         result(FlutterMethodNotImplemented)
       }
@@ -147,7 +177,11 @@ import UserNotifications
 
   func didInitializeImplicitFlutterEngine(_ engineBridge: FlutterImplicitEngineBridge) {
     GeneratedPluginRegistrant.register(with: engineBridge.pluginRegistry)
-    setupBackgroundTaskChannel(registry: engineBridge.pluginRegistry)
-    setupNowPlayingChannel(registry: engineBridge.pluginRegistry)
+    // Application-level channels go through the application registrar (the documented way for
+    // the implicit-engine / UIScene lifecycle).
+    let messenger = engineBridge.applicationRegistrar.messenger()
+    setupBackgroundTaskChannel(messenger: messenger)
+    setupNowPlayingChannel(messenger: messenger)
+    setupLiveActivityChannel(messenger: messenger)
   }
 }
