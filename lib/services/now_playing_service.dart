@@ -54,7 +54,12 @@ class NowPlayingService {
     Duration elapsed = Duration.zero,
     Duration? duration,
   }) async {
-    if (!_enabled || !publishSystemCard) return;
+    if (!_enabled) return;
+    if (!publishSystemCard) {
+      // iOS may auto-publish a bare card for the audio player: keep the info empty.
+      await clear();
+      return;
+    }
     try {
       await _channel.invokeMethod('update', {
         'title': title,

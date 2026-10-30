@@ -70,29 +70,20 @@ import ActivityKit
       DispatchQueue.main.async { channel.invokeMethod("command", arguments: command) }
     }
 
+    // The lock-screen block is the Live Activity (with its own buttons). The app must NOT also
+    // appear as a system "Now Playing" player, so every remote command is switched off.
     let center = MPRemoteCommandCenter.shared()
-    func bind(_ command: MPRemoteCommand, _ name: String) {
-      command.isEnabled = true
-      command.addTarget { _ in
-        channel.invokeMethod("command", arguments: name)
-        return .success
-      }
+    for command in [
+      center.playCommand, center.pauseCommand, center.togglePlayPauseCommand,
+      center.stopCommand, center.nextTrackCommand, center.previousTrackCommand,
+      center.skipForwardCommand, center.skipBackwardCommand,
+      center.seekForwardCommand, center.seekBackwardCommand,
+      center.changePlaybackPositionCommand, center.changePlaybackRateCommand,
+    ] as [MPRemoteCommand] {
+      command.isEnabled = false
     }
-    bind(center.playCommand, "play")
-    bind(center.pauseCommand, "pause")
-    bind(center.previousTrackCommand, "replay")
-    bind(center.nextTrackCommand, "skip")
-    center.togglePlayPauseCommand.isEnabled = true
-    center.togglePlayPauseCommand.addTarget { _ in
-      let playing = (MPNowPlayingInfoCenter.default().nowPlayingInfo?[MPNowPlayingInfoPropertyPlaybackRate] as? Double ?? 0) > 0
-      channel.invokeMethod("command", arguments: playing ? "pause" : "play")
-      return .success
-    }
-    center.skipForwardCommand.isEnabled = false
-    center.skipBackwardCommand.isEnabled = false
-
-    // Lets iOS route headphone / lock-screen remote commands to this app.
-    UIApplication.shared.beginReceivingRemoteControlEvents()
+    UIApplication.shared.endReceivingRemoteControlEvents()
+    MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
 
     channel.setMethodCallHandler { (call, result) in
       let info = MPNowPlayingInfoCenter.default()
