@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:math' as math;
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart' show HapticFeedback;
+import 'package:flutter/widgets.dart' show AppLifecycleState;
 import 'package:geolocator/geolocator.dart';
 import '../models/destination.dart';
 import '../models/poi.dart';
@@ -181,12 +182,57 @@ class WalkController extends ChangeNotifier {
         .then((_) => notifyListeners()));
   }
 
+  bool _appInBackground = false;
+
+  /// Whether the app is in the background / the screen is locked.
+  bool get appInBackground => _appInBackground;
+
+  /// Called by the UI on every app lifecycle change. In the background the lock-screen card
+  /// is refreshed and arrival notifications are allowed; on return they are cleared.
+  void setAppLifecycle(AppLifecycleState state) {
+    final background = state == AppLifecycleState.paused ||
+        state == AppLifecycleState.hidden ||
+        state == AppLifecycleState.detached;
+    if (background == _appInBackground) return;
+    _appInBackground = background;
+    if (background) {
+      _syncNowPlaying();
+    } else {
+      unawaited(_nowPlaying.clearNotifications());
+    }
+  }
+
+  /// Lock screen: "Поруч: <place>" + the first sentence of what the guide says. Shown only
+  /// while the app is in the background (in the foreground the card on screen says it).
+  void _notifyArrival(Poi poi, String narration) {
+    if (!_appInBackground) return;
+    final first = TextQuality.finalizeNarration(narration).split(RegExp(r'(?<=[.!?…])\s')).first;
+    final body = first.length > 140 ? '${first.substring(0, 137)}…' : first;
+    unawaited(_nowPlaying.notifyArrival(
+      id: poi.id,
+      title: 'Поруч: ${poi.name}',
+      body: body.isEmpty ? poiKindOf(poi).label : body,
+    ));
+  }
+
+  /// Publishes the lock-screen card for [poi] right away (before audio actually starts).
+  void _publishNowPlaying(Poi poi, {required bool playing}) {
+    unawaited(_nowPlaying.update(
+      title: poi.name,
+      subtitle: poiKindOf(poi).label,
+      playing: playing,
+      elapsed: _audioService.position,
+      duration: _audioService.duration,
+    ));
+  }
+
   /// Updates the lock-screen card (title, play/pause state, progress).
   void _syncNowPlaying() {
     final poi = _activePoi;
     if (poi != null && isAudioActive) {
       unawaited(_nowPlaying.update(
         title: poi.name,
+        subtitle: poiKindOf(poi).label,
         playing: isPlaying,
         elapsed: _audioService.position,
         duration: _audioService.duration,
@@ -430,6 +476,7 @@ class WalkController extends ChangeNotifier {
 
         _statusMessage = '🎧 ${currentPoi.name}';
         notifyListeners();
+        _publishNowPlaying(currentPoi, playing: true);
         await _audioService.play(audioPath);
         if (gen != _manualPlayGen) return;
       }
@@ -556,6 +603,8 @@ class WalkController extends ChangeNotifier {
 
     // Set the audio category while the app is still in the foreground.
     unawaited(_audioService.prepareSession());
+    // Ask for lock-screen notifications now, while the user is looking at the app.
+    unawaited(_nowPlaying.requestNotificationPermission());
 
     _poiEngine.resetSession();
     _pendingPoiIds.clear();
@@ -696,6 +745,7 @@ class WalkController extends ChangeNotifier {
     _activePoi = null;
     _narrationFailed = false;
     unawaited(_nowPlaying.clear());
+    unawaited(_nowPlaying.clearNotifications());
     _pendingPoiIds.clear();
     _statusMessage =
         'Прогулянка завершена. ${_poiEngine.triggeredPoiIds.length} місць відвідано.';
@@ -909,6 +959,7 @@ class WalkController extends ChangeNotifier {
       _activePoi = currentPoi;
       _statusMessage = '🔊 ${currentPoi.name} — озвучення…';
       notifyListeners();
+      _notifyArrival(currentPoi, narration);
 
       final audioPath = await _synthesizeWithRetry(narration, currentPoi.id, () => gen != _processGen);
       if (gen != _processGen || audioPath == null) return; // Відмінено
@@ -927,6 +978,7 @@ class WalkController extends ChangeNotifier {
         unawaited(HapticFeedback.mediumImpact().catchError((_) {}));
         _audioService.armArrivalCue();
       }
+      _publishNowPlaying(currentPoi, playing: true);
       await _audioService.play(audioPath);
       if (gen != _processGen) return; // Відмінено
 

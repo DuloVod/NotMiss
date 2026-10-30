@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:io';
 
+import 'package:flutter/widgets.dart' show AppLifecycleState;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:notmiss/models/destination.dart';
@@ -473,6 +474,52 @@ void main() {
     });
   });
 
+  group('Background robustness', () {
+    test('a player that plays without moving is detected as stalled', () {
+      final d = StallDetector(limit: const Duration(seconds: 15));
+      final t0 = DateTime(2026, 1, 1, 12);
+      expect(d.observe(playing: true, position: Duration.zero, now: t0), isFalse);
+      expect(d.observe(playing: true, position: Duration.zero, now: t0.add(const Duration(seconds: 10))), isFalse);
+      expect(d.observe(playing: true, position: Duration.zero, now: t0.add(const Duration(seconds: 16))), isTrue);
+    });
+
+    test('progress or a pause resets the stall timer', () {
+      final d = StallDetector(limit: const Duration(seconds: 15));
+      final t0 = DateTime(2026, 1, 1, 12);
+      d.observe(playing: true, position: Duration.zero, now: t0);
+      expect(d.observe(playing: true, position: const Duration(seconds: 3), now: t0.add(const Duration(seconds: 14))), isFalse);
+      expect(d.observe(playing: true, position: const Duration(seconds: 3), now: t0.add(const Duration(seconds: 20))), isFalse);
+      // paused for a long time is not a stall
+      expect(d.observe(playing: false, position: const Duration(seconds: 3), now: t0.add(const Duration(minutes: 10))), isFalse);
+    });
+
+    test('in the background the lock screen gets the place and the first sentence', () async {
+      final calls = <String>[];
+      final np = _RecordingNowPlaying(calls);
+      final c = _ctl(_Audio(), np, VisitedStore(pathProvider: () async => '/nonexistent/x.json'));
+      c.setAppLifecycle(AppLifecycleState.paused);
+      expect(c.appInBackground, isTrue);
+      await c.debugProcessPoi(_poi('p1', 'Ратуша'), _pos());
+
+      expect(calls.any((l) => l.startsWith('notify Поруч: Ратуша')), isTrue, reason: calls.toString());
+      expect(calls.any((l) => l.startsWith('update Ратуша')), isTrue, reason: 'Now Playing card is published');
+      c.dispose();
+    });
+
+    test('in the foreground no lock-screen notification is sent; returning clears them', () async {
+      final calls = <String>[];
+      final np = _RecordingNowPlaying(calls);
+      final c = _ctl(_Audio(), np, VisitedStore(pathProvider: () async => '/nonexistent/x.json'));
+      await c.debugProcessPoi(_poi('p1', 'Ратуша'), _pos());
+      expect(calls.where((l) => l.startsWith('notify')), isEmpty);
+
+      c.setAppLifecycle(AppLifecycleState.paused);
+      c.setAppLifecycle(AppLifecycleState.resumed);
+      expect(calls, contains('clearNotifications'));
+      c.dispose();
+    });
+  });
+
   group('Varied openings', () {
     test('stock openings are recognised', () {
       for (final t in [
@@ -501,6 +548,32 @@ void main() {
       expect(ContentService.openingStyles.toSet().length, greaterThanOrEqualTo(8));
     });
   });
+}
+
+class _RecordingNowPlaying extends NowPlayingService {
+  _RecordingNowPlaying(this.calls) : super(enabled: false);
+  final List<String> calls;
+  @override
+  Future<void> update({
+    required String title,
+    String subtitle = 'NotMiss',
+    required bool playing,
+    Duration elapsed = Duration.zero,
+    Duration? duration,
+  }) async =>
+      calls.add('update $title/$subtitle playing=$playing');
+  @override
+  Future<void> notifyArrival({required String id, required String title, required String body}) async =>
+      calls.add('notify $title | $body');
+  @override
+  Future<void> clearNotifications() async => calls.add('clearNotifications');
+  @override
+  Future<void> clear() async => calls.add('clear');
+  @override
+  Future<bool> requestNotificationPermission() async {
+    calls.add('requestNotifications');
+    return true;
+  }
 }
 
 class _FakePlace extends PlaceContextService {

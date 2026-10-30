@@ -1,6 +1,28 @@
-import 'package:flutter/foundation.dart' show kIsWeb;
+import 'dart:async';
+import 'package:flutter/foundation.dart' show kIsWeb, debugPrint;
 import 'package:just_audio/just_audio.dart';
 import 'audio_session_guard.dart';
+
+/// Detects a player that claims to play but makes no progress (e.g. the iOS audio session
+/// could not be activated in the background): without it the narration would wait forever
+/// and block every following point.
+class StallDetector {
+  final Duration limit;
+  Duration? _lastPosition;
+  DateTime? _since;
+
+  StallDetector({this.limit = const Duration(seconds: 15)});
+
+  /// True once [playing] has stayed true for [limit] without the position moving.
+  bool observe({required bool playing, required Duration position, required DateTime now}) {
+    if (!playing || _lastPosition != position) {
+      _lastPosition = position;
+      _since = now;
+      return false;
+    }
+    return now.difference(_since!) >= limit;
+  }
+}
 
 /// Plays audio through the device speaker/headphones.
 ///
@@ -79,12 +101,27 @@ class AudioPlayerService {
 
         _player.play(); // Do not await this future directly
 
+        // Watchdog: a player that "plays" without moving (session not active, route lost)
+        // is stopped, so the narration queue can never hang.
+        final stall = StallDetector();
+        final watchdog = Timer.periodic(const Duration(seconds: 2), (_) {
+          if (stall.observe(
+              playing: _player.playing, position: _player.position, now: DateTime.now())) {
+            debugPrint('[AudioPlayerService] playback stalled — stopping');
+            _player.stop();
+          }
+        });
+
         // Wait for playback to complete, stop, or idle.
         // Also handles pause → stop scenario: when paused, processingState stays
         // `ready`, so we don't hang. We complete on completed/idle only.
-        await _player.playerStateStream.firstWhere((state) =>
-            state.processingState == ProcessingState.completed ||
-            state.processingState == ProcessingState.idle);
+        try {
+          await _player.playerStateStream.firstWhere((state) =>
+              state.processingState == ProcessingState.completed ||
+              state.processingState == ProcessingState.idle);
+        } finally {
+          watchdog.cancel();
+        }
 
         // Cleanly reset player when playback reaches completion naturally
         try {

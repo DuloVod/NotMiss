@@ -2,6 +2,7 @@ import Flutter
 import UIKit
 import AVFoundation
 import MediaPlayer
+import UserNotifications
 
 @main
 @objc class AppDelegate: FlutterAppDelegate, FlutterImplicitEngineDelegate {
@@ -86,24 +87,59 @@ import MediaPlayer
     center.skipForwardCommand.isEnabled = false
     center.skipBackwardCommand.isEnabled = false
 
+    // Lets iOS route headphone / lock-screen remote commands to this app.
+    UIApplication.shared.beginReceivingRemoteControlEvents()
+
     channel.setMethodCallHandler { (call, result) in
       let info = MPNowPlayingInfoCenter.default()
-      if call.method == "update", let args = call.arguments as? [String: Any] {
+      NSLog("[NotMiss.LockScreen] %@", call.method)
+      switch call.method {
+      case "update":
+        guard let args = call.arguments as? [String: Any] else { result(false); return }
+        let playing = args["playing"] as? Bool ?? false
         var dict: [String: Any] = [
           MPMediaItemPropertyTitle: args["title"] as? String ?? "",
-          MPMediaItemPropertyArtist: "NotMiss",
+          MPMediaItemPropertyArtist: args["subtitle"] as? String ?? "NotMiss",
+          MPMediaItemPropertyAlbumTitle: "NotMiss",
+          MPNowPlayingInfoPropertyMediaType: MPNowPlayingInfoMediaType.audio.rawValue,
+          MPNowPlayingInfoPropertyIsLiveStream: false,
           MPNowPlayingInfoPropertyElapsedPlaybackTime: args["elapsed"] as? Double ?? 0,
-          MPNowPlayingInfoPropertyPlaybackRate: (args["playing"] as? Bool ?? false) ? 1.0 : 0.0,
+          MPNowPlayingInfoPropertyPlaybackRate: playing ? 1.0 : 0.0,
+          MPNowPlayingInfoPropertyDefaultPlaybackRate: 1.0,
         ]
         if let duration = args["duration"] as? Double, duration > 0 {
           dict[MPMediaItemPropertyPlaybackDuration] = duration
         }
         info.nowPlayingInfo = dict
+        info.playbackState = playing ? .playing : .paused
         result(true)
-      } else if call.method == "clear" {
+      case "clear":
         info.nowPlayingInfo = nil
+        info.playbackState = .stopped
         result(true)
-      } else {
+      case "requestNotifications":
+        // Local notifications are the lock-screen fallback: they show which place the
+        // user is at (and what the guide says) even when no audio is playing.
+        UNUserNotificationCenter.current().requestAuthorization(options: [.alert]) { granted, _ in
+          DispatchQueue.main.async { result(granted) }
+        }
+      case "notify":
+        guard let args = call.arguments as? [String: Any] else { result(false); return }
+        let content = UNMutableNotificationContent()
+        content.title = args["title"] as? String ?? ""
+        content.body = args["body"] as? String ?? ""
+        content.threadIdentifier = "notmiss.walk"
+        let id = args["id"] as? String ?? UUID().uuidString
+        let request = UNNotificationRequest(identifier: id, content: content, trigger: nil)
+        UNUserNotificationCenter.current().add(request) { error in
+          if let error = error { NSLog("[NotMiss.LockScreen] notify failed: %@", error.localizedDescription) }
+          DispatchQueue.main.async { result(error == nil) }
+        }
+      case "clearNotifications":
+        UNUserNotificationCenter.current().removeAllDeliveredNotifications()
+        UNUserNotificationCenter.current().removeAllPendingNotificationRequests()
+        result(true)
+      default:
         result(FlutterMethodNotImplemented)
       }
     }

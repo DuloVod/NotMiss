@@ -52,6 +52,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
+    widget.controller.setAppLifecycle(state);
     // When returning from iOS/Android Settings, auto-start if permission was granted
     if (state == AppLifecycleState.resumed && widget.controller.status != WalkStatus.walking) {
       widget.controller.startWalk();
