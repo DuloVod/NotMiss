@@ -9,6 +9,7 @@ import '../../models/chat_message.dart';
 import '../../services/poi_category_service.dart';
 import '../walk_controller.dart';
 import '../guide_status.dart';
+import '../../services/text_quality.dart';
 import '../poi_kind.dart';
 import '../theme/app_theme.dart';
 import 'package:geolocator/geolocator.dart'; // For Position
@@ -447,6 +448,117 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
     );
   }
 
+  /// Opens the list of everything the user has been told about.
+  Widget _buildVisitedButton() {
+    final count = widget.controller.visitedPlaces.length;
+    return OutlinedButton.icon(
+      onPressed: () => _showVisitedSheet(context),
+      icon: const Icon(Icons.check_circle_outline, size: 20),
+      label: Text(
+        'Пройдені місця · $count',
+        style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
+      ),
+      style: NmButtons.secondary(),
+    );
+  }
+
+  void _showVisitedSheet(BuildContext context) {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) => ListenableBuilder(
+        listenable: widget.controller,
+        builder: (ctx, _) {
+          final places = widget.controller.visitedPlaces;
+          return Container(
+            constraints: BoxConstraints(maxHeight: MediaQuery.of(ctx).size.height * 0.75),
+            decoration: const BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+            ),
+            child: SafeArea(
+              top: false,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  const SizedBox(height: 12),
+                  Center(
+                    child: Container(
+                      width: 44,
+                      height: 4,
+                      decoration: BoxDecoration(
+                        color: NmColors.sand,
+                        borderRadius: BorderRadius.circular(2),
+                      ),
+                    ),
+                  ),
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(24, 16, 24, 8),
+                    child: Text('Пройдені місця', style: NmText.title(22)),
+                  ),
+                  if (places.isEmpty)
+                    const Padding(
+                      padding: EdgeInsets.fromLTRB(24, 8, 24, 32),
+                      child: Text(
+                        'Поки що порожньо — місця з\'являться тут, коли гід розповість про них.',
+                        style: TextStyle(fontSize: 15, color: NmColors.muted),
+                      ),
+                    )
+                  else
+                    Flexible(
+                      child: ListView.separated(
+                        shrinkWrap: true,
+                        padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+                        itemCount: places.length,
+                        separatorBuilder: (_, __) => const Divider(height: 1, color: NmColors.line),
+                        itemBuilder: (ctx, i) {
+                          final place = places[i];
+                          final kind = PoiKind.values.asNameMap()[place.kind] ?? PoiKind.other;
+                          Poi? poi;
+                          for (final p in widget.controller.allPois) {
+                            if (p.id == place.id) {
+                              poi = p;
+                              break;
+                            }
+                          }
+                          return ListTile(
+                            leading: Container(
+                              width: 40,
+                              height: 40,
+                              decoration: const BoxDecoration(
+                                color: NmColors.cream,
+                                shape: BoxShape.circle,
+                              ),
+                              child: Icon(kind.icon, size: 22, color: NmColors.ink),
+                            ),
+                            title: Text(
+                              place.name,
+                              style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
+                            ),
+                            subtitle: Text(kind.label,
+                                style: const TextStyle(fontSize: 12, color: NmColors.muted)),
+                            trailing: const Icon(Icons.check, size: 18, color: NmColors.stone),
+                            onTap: poi == null
+                                ? null
+                                : () {
+                                    Navigator.of(ctx).pop();
+                                    _showPoiDetails(context, poi!);
+                                  },
+                          );
+                        },
+                      ),
+                    ),
+                ],
+              ),
+            ),
+          );
+        },
+      ),
+    );
+  }
+
   Widget _buildStatusPill(GuideStatus status) {
     return Container(
       padding: EdgeInsets.fromLTRB(16, 6, status.hasAction ? 6 : 16, 6),
@@ -616,6 +728,10 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
               ],
             ),
             const SizedBox(height: 18),
+            if (widget.controller.visitedPlaces.isNotEmpty) ...[
+              _buildVisitedButton(),
+              const SizedBox(height: 10),
+            ],
             Row(
               children: [
                 Expanded(
@@ -646,11 +762,6 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
 
     // Walking mode
     final visitedIds = widget.controller.visitedPoiIds;
-    final visitedPois = widget.controller.allPois
-        .where((p) =>
-            widget.controller.triggeredPoiIds.contains(p.id) &&
-            p.id != widget.controller.activePoi?.id)
-        .toList();
 
     Poi? nearestPoi;
     double? nearestDist;
@@ -671,9 +782,6 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
 
     String idleTitle = 'Шукаємо цікаві місця...';
     String? idleSubtitle;
-    final totalNearby = widget.controller.allPois.length;
-    final doneNearby =
-        widget.controller.allPois.where((p) => visitedIds.contains(p.id)).length;
 
     if (!isAudioActive) {
       if (widget.controller.allPois.isEmpty) {
@@ -749,67 +857,10 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
             _buildAudioControls(),
           ],
 
-          // ── Progress: how many nearby places are already done ────────────
-          if (totalNearby > 0) ...[
-            const SizedBox(height: 14),
-            ClipRRect(
-              borderRadius: BorderRadius.circular(4),
-              child: LinearProgressIndicator(
-                value: doneNearby / totalNearby,
-                minHeight: 6,
-                backgroundColor: NmColors.line,
-                color: NmColors.ochre,
-              ),
-            ),
-            const SizedBox(height: 6),
-            Text(
-              'Пройдено $doneNearby з $totalNearby поруч · всього прослухано ${widget.controller.totalVisitedCount}',
-              style: const TextStyle(fontSize: 12, color: NmColors.muted),
-            ),
-          ],
-
-          // ── Visited POIs — horizontal scrollable list ────────────────────
-          if (visitedPois.isNotEmpty) ...[
-            const SizedBox(height: 16),
-            Row(
-              children: [
-                Icon(Icons.check_circle_outline, size: 16, color: NmColors.muted),
-                const SizedBox(width: 6),
-                Text(
-                  'Відвідані місця (${visitedPois.length}):',
-                  style: TextStyle(
-                    fontSize: 13,
-                    fontWeight: FontWeight.w600,
-                    color: NmColors.muted,
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 8),
-            SizedBox(
-              height: 42,
-              child: ListView.separated(
-                scrollDirection: Axis.horizontal,
-                itemCount: visitedPois.length,
-                separatorBuilder: (_, __) => const SizedBox(width: 8),
-                itemBuilder: (context, index) {
-                  final poi = visitedPois[index];
-                  return ActionChip(
-                    avatar: Icon(poiKindOf(poi).icon, size: 16),
-                    label: Text(
-                      poi.name,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                    onPressed: () => _showPoiDetails(context, poi),
-                    backgroundColor: NmColors.background,
-                    side: BorderSide(color: NmColors.sand),
-                    labelStyle: const TextStyle(fontSize: 13),
-                    padding: const EdgeInsets.symmetric(horizontal: 4),
-                  );
-                },
-              ),
-            ),
+          // ── List of places the user has already been through ─────────────
+          if (widget.controller.visitedPlaces.isNotEmpty) ...[
+            const SizedBox(height: 12),
+            _buildVisitedButton(),
           ],
         ],
       ),
@@ -1024,9 +1075,11 @@ class _PoiDetailsSheetState extends State<_PoiDetailsSheet> {
         final updatedPoi = widget.controller.getUpdatedPoi(widget.poi);
         final queuePos = widget.controller.getQueuePosition(widget.poi.id);
 
-        final narration = (enriched?.narrationText?.isNotEmpty == true)
-            ? enriched!.narrationText!
-            : updatedPoi.narrationText;
+        // Stored texts from older versions may still carry a greeting or be too long.
+        final narration = TextQuality.finalizeNarration(
+            (enriched?.narrationText?.isNotEmpty == true)
+                ? enriched!.narrationText!
+                : updatedPoi.narrationText);
 
         final rawDesc = (enriched?.shortDescription?.isNotEmpty == true)
             ? enriched!.shortDescription!

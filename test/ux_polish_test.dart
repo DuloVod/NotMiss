@@ -175,8 +175,18 @@ void main() {
       c.debugSetPois([poi]);
       final stored = poi.copyWith(narrationText: 'Вітаю! Перед вами ратуша, серце міста. Її вежу видно звідусіль.');
       final merged = c.getUpdatedPoi(stored);
-      // no cache entry → the poi is returned as is; the cleaning path is covered through the AI/prompt layer
       expect(merged.name, 'Ратуша');
+      // the exact text from the screenshot: stored by an older build
+      expect(
+        TextQuality.finalizeNarration(
+            'Вітаю вас на нашій прогулянці затишними вулицями Львова. Перед вами постає дивовижна святиня — церква Святої Софії.'),
+        'Перед вами постає дивовижна святиня — церква Святої Софії.',
+      );
+      expect(
+        TextQuality.finalizeNarration(
+            'Вітаю вас на нашій прогулянці неймовірним Львовом. Зупиніться на хвилину і підніміть погляд на цю величну будівлю.'),
+        startsWith('Зупиніться'),
+      );
       c.dispose();
     });
   });
@@ -285,6 +295,34 @@ void main() {
       await again.init();
       expect(again.ids, {'osm_1', 'osm_2'});
       expect(again.count, 2);
+      dir.deleteSync(recursive: true);
+    });
+
+    test('names and kinds are stored so the list can be shown later, newest first', () async {
+      final dir = Directory.systemTemp.createTempSync('visited3');
+      final path = '${dir.path}/v.json';
+      final store = VisitedStore(pathProvider: () async => path);
+      await store.add('a', name: 'Ратуша', kind: 'building');
+      await store.add('b', name: 'Фонтан Нептуна', kind: 'fountain');
+      await store.add('a', name: 'Ратуша', kind: 'building'); // no duplicates
+
+      final again = VisitedStore(pathProvider: () async => path);
+      await again.init();
+      expect(again.places.map((p) => p.name), ['Фонтан Нептуна', 'Ратуша']);
+      expect(again.places.first.kind, 'fountain');
+      expect(again.count, 2);
+      dir.deleteSync(recursive: true);
+    });
+
+    test('controller exposes visited places with name and kind', () async {
+      final dir = Directory.systemTemp.createTempSync('visited4');
+      final c = _ctl(_Audio(), NowPlayingService(enabled: false),
+          VisitedStore(pathProvider: () async => '${dir.path}/v.json'));
+      await c.debugProcessPoi(_poi('p1', 'Фонтан Нептуна', tags: {'amenity': 'fountain'}), _pos());
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+      expect(c.visitedPlaces.single.name, 'Фонтан Нептуна');
+      expect(c.visitedPlaces.single.kind, PoiKind.fountain.name);
+      c.dispose();
       dir.deleteSync(recursive: true);
     });
 

@@ -28,6 +28,7 @@ import '../services/now_playing_service.dart';
 import '../services/visited_store.dart';
 import '../services/place_context_service.dart';
 import 'guide_status.dart';
+import 'poi_kind.dart';
 
 enum WalkStatus { idle, walking, stopped }
 
@@ -171,8 +172,13 @@ class WalkController extends ChangeNotifier {
   /// How many different places the user has heard about in total.
   int get totalVisitedCount => _visitedStore.count;
 
-  void _markVisited(String poiId) {
-    unawaited(_visitedStore.add(poiId).then((_) => notifyListeners()));
+  /// Everything the user has been told about, newest first (for the "visited" list).
+  List<VisitedPlace> get visitedPlaces => _visitedStore.places;
+
+  void _markVisited(Poi poi) {
+    unawaited(_visitedStore
+        .add(poi.id, name: poi.name, kind: poiKindOf(poi).name)
+        .then((_) => notifyListeners()));
   }
 
   /// Updates the lock-screen card (title, play/pause state, progress).
@@ -352,7 +358,7 @@ class WalkController extends ChangeNotifier {
     }
     _narrationFailed = false;
     _poiEngine.markTriggered(updated.id);
-    _markVisited(updated.id);
+    _markVisited(updated);
     _pendingPoiIds.remove(updated.id);
     _nearbyUnplayedPois.removeWhere((p) => p.id == updated.id);
     if (_currentPosition != null && !_proximityEvents.any((e) => e.poiId == updated.id)) {
@@ -837,7 +843,7 @@ class WalkController extends ChangeNotifier {
     final gen = ++_processGen;
 
     _poiEngine.markTriggered(poi.id);
-    _markVisited(poi.id);
+    _markVisited(poi);
     _pendingPoiIds.remove(poi.id);
     _isProcessing = true;
     _narrationFailed = false;

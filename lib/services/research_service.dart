@@ -446,6 +446,8 @@ class ResearchService {
       if (TextQuality.isBadStoredNarration(narrationText)) {
         debugPrint('[ResearchService] Dropping bad stored narration for ${enriched.name}');
         narrationText = null;
+      } else if (narrationText != null && narrationText.isNotEmpty) {
+        narrationText = TextQuality.finalizeNarration(narrationText); // greeting / length from older builds
       }
       if (narrationText != null &&
           (narrationText.contains('Це одне з примітних місць на вашому маршруті') ||
