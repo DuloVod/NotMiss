@@ -26,6 +26,7 @@ import '../services/ios_background_task.dart';
 import '../services/text_quality.dart';
 import '../services/now_playing_service.dart';
 import '../services/visited_store.dart';
+import '../services/place_context_service.dart';
 import 'guide_status.dart';
 
 enum WalkStatus { idle, walking, stopped }
@@ -51,6 +52,7 @@ class WalkController extends ChangeNotifier {
   final ResearchService _researchService;
   final NowPlayingService _nowPlaying;
   final VisitedStore _visitedStore;
+  final PlaceContextService _placeService;
 
   WalkStatus _status = WalkStatus.idle;
   Position? _currentPosition;
@@ -112,7 +114,9 @@ class WalkController extends ChangeNotifier {
     ResearchService? researchService,
     NowPlayingService? nowPlaying,
     VisitedStore? visitedStore,
-  })  : _nowPlaying = nowPlaying ?? NowPlayingService(),
+    PlaceContextService? placeService,
+  })  : _placeService = placeService ?? PlaceContextService(),
+         _nowPlaying = nowPlaying ?? NowPlayingService(),
         _visitedStore = visitedStore ?? VisitedStore(),
         _locationService = locationService ?? LocationService(),
         _poiEngine = poiEngine ?? PoiEngine(),
@@ -719,8 +723,30 @@ class WalkController extends ChangeNotifier {
   List<Poi> _nearbyUnplayedPois = [];
   List<Poi> get nearbyUnplayedPois => List.unmodifiable(_nearbyUnplayedPois);
 
+  Position? _contextPos;
+  bool _contextLoading = false;
+
+  /// Learns the city around the user (once, and again after moving far) for the AI prompts.
+  void _refreshPlaceContext(Position pos) {
+    if (_contextLoading) return;
+    final last = _contextPos;
+    if (last != null &&
+        Geolocator.distanceBetween(last.latitude, last.longitude, pos.latitude, pos.longitude) <
+            PlaceContextService.reuseRadiusM) {
+      return;
+    }
+    _contextLoading = true;
+    _placeService.lookup(pos.latitude, pos.longitude).then((ctx) {
+      if (ctx != null) {
+        AiService.placeContext = ctx;
+        _contextPos = pos;
+      }
+    }).whenComplete(() => _contextLoading = false);
+  }
+
   Future<void> _onPosition(Position pos) async {
     _currentPosition = pos;
+    _refreshPlaceContext(pos);
 
     // Dynamically reload OSM POIs if user has moved significantly or if initial load timed out
     if (!_isOsmLoading && (!_osmLoaded || _overpassService.shouldReload(pos.latitude, pos.longitude))) {

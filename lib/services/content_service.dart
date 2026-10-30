@@ -1,4 +1,5 @@
 import '../models/poi.dart';
+import 'ai_service.dart';
 
 /// Provides narration content for a POI.
 ///
@@ -31,7 +32,7 @@ class ContentService {
 Ти — захопливий, ерудований аудіогід для пішої прогулянки.
 
 Об'єкт: ${poi.name}
-$desc
+${AiService.placeContext != null ? 'Розташування: ${AiService.placeContext} (це саме це місто, не плутай з іншими).\n' : ''}$desc
 ${factsSection.isNotEmpty ? factsSection : 'Об\'єкт міського простору / архітектури'}
 
 Завдання:

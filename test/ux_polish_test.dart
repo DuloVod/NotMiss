@@ -9,6 +9,8 @@ import 'package:notmiss/services/ai_service.dart';
 import 'package:notmiss/services/audio_player_service.dart';
 import 'package:notmiss/services/now_playing_service.dart';
 import 'package:notmiss/services/overpass_service.dart';
+import 'package:notmiss/services/place_context_service.dart';
+import 'package:notmiss/services/content_service.dart';
 import 'package:notmiss/services/poi_cache_service.dart';
 import 'package:notmiss/services/poi_category_service.dart';
 import 'package:notmiss/services/research_queue.dart';
@@ -375,4 +377,71 @@ void main() {
       }
     });
   });
+
+  group('City context for the AI', () {
+    tearDown(() => AiService.placeContext = null);
+
+    test('Nominatim answer → "city, country"', () {
+      expect(
+        PlaceContextService.parse('{"address":{"city":"Київ","country":"Україна"}}'),
+        'Київ, Україна',
+      );
+      expect(PlaceContextService.parse('{"address":{"village":"Брюховичі","country":"Україна"}}'),
+          'Брюховичі, Україна');
+      expect(PlaceContextService.parse('{"address":{"country":"Польща"}}'), 'Польща');
+      expect(PlaceContextService.parse('{"error":"Unable to geocode"}'), isNull);
+      expect(PlaceContextService.parse('not json'), isNull);
+    });
+
+    test('prompt names the city where the user is, and nothing when unknown', () {
+      final poi = _poi('m', 'Музей Михайла Грушевського');
+      AiService.placeContext = 'Київ, Україна';
+      expect(ContentService().buildAiPrompt(poi), contains('Київ, Україна'));
+      AiService.placeContext = null;
+      expect(ContentService().buildAiPrompt(poi), isNot(contains('Розташування')));
+    });
+
+    test('controller learns the city from the user position, not from a fixed destination', () async {
+      final calls = <List<double>>[];
+      final c = WalkController(
+        destination: const Destination(
+            id: 'l', name: 'Львів', centerLatitude: 49.84, centerLongitude: 24.03, defaultZoom: 16, pois: []),
+        apiKey: '',
+        researchService: ResearchService(
+          categoryService: PoiCategoryService(),
+          cacheService: PoiCacheService(),
+          queue: ResearchQueue(maxConcurrent: 2),
+          wikidataService: WikidataService(),
+          wikipediaService: WikipediaService(),
+          aiService: _Ai(),
+        ),
+        ttsService: _Tts(),
+        audioService: _Audio(),
+        overpassService: _NoOverpass(),
+        nowPlaying: NowPlayingService(enabled: false),
+        visitedStore: VisitedStore(pathProvider: () async => '/nonexistent/x.json'),
+        placeService: _FakePlace(calls),
+      );
+      c.debugSetPois([]);
+      await c.debugOnPosition(_pos(50.45, 30.52)); // Kyiv
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+      expect(AiService.placeContext, 'Місто 50.45');
+      await c.debugOnPosition(_pos(50.4501, 30.5201)); // same area → no new lookup
+      await c.debugOnPosition(_pos(48.92, 24.71)); // Ivano-Frankivsk, far away
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+      expect(calls, hasLength(2));
+      expect(AiService.placeContext, 'Місто 48.92');
+      c.dispose();
+    });
+  });
+}
+
+class _FakePlace extends PlaceContextService {
+  _FakePlace(this.calls);
+  final List<List<double>> calls;
+  @override
+  Future<String?> lookup(double lat, double lng) async {
+    calls.add([lat, lng]);
+    return 'Місто ${lat.toStringAsFixed(2)}';
+  }
 }

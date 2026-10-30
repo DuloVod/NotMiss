@@ -62,6 +62,10 @@ class AiService {
     {'category': 'HARM_CATEGORY_DANGEROUS_CONTENT', 'threshold': 'BLOCK_NONE'},
   ];
 
+  /// "Місто, країна" where the user currently is; added to every prompt so the model
+  /// does not confuse the place with a namesake elsewhere. Null when unknown.
+  static String? placeContext;
+
   static String _endpoint(String model, String apiKey) =>
       'https://generativelanguage.googleapis.com/v1beta/models/$model:generateContent?key=$apiKey';
 
@@ -137,7 +141,7 @@ class AiService {
 Ти — досвідчений, захопливий аудіогід для пішої прогулянки.
 Об'єкт на мапі:
 Назва: "$name"
-Категорія: "$category"
+${placeContext != null ? 'Розташування: $placeContext (це саме це місто, не плутай з іншими).\n' : ''}Категорія: "$category"
 Теги OpenStreetMap: $tagsContext
 
 Підготуй для туриста інформацію українською мовою:
@@ -333,7 +337,7 @@ class AiService {
 Ти — ерудований, доброзичливий гід-екскурсовод для пішої прогулянки.
 Користувач зараз знаходиться біля або запитує про це місце:
 Назва: "${poi.name}"
-$desc$narration${factsList.isNotEmpty ? 'Відомі факти:\n$factsList\n' : ''}
+${placeContext != null ? 'Розташування: $placeContext.\n' : ''}$desc$narration${factsList.isNotEmpty ? 'Відомі факти:\n$factsList\n' : ''}
 
 Запитання туриста:
 "$question"
