@@ -1,7 +1,7 @@
 name: notmiss
 description: AI Voice Guide for Walking Tours
 publish_to: none
-version: 1.1.0+13
+version: 1.1.1+13
 
 environment:
   sdk: ">=3.3.0 <4.0.0"
@@ -17,7 +17,7 @@ dependencies:
   # Location / GPS
   geolocator: ^13.0.0
 
-  # Networking (Gemini REST API)
+  # Networking (including Gemini through the NotMiss server)
   http: ^1.2.0
 
   # Audio playback
@@ -27,9 +27,6 @@ dependencies:
   # Temp file paths (for TTS audio)
   path_provider: ^2.1.0
 
-  # .env file for API key
-  flutter_dotenv: ^5.1.0
-
   # Utilities
   uuid: ^4.4.0
   flutter_foreground_task: ^11.0.3
@@ -38,7 +35,6 @@ dependencies:
 flutter:
   uses-material-design: true
   assets:
-    - .env
     - assets/data/stryiskyi_park.json
     - assets/audio/arrival_chime.wav
 
