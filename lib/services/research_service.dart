@@ -9,6 +9,8 @@ import 'wikidata_service.dart';
 import 'wikipedia_service.dart';
 import 'ai_service.dart';
 import 'text_quality.dart';
+import 'source_material.dart';
+import '../ui/poi_kind.dart';
 
 /// Orchestrates the research pipeline for POIs.
 ///
@@ -25,6 +27,7 @@ class ResearchService {
   final WikidataService _wikidataService;
   final WikipediaService _wikipediaService;
   final AiService _aiService;
+  final OfficialSiteService _officialSite;
 
   /// Hard upper bound for one research run (Wikidata → Wikipedia → AI facts → AI narration).
   /// When it expires the caller proceeds with quick fallback text; the run itself keeps
@@ -38,8 +41,10 @@ class ResearchService {
     required WikidataService wikidataService,
     required WikipediaService wikipediaService,
     required AiService aiService,
+    OfficialSiteService? officialSiteService,
     this.researchDeadline = const Duration(seconds: 25),
-  })  : _categoryService = categoryService,
+  })  : _officialSite = officialSiteService ?? OfficialSiteService(),
+        _categoryService = categoryService,
         _cacheService = cacheService,
         _queue = queue,
         _wikidataService = wikidataService,
@@ -72,7 +77,11 @@ class ResearchService {
   }
 
   /// Process new POIs discovered by Overpass.
-  void processDiscoveredPois(List<Poi> pois) {
+  ///
+  /// [queueIf] limits which of them are researched right away. A search returns hundreds of
+  /// places, and researching a place costs AI requests: only those the walker can reach soon
+  /// should be queued (the others are queued by [queueAhead] when the walker gets closer).
+  void processDiscoveredPois(List<Poi> pois, {bool Function(Poi poi)? queueIf}) {
     for (final poi in pois) {
       // Create initial EnrichedPoi if it doesn't exist
       var enriched = _cacheService.get(poi.id);
@@ -95,9 +104,17 @@ class ResearchService {
       }
 
       // Enqueue if needs research
-      if (_cacheService.needsResearch(poi.id)) {
+      if ((queueIf == null || queueIf(poi)) && _cacheService.needsResearch(poi.id)) {
         _queue.enqueue(poi.id, enriched.priority);
       }
+    }
+  }
+
+  /// Queues a place the walker is approaching, without pushing ahead of what is already queued.
+  void queueAhead(String poiId) {
+    final enriched = _cacheService.get(poiId);
+    if (enriched != null && _cacheService.needsResearch(poiId)) {
+      _queue.enqueue(poiId, enriched.priority);
     }
   }
 
@@ -224,10 +241,11 @@ class ResearchService {
           longitude: poi.longitude,
           researchStatus: ResearchStatus.notStarted,
         );
-    final desc = (cached?.shortDescription?.isNotEmpty == true)
-        ? cached!.shortDescription
+    final usable = cached != null && !cached.isOutdated;
+    final desc = (usable && cached.shortDescription?.isNotEmpty == true)
+        ? cached.shortDescription
         : (poi.shortDescription.isNotEmpty ? poi.shortDescription : null);
-    return _buildDynamicFallbackNarration(enriched, desc);
+    return _buildSourceOnlyNarration(enriched, desc, usable ? cached.keyFacts : const []);
   }
 
   /// Entry point for both the background queue and [researchImmediately].
@@ -291,9 +309,9 @@ class ResearchService {
       if (latest.researchStatus == ResearchStatus.complete && !latest.hasFallbackContent) {
         return;
       }
-      final offlineNarration = latest.narrationText?.isNotEmpty == true
+      final offlineNarration = latest.narrationText?.isNotEmpty == true && !latest.isOutdated
           ? latest.narrationText!
-          : _buildDynamicFallbackNarration(latest, latest.shortDescription);
+          : _buildSourceOnlyNarration(latest, null, const []);
       final failed = latest.copyWith(
         researchStatus: ResearchStatus.failed,
         narrationText: offlineNarration,
@@ -311,260 +329,273 @@ class ResearchService {
     }
   }
 
-  /// Inner research body — runs inside a 45-second timeout.
+  /// Gathers everything real sources say about the place and builds its content from that alone.
+  ///
+  /// OSM tags → Wikidata (by tag, or found by name and confirmed by coordinates) → full
+  /// Wikipedia articles → the place's own website. The AI only retells this material; when no
+  /// source knows anything, the user is told so instead of hearing an invented story.
   Future<void> _doResearch(EnrichedPoi enriched, String poiId) async {
     try {
-      final facts = <KeyFact>[...enriched.keyFacts];
-      final sources = <ResearchSource>[...enriched.sources];
-      String? shortDesc = enriched.shortDescription;
-      String? wikidataId = enriched.wikidataId ?? enriched.osmTags['wikidata'];
-
-      // Purge stale dummy/fallback facts and descriptions from prior failures or initial seeds,
-      // plus facts that are not Ukrainian (English Wikidata/Wikipedia leftovers).
-      facts.removeWhere((f) => isFallbackFact(f.fact) || !TextQuality.isCleanUkrainian(f.fact));
-      for (var i = 0; i < facts.length; i++) {
-        final fixed = TextQuality.normalizeFact(facts[i].fact);
-        if (fixed != facts[i].fact) {
-          facts[i] = KeyFact(fact: fixed, sourceUrl: facts[i].sourceUrl, confidence: facts[i].confidence);
-        }
-      }
-      if (isFallbackDescription(shortDesc) || !TextQuality.isCleanUkrainian(shortDesc)) {
-        shortDesc = null;
-      }
+      // Everything is gathered anew: earlier content may not have been verified.
+      final facts = <KeyFact>[];
+      final sources = <ResearchSource>[];
+      final docs = <SourceDoc>[];
+      String? shortDesc;
+      final tags = enriched.osmTags;
 
       void addFact(String factText, String? sourceUrl, String confidence) {
         final trimmed = TextQuality.normalizeFact(factText.trim());
         if (trimmed.isNotEmpty &&
             TextQuality.isCleanUkrainian(trimmed) &&
             !isFallbackFact(trimmed) &&
-            !facts.any((f) => f.fact.trim() == trimmed)) {
-          facts.add(KeyFact(
-            fact: trimmed,
-            sourceUrl: sourceUrl,
-            confidence: confidence,
-          ));
+            !facts.any((f) => _sameMeaning(f.fact, trimmed))) {
+          facts.add(KeyFact(fact: trimmed, sourceUrl: sourceUrl, confidence: confidence));
         }
       }
 
-      // STEP 1: Wikidata
-      if (wikidataId != null && wikidataId.isNotEmpty) {
-        final wikiData = await _wikidataService.fetchById(wikidataId);
-        if (wikiData != null) {
-          if (wikiData.inception != null && wikiData.inception!.isNotEmpty) {
-            addFact('Створено/засновано: ${wikiData.inception}', 'https://www.wikidata.org/wiki/$wikidataId', 'high');
-          }
-          if (wikiData.architect != null && wikiData.architect!.isNotEmpty) {
-            addFact('Архітектор: ${wikiData.architect}', 'https://www.wikidata.org/wiki/$wikidataId', 'high');
-          } else if (wikiData.creator != null && wikiData.creator!.isNotEmpty) {
-            addFact('Автор/скульптор: ${wikiData.creator}', 'https://www.wikidata.org/wiki/$wikidataId', 'high');
-          }
-          if (wikiData.heritageStatus != null && wikiData.heritageStatus!.isNotEmpty) {
-            addFact('Охоронний статус: ${wikiData.heritageStatus}', 'https://www.wikidata.org/wiki/$wikidataId', 'high');
-          }
-          if (shortDesc == null || shortDesc.isEmpty) {
-            // Wikidata often only has an English one-liner ("museum in Ukraine") — useless here.
-            final d = wikiData.description;
-            if (TextQuality.isCleanUkrainian(d)) shortDesc = d;
-          }
-          
-          if (!sources.any((s) => s.type == 'wikidata')) {
-            sources.add(ResearchSource(
-              url: 'https://www.wikidata.org/wiki/$wikidataId',
-              title: 'Wikidata (${wikiData.label ?? wikidataId})',
-              type: 'wikidata',
-            ));
-          }
-          
-          // Wikipedia via Wikidata sitelink
-          if (wikiData.wikipediaTitle != null && wikiData.wikipediaLang != null) {
-            final wikiArticle = await _wikipediaService.fetchSummary(
-              wikiData.wikipediaTitle!,
-              lang: wikiData.wikipediaLang!,
-            );
-            if (wikiArticle != null && wikiArticle.extract.isNotEmpty) {
-              if (shortDesc == null || shortDesc.isEmpty) {
-                shortDesc = _pickDescription(wikiArticle);
-              }
-              _addFactsFromWikipedia(wikiArticle, shortDesc, addFact);
-              
-              if (!sources.any((s) => s.type == 'wikipedia')) {
-                sources.add(ResearchSource(
-                  url: wikiArticle.url,
-                  title: 'Wikipedia (${wikiArticle.title})',
-                  type: 'wikipedia',
-                ));
-              }
-            }
-          }
+      // STEP 1: Wikidata — by the tag, or by name if the coordinates confirm it is this place
+      final taggedId = enriched.wikidataId ?? tags['wikidata'];
+      final wiki = (taggedId != null && taggedId.isNotEmpty)
+          ? await _wikidataService.fetchById(taggedId)
+          : await _wikidataService.searchNear(enriched.name, enriched.latitude, enriched.longitude);
+      if (wiki != null) {
+        if (TextQuality.isCleanUkrainian(wiki.descriptionUk)) {
+          shortDesc = wiki.descriptionUk;
         }
       }
 
-      // STEP 2: Wikipedia via OSM tags (e.g. wikipedia, wikipedia:uk)
-      if (!sources.any((s) => s.type == 'wikipedia')) {
-        final osmWiki = enriched.osmTags['wikipedia'] ??
-            enriched.osmTags['wikipedia:uk'] ??
-            enriched.osmTags['wikipedia:en'];
-        if (osmWiki != null && osmWiki.trim().isNotEmpty) {
-          final wikiArticle = await _wikipediaService.fetchSummary(osmWiki);
-          if (wikiArticle != null && wikiArticle.extract.isNotEmpty) {
-            if (shortDesc == null || shortDesc.isEmpty) {
-              shortDesc = _pickDescription(wikiArticle);
-            }
-            _addFactsFromWikipedia(wikiArticle, shortDesc, addFact);
-            sources.add(ResearchSource(
-              url: wikiArticle.url,
-              title: 'Wikipedia (${wikiArticle.title})',
-              type: 'wikipedia',
-            ));
+      // STEP 2: Wikipedia — articles this object links to (their identity is certain) …
+      var wikiChars = 0;
+      Future<void> useArticle(WikipediaArticle article) async {
+        final full = await _wikipediaService.fetchFullText(article.title, lang: article.lang);
+        final text = (full != null && full.length > article.extract.length) ? full : article.extract;
+        docs.add(SourceDoc(type: 'wikipedia', title: 'Вікіпедія: ${article.title}', url: article.url, text: text));
+        sources.add(ResearchSource(url: article.url, title: 'Wikipedia (${article.title})', type: 'wikipedia'));
+        wikiChars += text.length;
+        if (shortDesc == null || shortDesc!.isEmpty) shortDesc = _pickDescription(article);
+        _addFactsFromWikipedia(article, shortDesc, addFact);
+      }
+
+      final linked = <(String, String)>[
+        if (wiki?.wikipediaUk != null) (wiki!.wikipediaUk!, 'uk'),
+        if (tags['wikipedia:uk'] != null) (tags['wikipedia:uk']!, 'uk'),
+        if (tags['wikipedia'] != null) (tags['wikipedia']!, 'uk'),
+        if (wiki?.wikipediaEn != null) (wiki!.wikipediaEn!, 'en'),
+        if (wiki?.wikipediaPl != null) (wiki!.wikipediaPl!, 'pl'),
+        if (wiki?.wikipediaDe != null) (wiki!.wikipediaDe!, 'de'),
+        if (tags['wikipedia:en'] != null) (tags['wikipedia:en']!, 'en'),
+      ];
+      final seen = <String>{};
+      for (final (title, lang) in linked) {
+        // One thorough article is enough; other languages only add to a thin one.
+        if (wikiChars >= _enoughWikipediaChars || seen.length >= 3) break;
+        final article = await _wikipediaService.fetchSummary(title, lang: lang);
+        if (article == null || article.extract.isEmpty || !seen.add(article.url)) continue;
+        await useArticle(article);
+      }
+
+      // … otherwise search by name; a hit must prove it is about this place (see isAboutPlace)
+      if (!docs.any((d) => d.type == 'wikipedia')) {
+        final city = AiService.placeContext?.split(',').first.trim();
+        for (final lang in const ['uk', 'en']) {
+          final article = await _wikipediaService.fetchSummaryOrSearch(
+            enriched.name,
+            lang: lang,
+            lat: enriched.latitude,
+            lng: enriched.longitude,
+            city: city,
+            kindWords: kindWordsOf(poiKindOf(_asPoi(enriched))),
+          );
+          if (article != null && article.extract.isNotEmpty) {
+            await useArticle(article);
+            break;
           }
         }
       }
 
-      // STEP 3: Wikipedia search by POI name + coordinates (uk first, then en)
-      for (final lang in const ['uk', 'en']) {
-        if (sources.any((s) => s.type == 'wikipedia')) break;
-        final wikiArticle = await _wikipediaService.fetchSummaryOrSearch(
+      // … and if it has no article, what articles about its surroundings say about it.
+      if (!docs.any((d) => d.type == 'wikipedia')) {
+        final mention = await _wikipediaService.findMention(
           enriched.name,
-          lang: lang,
           lat: enriched.latitude,
           lng: enriched.longitude,
+          city: AiService.placeContext?.split(',').first.trim(),
         );
-        if (wikiArticle != null && wikiArticle.extract.isNotEmpty) {
-          if (shortDesc == null || shortDesc.isEmpty) {
-            shortDesc = _pickDescription(wikiArticle);
+        if (mention != null) {
+          final title = 'Вікіпедія, стаття «${mention.articleTitle}»';
+          docs.add(SourceDoc(type: 'wikipedia', title: title, url: mention.url, text: mention.sentences.join('\n')));
+          sources.add(ResearchSource(url: mention.url, title: title, type: 'wikipedia'));
+          wikiChars += mention.sentences.join().length;
+          for (final sentence in mention.sentences) {
+            addFact(sentence, mention.url, 'high');
           }
-          _addFactsFromWikipedia(wikiArticle, shortDesc, addFact);
-          sources.add(ResearchSource(
-            url: wikiArticle.url,
-            title: 'Wikipedia (${wikiArticle.title})',
-            type: 'wikipedia',
-          ));
         }
       }
 
-      String? narrationText = enriched.narrationText;
-      if (TextQuality.isBadStoredNarration(narrationText)) {
-        debugPrint('[ResearchService] Dropping bad stored narration for ${enriched.name}');
-        narrationText = null;
-      } else if (narrationText != null && narrationText.isNotEmpty) {
-        narrationText = TextQuality.finalizeNarration(narrationText); // greeting / length from older builds
-      }
-      if (narrationText != null &&
-          (narrationText.contains('Це одне з примітних місць на вашому маршруті') ||
-           narrationText.contains('Зверніть увагу на його вигляд та деталі довкола') ||
-           narrationText.contains('Зверніть увагу на архітектурні деталі та атмосферу довкола!'))) {
-        narrationText = null;
+      // Wikidata dates are sometimes about something else (the Armenian Cathedral: "1301", the
+      // article: built 1363–1370). With an article at hand, a year it does not mention is dropped.
+      if (wiki != null) {
+        final articles = docs.where((d) => d.type == 'wikipedia').map((d) => d.text).join('\n');
+        final year = RegExp(r'\d{3,4}').firstMatch(wiki.inception ?? '')?.group(0);
+        final trustDate = year != null && (articles.isEmpty || articles.contains(year));
+        final url = 'https://www.wikidata.org/wiki/${wiki.wikidataId}';
+        final lines = <String>[
+          if (TextQuality.isCleanUkrainian(wiki.descriptionUk)) wiki.descriptionUk!,
+          if (trustDate) 'Створено/засновано: ${wiki.inception}',
+          if (wiki.architect?.isNotEmpty == true)
+            'Архітектор: ${wiki.architect}'
+          else if (wiki.creator?.isNotEmpty == true)
+            'Автор/скульптор: ${wiki.creator}',
+          if (wiki.style?.isNotEmpty == true) 'Архітектурний стиль: ${wiki.style}',
+          if (wiki.namedAfter?.isNotEmpty == true) 'Названо на честь: ${wiki.namedAfter}',
+          if (wiki.commemorates?.isNotEmpty == true) 'Присвячено: ${wiki.commemorates}',
+          if (wiki.heritageStatus?.isNotEmpty == true) 'Охоронний статус: ${wiki.heritageStatus}',
+        ];
+        if (lines.isNotEmpty) {
+          docs.insert(0, SourceDoc(type: 'wikidata', title: 'Вікідані', url: url, text: lines.join('\n')));
+          sources.insert(0, ResearchSource(url: url, title: 'Wikidata (${wiki.label ?? wiki.wikidataId})', type: 'wikidata'));
+          for (final line in lines.skip(TextQuality.isCleanUkrainian(wiki.descriptionUk) ? 1 : 0)) {
+            addFact(line, url, 'high');
+          }
+        }
       }
 
-      if (isFallbackDescription(shortDesc)) {
-        shortDesc = null;
+      // STEP 3: OpenStreetMap tags of this very object. Encyclopedias go first and take priority.
+      final hasEncyclopedia = docs.isNotEmpty;
+      final osmLines = OsmFacts.from(tags, withDates: !hasEncyclopedia);
+      if (osmLines.isNotEmpty) {
+        final url = _osmUrl(poiId);
+        docs.add(SourceDoc(type: 'osm', title: 'OpenStreetMap', url: url, text: osmLines.join('\n')));
+        sources.add(ResearchSource(url: url, title: 'OpenStreetMap', type: 'osm'));
+        for (final line in osmLines) {
+          addFact(line, url, 'high');
+        }
+        final description = tags['description:uk'] ?? tags['description'];
+        if ((shortDesc == null || shortDesc!.isEmpty) &&
+            description != null &&
+            description.length >= 30 &&
+            TextQuality.isCleanUkrainian(description)) {
+          shortDesc = description;
+        }
       }
 
-      // STEP 4: AI Fallback & Fact Generation
-      // If we don't have enough facts (< 2) or description is missing, enrich with AI!
-      if (facts.length < 2 || shortDesc == null || shortDesc.isEmpty) {
-        debugPrint('[ResearchService] Insufficient Wiki data for ${enriched.name} (${facts.length} facts), using AI fallback...');
-        final aiData = await _aiService.generateBackgroundFacts(
-          enriched.name, enriched.category, enriched.osmTags,
-        );
-        if (aiData != null) {
-          final aiDesc = aiData['description'] as String?;
-          if (aiDesc != null &&
-              TextQuality.isCleanUkrainian(aiDesc) &&
-              (shortDesc == null || shortDesc.isEmpty)) {
-            shortDesc = aiDesc.trim();
-          }
-          final aiNarr = aiData['narration'] as String?;
-          if (aiNarr != null && aiNarr.trim().isNotEmpty && (narrationText == null || narrationText.isEmpty)) {
-            narrationText = aiNarr.trim();
-          }
-          final aiFacts = aiData['facts'] as List<dynamic>?;
-          if (aiFacts != null && aiFacts.isNotEmpty) {
-            for (final f in aiFacts) {
-              final str = f.toString().trim();
-              if (str.isNotEmpty) {
-                addFact(str, null, 'high');
-              }
+      // STEP 4: the place's own website, when the encyclopedias say little
+      final website = OsmFacts.websiteOf(tags);
+      if (website != null && wikiChars < _enoughWikipediaChars ~/ 2) {
+        final text = await _officialSite.fetchText(website);
+        if (text != null) {
+          docs.add(SourceDoc(type: 'official', title: 'Сайт об\'єкта', url: website, text: text));
+          sources.add(ResearchSource(url: website, title: 'Сайт об\'єкта', type: 'official'));
+        }
+      }
+
+      final material = SourceMaterial(docs);
+      final practical = OsmFacts.practical(tags);
+
+      // STEP 5: Content from the material
+      String? narrationText;
+      final keepNarration = !enriched.isOutdated &&
+          enriched.researchStatus == ResearchStatus.complete &&
+          !enriched.hasFallbackContent &&
+          enriched.narrationText?.isNotEmpty == true;
+      if (keepNarration) narrationText = TextQuality.finalizeNarration(enriched.narrationText!);
+
+      // One or two map tags are not a story: they are read out as they are, not padded by the AI.
+      if (material.promptText.length >= _minCharsForStory) {
+        final primaryUrl = sources.firstWhere((s) => s.type != 'osm', orElse: () => sources.first).url;
+        if (facts.length < 3 || shortDesc == null || shortDesc!.isEmpty) {
+          final summary = await _aiService.summarizeSources(enriched.name, material.promptText);
+          if (summary != null) {
+            if (shortDesc == null || shortDesc!.isEmpty) shortDesc = summary.description;
+            for (final fact in summary.facts) {
+              if (facts.length >= 6) break;
+              addFact(fact, primaryUrl, 'high');
             }
           }
-          if (!sources.any((s) => s.type == 'ai')) {
-            sources.add(const ResearchSource(
-              url: 'https://gemini.google.com',
-              title: 'ШІ-гід (Gemini)',
-              type: 'ai',
-            ));
+        }
+        if (narrationText == null) {
+          final generated = await _aiService.generateNarration(Poi(
+            id: enriched.poiId,
+            name: enriched.name,
+            latitude: enriched.latitude,
+            longitude: enriched.longitude,
+            triggerRadius: 40,
+            shortDescription: '',
+            facts: [material.promptText],
+            narrationText: '',
+            sources: const [],
+            osmTags: tags,
+          ));
+          if (generated.isNotEmpty) {
+            narrationText = generated.trim();
+            sources.add(const ResearchSource(url: '', title: 'Текст переказано ШІ за цими джерелами', type: 'ai'));
           }
         }
       }
 
-      // Safety fallback: guaranteed non-empty human-readable description and facts
       if (shortDesc == null || isFallbackDescription(shortDesc)) {
-        if (facts.isNotEmpty) {
-          shortDesc = facts.first.fact;
-        } else {
-          final catLabel = PoiCategoryService.categoryLabelUk(enriched.category);
-          shortDesc = '$catLabel «${enriched.name}» у Львові.';
-        }
+        // A sentence from an article reads as a description; "Конфесія: …" does not.
+        final sentence = facts.where((f) => !RegExp(r'^[^.]{1,30}: ').hasMatch(f.fact));
+        shortDesc = sentence.isNotEmpty ? sentence.first.fact : poiKindOf(_asPoi(enriched)).label;
       }
-      if (facts.isEmpty) {
-        final catLabel = PoiCategoryService.categoryLabelUk(enriched.category);
-        facts.add(KeyFact(
-          fact: 'Об\'єкт належить до категорії «$catLabel» і відкритий для огляду.',
-          sourceUrl: null,
-          confidence: 'medium',
-        ));
-      }
-
-      // STEP 5: Mandatory Narration Generation (App must NEVER be silent!)
-      if (narrationText == null || narrationText.isEmpty) {
-        final tempPoi = Poi(
-          id: enriched.poiId,
-          name: enriched.name,
-          latitude: enriched.latitude,
-          longitude: enriched.longitude,
-          triggerRadius: 40,
-          shortDescription: shortDesc,
-          facts: facts.map((f) => f.fact).toList(),
-          narrationText: '',
-          sources: const [],
-          osmTags: enriched.osmTags,
-        );
-        final genText = await _aiService.generateNarration(tempPoi);
-        if (genText.isNotEmpty) {
-          narrationText = genText.trim();
-          if (!sources.any((s) => s.type == 'ai')) {
-            sources.add(const ResearchSource(
-              url: 'https://gemini.google.com',
-              title: 'ШІ-розповідь (Gemini)',
-              type: 'ai',
-            ));
-          }
-        } else {
-          // Dynamic graceful narration if AI generation failed/offline
-          narrationText = _buildDynamicFallbackNarration(enriched, shortDesc);
-        }
-      }
-
-      // Status: complete because rich facts, description, and narration are guaranteed
-      final finalStatus = ResearchStatus.complete;
+      shortDesc = shortDesc![0].toUpperCase() + shortDesc!.substring(1);
+      // AI unavailable or nothing known: the sources' own words, or an honest "not known".
+      narrationText ??= _buildSourceOnlyNarration(enriched, shortDesc, facts);
 
       final updated = enriched.copyWith(
-        researchStatus: finalStatus,
+        researchStatus: material.isNotEmpty ? ResearchStatus.complete : ResearchStatus.insufficientInformation,
         shortDescription: shortDesc,
         narrationText: narrationText,
         keyFacts: facts,
         sources: sources,
         lastResearchedAt: DateTime.now(),
+        schemaVersion: EnrichedPoi.currentSchema,
+        sourceMaterial: [material.promptText, ...practical].where((e) => e.isNotEmpty).join('\n'),
       );
 
       await _cacheService.put(updated);
       onPoiUpdated?.call(updated);
-      debugPrint('[ResearchService] Finished research for ${updated.name} -> ${updated.researchStatus.name}');
+      debugPrint('[ResearchService] Finished research for ${updated.name} -> ${updated.researchStatus.name} '
+          '(${docs.map((d) => d.type).join(', ')})');
     } on TimeoutException {
       debugPrint('[ResearchService] Research timed out for $poiId');
       rethrow;
     }
   }
+
+  /// Less material than this cannot fill a story without inventing something.
+  static const int _minCharsForStory = 120;
+
+  /// The same statement in other words ("Колишня назва: X" / "Колишня назва цього місця — X").
+  static bool _sameMeaning(String a, String b) {
+    final x = WikipediaService.nameStems(a);
+    final y = WikipediaService.nameStems(b);
+    if (x.isEmpty || y.isEmpty) return a.trim() == b.trim();
+    final common = x.intersection(y).length;
+    return common / (x.length < y.length ? x.length : y.length) >= 0.7;
+  }
+
+  /// A longer article adds little to a 45-second story, so another language is not fetched.
+  static const int _enoughWikipediaChars = 1500;
+
+  /// "osm_way_123" → link to the object on openstreetmap.org.
+  static String _osmUrl(String poiId) {
+    final m = RegExp(r'^osm_(node|way|relation)_(\d+)$').firstMatch(poiId);
+    return m == null ? 'https://www.openstreetmap.org' : 'https://www.openstreetmap.org/${m[1]}/${m[2]}';
+  }
+
+  static Poi _asPoi(EnrichedPoi e) => Poi(
+        id: e.poiId,
+        name: e.name,
+        latitude: e.latitude,
+        longitude: e.longitude,
+        triggerRadius: 40,
+        shortDescription: '',
+        facts: const [],
+        narrationText: '',
+        sources: const [],
+        osmTags: e.osmTags,
+      );
 
   /// Update narration text for a POI directly and notify listeners.
   /// If the POI is not in cache yet, creates an EnrichedPoi entry using [poi].
@@ -692,17 +723,12 @@ class ResearchService {
       if (shortDescNorm.isNotEmpty && (sNorm == shortDescNorm || sNorm.contains(shortDescNorm) || shortDescNorm.contains(sNorm))) {
         continue;
       }
-      addFact(_truncate(s, 220), article.url, 'high');
+      if (s.length > 300) continue; // A cut-off sentence is not a fact.
+      addFact(s, article.url, 'high');
       added++;
       if (added >= 3) break;
     }
     
-    if (added == 0 && article.extract.isNotEmpty) {
-      final fallbackFact = _truncate(article.extract, 180);
-      if (fallbackFact != shortDesc) {
-        addFact(fallbackFact, article.url, 'high');
-      }
-    }
   }
 
   /// Article description when it is Ukrainian, otherwise the first sentence of the extract
@@ -730,30 +756,31 @@ class ResearchService {
     return text.length > 150 ? _truncate(text, 150) : text;
   }
 
-  String _buildDynamicFallbackNarration(EnrichedPoi enriched, String? shortDesc) {
-    final cat = enriched.category;
-    final name = enriched.name;
-    final buffer = StringBuffer();
-    buffer.write('Перед вами $name');
-    if (cat == PoiCategoryService.sculptureMemorial) {
-      buffer.write(' — пам\'ятка скульптури та мистецтва.');
-    } else if (cat == PoiCategoryService.historicalBuilding) {
-      buffer.write(' — визначна історична споруда Львова.');
-    } else if (cat == PoiCategoryService.naturePark) {
-      buffer.write(' — мальовничий куточок міської природи.');
-    } else if (cat == PoiCategoryService.fountainViewpointArchitecture) {
-      buffer.write(' — виразна архітектурна прикраса міста.');
-    } else {
-      buffer.write(' — примітне місце на вашому маршруті.');
-    }
+  /// Spoken text assembled only from what sources say, without AI: used offline, when the AI
+  /// is unavailable or when it could not write anything that passed verification.
+  String _buildSourceOnlyNarration(EnrichedPoi enriched, String? shortDesc, List<KeyFact> facts) {
+    final kind = poiKindOf(_asPoi(enriched));
+    final name = enriched.name.replaceAll(RegExp(r'[«»"“”]'), '').trim();
+    final label = kind.label.toLowerCase();
+    final saysItsKind = [label, ...kindWordsOf(kind)]
+        .any((w) => name.toLowerCase().contains(w.length > 5 ? w.substring(0, 5) : w));
+    final intro = saysItsKind ? 'Поруч — «$name».' : 'Поруч — $label «$name».';
 
-    if (shortDesc != null &&
-        shortDesc.isNotEmpty &&
-        !isFallbackDescription(shortDesc)) {
-      buffer.write(' $shortDesc');
-    } else {
-      buffer.write(' Зверніть увагу на архітектурні деталі та атмосферу довкола!');
+    final parts = <String>[intro];
+    final known = <String>[
+      if (shortDesc != null && shortDesc.isNotEmpty && !isFallbackDescription(shortDesc) && shortDesc != kind.label)
+        shortDesc,
+      ...facts.map((f) => f.fact),
+    ];
+    for (final raw in known) {
+      final line = raw.trim();
+      if (line.isEmpty || line.endsWith('...') || !TextQuality.isCleanUkrainian(line)) continue;
+      final sentence = RegExp(r'[.!?…]$').hasMatch(line) ? line : '$line.';
+      if (parts.any((p) => _sameMeaning(p, sentence))) continue;
+      if (parts.join(' ').length + sentence.length > TextQuality.maxNarrationChars) break;
+      parts.add(sentence);
     }
-    return buffer.toString();
+    if (parts.length == 1) parts.add('${EnrichedPoi.noVerifiedInfoPhrase}.');
+    return parts.join(' ');
   }
 }

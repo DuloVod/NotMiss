@@ -25,6 +25,7 @@ import '../services/wikidata_service.dart';
 import '../services/wikipedia_service.dart';
 import '../services/ios_background_task.dart';
 import '../services/text_quality.dart';
+import '../services/chat_guard.dart';
 import '../services/now_playing_service.dart';
 import '../services/visited_store.dart';
 import '../services/live_activity_service.dart';
@@ -422,7 +423,11 @@ class WalkController extends ChangeNotifier {
   bool get osmLoaded => _osmLoaded;
 
   /// Get enriched POI data from research service.
-  EnrichedPoi? getEnrichedPoi(String id) => _researchService.getEnrichedData(id);
+  EnrichedPoi? getEnrichedPoi(String id) {
+    final enriched = _researchService.getEnrichedData(id);
+    // Written by an older version, not verified against sources: never shown.
+    return enriched == null || enriched.isOutdated ? null : enriched;
+  }
 
   /// Get position in research queue.
   int getQueuePosition(String id) => _researchService.getQueuePosition(id);
@@ -481,6 +486,7 @@ class WalkController extends ChangeNotifier {
   /// the cache from earlier versions: leaked prompt text, cut-off or non-Ukrainian narration,
   /// English / placeholder descriptions and facts.
   Poi _mergeEnriched(Poi poi, EnrichedPoi enriched) {
+    if (enriched.isOutdated) return poi;
     final facts = enriched.keyFacts
         .map((f) => TextQuality.normalizeFact(f.fact))
         .where((f) => TextQuality.isCleanUkrainian(f) && !ResearchService.isFallbackFact(f))
@@ -593,7 +599,7 @@ class WalkController extends ChangeNotifier {
         _statusMessage = '🎧 ${currentPoi.name}';
         notifyListeners();
         _publishNowPlaying(currentPoi, playing: true);
-        await _audioService.play(audioPath);
+        await _playWithRetry(audioPath, () => gen != _manualPlayGen);
         if (gen != _manualPlayGen) return;
         _markListened(currentPoi);
       }
@@ -677,8 +683,16 @@ class WalkController extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// A place's chat is for curiosity about it, not free access to the model.
+  static const int maxQuestionsPerPlace = 30;
+  final Map<String, int> _chatQuestions = {};
+
   /// Ask Gemini a question about a POI, using in-memory cache for repeated questions during the session.
   Future<String> askAiAboutPoi(Poi poi, String question) async {
+    // Rejected questions cost nothing: no research, no model request, no place in the limit.
+    final local = ChatGuard.localAnswer(question, poi.name);
+    if (local != null) return local;
+
     final normalized = question.trim().toLowerCase();
     final poiQa = _qaCache.putIfAbsent(poi.id, () => {});
     if (poiQa.containsKey(normalized) && poiQa[normalized]!.isNotEmpty) {
@@ -686,7 +700,19 @@ class WalkController extends ChangeNotifier {
       return poiQa[normalized]!;
     }
 
-    final updated = getUpdatedPoi(poi);
+    final asked = _chatQuestions[poi.id] ?? 0;
+    if (asked >= maxQuestionsPerPlace) return ChatGuard.limitReached;
+    _chatQuestions[poi.id] = asked + 1;
+
+    // The answer comes from the place's sources, so they must be collected first.
+    if (_researchService.needsResearch(poi.id)) {
+      await _researchService.researchImmediately(poi.id, poi: poi);
+    }
+    var updated = getUpdatedPoi(poi);
+    final material = getEnrichedPoi(poi.id)?.sourceMaterial;
+    if (material != null && material.isNotEmpty) {
+      updated = updated.copyWith(facts: [...updated.facts, material]);
+    }
     final answer = await _aiService.answerQuestionAboutPoi(updated, question);
     if (answer.isNotEmpty) {
       poiQa[normalized] = answer;
@@ -767,6 +793,9 @@ class WalkController extends ChangeNotifier {
 
   bool _isOsmLoading = false;
 
+  /// Places closer than this get researched in advance, so the story is ready on arrival.
+  static const double researchAheadM = 350;
+
   /// Force a clean refresh of OSM POIs from Overpass, bypassing cache.
   Future<void> reloadOsmPois() async {
     await _overpassService.clearCache();
@@ -824,7 +853,16 @@ class WalkController extends ChangeNotifier {
       _waitingForGps = false;
 
       // Queue only the NEW POIs for background research (Wikidata, Wikipedia)
-      _researchService.processDiscoveredPois(deduped);
+      // Research checks articles against the city, so it must be known first (bounded by the
+      // lookup's own timeout; on failure the checks just stay stricter).
+      final fix = pos;
+      await _refreshPlaceContext(fix);
+      if (_status != WalkStatus.walking) return;
+
+      // Only what the walker can reach soon: a search returns hundreds of places, and the rest
+      // is queued on approach (see _onPosition).
+      _researchService.processDiscoveredPois(deduped, queueIf: (p) =>
+          Geolocator.distanceBetween(fix.latitude, fix.longitude, p.latitude, p.longitude) <= researchAheadM);
 
       if (_status == WalkStatus.walking) {
         _statusMessage =
@@ -910,7 +948,7 @@ class WalkController extends ChangeNotifier {
   bool _contextLoading = false;
 
   /// Learns the city around the user (once, and again after moving far) for the AI prompts.
-  void _refreshPlaceContext(Position pos) {
+  Future<void> _refreshPlaceContext(Position pos) async {
     if (_contextLoading) return;
     final last = _contextPos;
     if (last != null &&
@@ -919,17 +957,20 @@ class WalkController extends ChangeNotifier {
       return;
     }
     _contextLoading = true;
-    _placeService.lookup(pos.latitude, pos.longitude).then((ctx) {
+    try {
+      final ctx = await _placeService.lookup(pos.latitude, pos.longitude);
       if (ctx != null) {
         AiService.placeContext = ctx;
         _contextPos = pos;
       }
-    }).whenComplete(() => _contextLoading = false);
+    } finally {
+      _contextLoading = false;
+    }
   }
 
   Future<void> _onPosition(Position pos) async {
     _currentPosition = pos;
-    _refreshPlaceContext(pos);
+    unawaited(_refreshPlaceContext(pos));
     _refreshLiveActivity();
     // The lock-screen card shows the nearest next place: keep it fresh while narrating.
     if (isAudioActive &&
@@ -954,6 +995,8 @@ class WalkController extends ChangeNotifier {
         );
         if (dist < 150) {
           _researchService.prioritizePoi(p.id);
+        } else if (dist < researchAheadM) {
+          _researchService.queueAhead(p.id);
         }
         // Знаходимо одну найближчу точку на наближенні (до 100м)
         if (dist <= 100 && dist > p.triggerRadius && dist < closestApproachingDist) {
@@ -985,6 +1028,7 @@ class WalkController extends ChangeNotifier {
       triggerable.removeWhere((p) => p.id == _activePoi!.id);
     }
 
+    _dropAbandonedPause(pos);
     _dismissStaleCard(pos);
 
     // Points entered while another narration was busy must not be lost when the user
@@ -1116,7 +1160,7 @@ class WalkController extends ChangeNotifier {
         _audioService.armArrivalCue();
       }
       _publishNowPlaying(currentPoi, playing: true);
-      await _audioService.play(audioPath);
+      await _playWithRetry(audioPath, () => gen != _processGen);
       if (gen != _processGen) return; // Відмінено
       _markListened(currentPoi);
 
@@ -1184,6 +1228,37 @@ class WalkController extends ChangeNotifier {
     }
     throw lastError!;
   }
+
+  /// A story left on pause (by the user or by a phone call) must not block the guide forever:
+  /// once the walker has left the place behind, it is dropped and new places can be narrated.
+  void _dropAbandonedPause(Position pos) {
+    final active = _activePoi;
+    if (active == null || !isAudioPaused) return;
+    final dist = Geolocator.distanceBetween(
+      pos.latitude, pos.longitude, active.latitude, active.longitude,
+    );
+    if (dist > math.max(active.triggerRadius * 3, abandonedPauseM)) {
+      debugPrint('[WalkController] Dropping paused narration of ${active.name}: left behind');
+      unawaited(stopAudio());
+    }
+  }
+
+  static const double abandonedPauseM = 150;
+
+  /// A refused audio session or a stalled player gets one more try before the story is lost.
+  Future<void> _playWithRetry(String audioPath, bool Function() isCancelled) async {
+    try {
+      await _audioService.play(audioPath);
+    } on PlaybackFailed catch (e) {
+      debugPrint('[WalkController] Playback failed, retrying: $e');
+      await Future.delayed(playRetryPause);
+      if (isCancelled()) return;
+      await _audioService.play(audioPath);
+    }
+  }
+
+  /// Pause before the second playback attempt (public so tests can shorten it).
+  Duration playRetryPause = const Duration(milliseconds: 1500);
 
   /// Clears a finished card once the user has walked well away from its POI.
   void _dismissStaleCard(Position pos) {

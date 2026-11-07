@@ -81,7 +81,7 @@ void main() {
     // -------------------------------------------------------------------------
     // SCENARIO 2: User walks up to an unlisted military POI (БМ-30 «Смерч»)
     // -------------------------------------------------------------------------
-    test('Scenario 2: User approaches an unlisted military POI (AI fallback generates 3 facts)', () async {
+    test('Scenario 2: User approaches an unlisted military POI (no sources: says so, invents nothing)', () async {
       final cache = PoiCacheService();
       final category = PoiCategoryService();
       final queue = ResearchQueue(maxConcurrent: 1);
@@ -112,12 +112,11 @@ void main() {
 
       final result = service.getEnrichedData('poi_bm30');
       expect(result, isNotNull);
-      expect(result!.researchStatus, ResearchStatus.complete);
-      expect(result.shortDescription, isNotNull);
+      expect(result!.researchStatus, ResearchStatus.insufficientInformation);
       expect(result.shortDescription, isNotEmpty);
-      expect(result.keyFacts, isNotEmpty);
-      expect(result.narrationText, isNotNull);
-      expect(result.narrationText, isNotEmpty);
+      expect(result.keyFacts, isEmpty);
+      expect(result.narrationText, contains('БМ-30'));
+      expect(result.narrationText, contains(EnrichedPoi.noVerifiedInfoPhrase));
 
       service.dispose();
     });
@@ -227,7 +226,7 @@ void main() {
 
       final refreshed = service.getEnrichedData('poi_stale_recovery');
       expect(refreshed, isNotNull);
-      expect(refreshed!.researchStatus, ResearchStatus.complete);
+      expect(refreshed!.isResearchComplete, isTrue);
       // The old rigid template narration should be replaced
       expect(refreshed.narrationText, isNot(contains('Це одне з примітних місць на вашому маршруті')));
 
@@ -273,8 +272,8 @@ void main() {
 
       final result = service.getEnrichedData('poi_rapid_tap');
       expect(result, isNotNull);
-      expect(result!.researchStatus, ResearchStatus.complete);
-      expect(result.keyFacts, isNotEmpty);
+      expect(result!.isResearchComplete, isTrue);
+      expect(result.narrationText, isNotEmpty);
 
       service.dispose();
     });

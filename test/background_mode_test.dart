@@ -28,6 +28,9 @@ class _RecordingAdapter implements SessionAdapter {
   bool failActivate = false;
 
   @override
+  Future<void> configureFallback() async => log.add('configureFallback');
+
+  @override
   Future<void> configure() async {
     log.add('configure');
     if (failConfigure) throw Exception('configure failed');
@@ -98,14 +101,6 @@ class _FakeAudio extends AudioPlayerService {
 
 class _FakeAi extends AiService {
   _FakeAi() : super(apiKey: 'test');
-  @override
-  Future<Map<String, dynamic>?> generateBackgroundFacts(
-          String name, String category, Map<String, String> tags) async =>
-      {
-        'narration': 'Розповідь про $name.',
-        'description': 'Опис $name.',
-        'facts': ['Факт 1 про $name.', 'Факт 2 про $name.'],
-      };
   @override
   Future<String> generateNarration(Poi poi) async => 'Розповідь про ${poi.name}.';
 }

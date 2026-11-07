@@ -85,7 +85,7 @@ extension PoiKindInfo on PoiKind {
       case PoiKind.viewpoint:
         return 'Оглядовий майданчик';
       case PoiKind.artwork:
-        return 'Мистецтво';
+        return 'Арт-об\'єкт';
       case PoiKind.theatre:
         return 'Театр';
       case PoiKind.library:
@@ -93,12 +93,50 @@ extension PoiKindInfo on PoiKind {
       case PoiKind.tower:
         return 'Вежа';
       case PoiKind.station:
-        return 'Вокзал';
+        return 'Залізнична станція';
       case PoiKind.building:
         return 'Будівля';
       case PoiKind.other:
         return 'Цікаве місце';
     }
+  }
+}
+
+/// Words an encyclopedia title uses for this kind of place.
+List<String> kindWordsOf(PoiKind kind) {
+  switch (kind) {
+    case PoiKind.church:
+      return const ['церква', 'костел', 'собор', 'монастир', 'каплиця', 'синагога'];
+    case PoiKind.museum:
+      return const ['музей'];
+    case PoiKind.castle:
+      return const ['замок', 'палац'];
+    case PoiKind.monument:
+    case PoiKind.artwork:
+      return const ['пам\'ятник', 'меморіал', 'скульптура', 'статуя'];
+    case PoiKind.fountain:
+      return const ['фонтан'];
+    case PoiKind.street:
+      return const ['вулиця', 'провулок', 'проспект', 'бульвар'];
+    case PoiKind.square:
+      return const ['площа'];
+    case PoiKind.park:
+      return const ['парк', 'сквер'];
+    case PoiKind.water:
+      return const ['озеро'];
+    case PoiKind.theatre:
+      return const ['театр'];
+    case PoiKind.library:
+      return const ['бібліотека'];
+    case PoiKind.tower:
+      return const ['вежа'];
+    case PoiKind.station:
+      return const ['станція', 'вокзал'];
+    case PoiKind.building:
+      return const ['будинок', 'будівля', 'палац', 'готель', 'університет', 'школа'];
+    case PoiKind.viewpoint:
+    case PoiKind.other:
+      return const [];
   }
 }
 
@@ -126,7 +164,7 @@ PoiKind? _fromTags(Map<String, String> t) {
     return PoiKind.church;
   }
   if (tourism == 'museum' || tourism == 'gallery') return PoiKind.museum;
-  if (amenity == 'theatre' || amenity == 'cinema' || amenity == 'arts_centre') return PoiKind.theatre;
+  if (amenity == 'theatre' || amenity == 'cinema') return PoiKind.theatre;
   if (amenity == 'library') return PoiKind.library;
   if (const {'castle', 'palace', 'manor', 'fort'}.contains(historic) ||
       const {'castle', 'palace', 'manor'}.contains(building)) {

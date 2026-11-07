@@ -1,7 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
-import 'package:flutter/foundation.dart' show debugPrint, kIsWeb;
+import 'package:flutter/foundation.dart' show debugPrint, kIsWeb, visibleForTesting;
 import 'package:geolocator/geolocator.dart';
 import 'package:http/http.dart' as http;
 import 'package:path_provider/path_provider.dart';
@@ -246,9 +246,79 @@ class OverpassService {
   // Railway heritage / miniature park trains
   node["railway"~"station|halt|miniature"](around:$r,$lat,$lng);
   way["railway"~"station|halt|miniature"](around:$r,$lat,$lng);
+
+  // Squares and anything that has its own Wikidata entity (buildings, streets, universities…)
+  nwr["place"="square"](around:$r,$lat,$lng);
+  nwr["wikidata"](around:$r,$lat,$lng);
+  nwr["wikipedia"](around:$r,$lat,$lng);
 );
-out center;
+out bb;
 ''';
+  }
+
+  /// Objects with a Wikidata tag that are not places one can walk up to: routes, borders, whole
+  /// districts, power lines. Plain map boards are not attractions either.
+  static bool _isNotAPlace(Map<String, String> t) {
+    if (t['type'] == 'route' || t['type'] == 'route_master' || t['type'] == 'boundary') return true;
+    if (t.containsKey('route') || t.containsKey('boundary') || t.containsKey('admin_level')) return true;
+    if (t.containsKey('network') && !t.containsKey('railway')) return true;
+    final place = t['place'];
+    if (place != null && place != 'square') return true;
+    if (t.containsKey('power') || t.containsKey('waterway') || t.containsKey('landuse')) return true;
+    final railway = t['railway'];
+    if (railway != null && !const {'station', 'halt', 'miniature'}.contains(railway)) return true;
+    if (t['tourism'] == 'information' && !t.containsKey('wikidata') && !t.containsKey('wikipedia')) {
+      return true;
+    }
+    return false;
+  }
+
+  /// Half of the object's diagonal in metres, or null when it is a point / has bogus bounds.
+  static double? _halfDiagonalM(Map<String, dynamic>? bounds) {
+    if (bounds == null) return null;
+    final minLat = (bounds['minlat'] as num?)?.toDouble();
+    final minLon = (bounds['minlon'] as num?)?.toDouble();
+    final maxLat = (bounds['maxlat'] as num?)?.toDouble();
+    final maxLon = (bounds['maxlon'] as num?)?.toDouble();
+    if (minLat == null || minLon == null || maxLat == null || maxLon == null) return null;
+    if (minLat < -90 || maxLat > 90 || minLon < -180 || maxLon > 180) return null;
+    return Geolocator.distanceBetween(minLat, minLon, maxLat, maxLon) / 2;
+  }
+
+  /// A big park or a long building: the walker reaches it long before its centre, so the trigger
+  /// radius grows with the object's size (within limits).
+  @visibleForTesting
+  static double triggerRadiusFor(double? halfDiagonalM, Map<String, String> tags) {
+    if (halfDiagonalM == null) return defaultTriggerRadiusM;
+    final cap = tags.containsKey('highway') ? 120.0 : maxTriggerRadiusM;
+    return (halfDiagonalM + 15).clamp(defaultTriggerRadiusM, cap);
+  }
+
+  static const double maxTriggerRadiusM = 350;
+
+  /// One object can be mapped several times (a node and a way, nine segments of one street).
+  /// Keeps the best-described entry per name within a distance.
+  @visibleForTesting
+  static List<Poi> dedupeByName(List<Poi> pois) {
+    int score(Poi p) {
+      final t = p.osmTags ?? const {};
+      return (t.containsKey('wikidata') ? 4 : 0) + (t.containsKey('wikipedia') ? 2 : 0) + t.length.clamp(0, 20) ~/ 10;
+    }
+
+    final kept = <Poi>[];
+    for (final p in pois) {
+      final name = p.name.trim().toLowerCase();
+      final maxD = (p.osmTags ?? const {}).containsKey('highway') ? 1500.0 : 150.0;
+      final i = kept.indexWhere((k) =>
+          k.name.trim().toLowerCase() == name &&
+          Geolocator.distanceBetween(k.latitude, k.longitude, p.latitude, p.longitude) <= maxD);
+      if (i == -1) {
+        kept.add(p);
+      } else if (score(p) > score(kept[i])) {
+        kept[i] = p;
+      }
+    }
+    return kept;
   }
 
   /// Parse Overpass JSON elements into Poi objects.
@@ -265,7 +335,10 @@ out center;
       final id = 'osm_${type}_$osmId';
       if (seenIds.contains(id)) continue;
 
-      // Get coordinates: nodes have lat/lon directly; ways/relations have center
+      final bounds = el['bounds'] as Map<String, dynamic>?;
+      final halfDiagonal = _halfDiagonalM(bounds);
+
+      // Get coordinates: nodes have lat/lon directly; ways/relations have center or bounds
       double? lat;
       double? lng;
 
@@ -273,11 +346,14 @@ out center;
         lat = (el['lat'] as num?)?.toDouble();
         lng = (el['lon'] as num?)?.toDouble();
       } else {
-        // way or relation — use center
+        // way or relation — use center, or the middle of the bounds
         final center = el['center'] as Map<String, dynamic>?;
         if (center != null) {
           lat = (center['lat'] as num?)?.toDouble();
           lng = (center['lon'] as num?)?.toDouble();
+        } else if (bounds != null && halfDiagonal != null) {
+          lat = (((bounds['minlat'] as num) + (bounds['maxlat'] as num)) / 2).toDouble();
+          lng = (((bounds['minlon'] as num) + (bounds['maxlon'] as num)) / 2).toDouble();
         }
       }
 
@@ -297,7 +373,9 @@ out center;
 
       // Skip unnamed POIs
       if (name == null || name.isEmpty) continue;
-
+      if (_isNotAPlace(tags)) continue;
+      // Spans several kilometres (long routes, rivers): not something one "arrives at".
+      if (halfDiagonal != null && halfDiagonal > 2500 && !tags.containsKey('leisure')) continue;
       seenIds.add(id);
 
       // Extract Wikidata ID if present
@@ -311,7 +389,7 @@ out center;
         name: name,
         latitude: lat,
         longitude: lng,
-        triggerRadius: defaultTriggerRadiusM,
+        triggerRadius: triggerRadiusFor(halfDiagonal, tags),
         shortDescription: description,
         facts: [],
         narrationText: '',
@@ -327,7 +405,7 @@ out center;
       ));
     }
 
-    return pois;
+    return dedupeByName(pois);
   }
 
   /// Build a human-readable description from OSM tags.

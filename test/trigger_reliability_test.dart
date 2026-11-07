@@ -61,21 +61,10 @@ class _FakeAi extends AiService {
   int factCalls = 0;
 
   @override
-  Future<Map<String, dynamic>?> generateBackgroundFacts(
-      String name, String category, Map<String, String> tags) async {
-    factCalls++;
-    if (hang) return Completer<Map<String, dynamic>?>().future;
-    await Future.delayed(delay);
-    return {
-      'narration': 'Розповідь про $name.',
-      'description': 'Опис місця $name.',
-      'facts': ['Факт перший про $name.', 'Факт другий про $name.'],
-    };
-  }
-
-  @override
   Future<String> generateNarration(Poi poi) async {
+    factCalls++;
     if (hang) return Completer<String>().future;
+    await Future.delayed(delay);
     return 'Розповідь про ${poi.name}.';
   }
 }
@@ -90,6 +79,23 @@ const _poi = Poi(
   facts: [],
   narrationText: '',
   sources: [],
+);
+
+/// A place some source knows about (an OSM description long enough for a story).
+const _sourced = Poi(
+  id: 'poi_sourced',
+  name: 'Ратуша',
+  latitude: 49.84,
+  longitude: 24.03,
+  triggerRadius: 40,
+  shortDescription: '',
+  facts: [],
+  narrationText: '',
+  sources: [],
+  osmTags: {
+    'description': 'Адміністративна будівля в центрі міста, де протягом усього часу її існування '
+        'працювала міська влада; сучасну споруду звели на місці старої, що обвалилася.',
+  },
 );
 
 final _pos = Position(
@@ -177,7 +183,7 @@ void main() {
       final tts = _FakeTts();
       final audio = _FakeAudio();
       final controller = _controller(
-        _research(_FakeAi(hang: true), deadline: const Duration(milliseconds: 300)),
+        _research(_FakeAi(hang: true), deadline: const Duration(milliseconds: 1500)),
         tts,
         audio,
       );
@@ -197,11 +203,11 @@ void main() {
       final ai = _FakeAi(delay: const Duration(milliseconds: 200));
       final service = _research(ai);
 
-      service.processDiscoveredPois([_poi]); // queue starts the run right away
-      await service.researchImmediately(_poi.id, poi: _poi, force: true);
+      service.processDiscoveredPois([_sourced]); // queue starts the run right away
+      await service.researchImmediately(_sourced.id, poi: _sourced, force: true);
 
       expect(ai.factCalls, 1, reason: 'no duplicate research for the same POI');
-      final result = service.getEnrichedData(_poi.id)!;
+      final result = service.getEnrichedData(_sourced.id)!;
       expect(result.researchStatus, ResearchStatus.complete);
       expect(result.narrationText, isNotEmpty);
       service.dispose();
@@ -209,14 +215,14 @@ void main() {
 
     test('a failed run does not overwrite a newer successful result', () async {
       final service = _research(_FakeAi());
-      await service.researchImmediately(_poi.id, poi: _poi, force: true);
-      final good = service.getEnrichedData(_poi.id)!;
+      await service.researchImmediately(_sourced.id, poi: _sourced, force: true);
+      final good = service.getEnrichedData(_sourced.id)!;
       expect(good.researchStatus, ResearchStatus.complete);
 
       // Queue task for an already completed POI must be a no-op, not a rewrite.
-      service.processDiscoveredPois([_poi]);
+      service.processDiscoveredPois([_sourced]);
       await Future.delayed(const Duration(milliseconds: 50));
-      expect(service.getEnrichedData(_poi.id)!.narrationText, good.narrationText);
+      expect(service.getEnrichedData(_sourced.id)!.narrationText, good.narrationText);
       service.dispose();
     });
   });

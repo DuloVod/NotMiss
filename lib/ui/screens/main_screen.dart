@@ -1214,14 +1214,20 @@ class _PoiDetailsSheetState extends State<_PoiDetailsSheet> {
         String? badgeLabel;
         if (enriched != null && enriched.sources.isNotEmpty) {
           final firstSource = enriched.sources.first.type;
-          badgeLabel = firstSource == 'ai' ? 'ШІ-гід' : 'Вікіпедія';
+          badgeLabel = firstSource == 'wikipedia' || enriched.sources.any((s) => s.type == 'wikipedia')
+              ? 'Вікіпедія'
+              : (firstSource == 'ai' ? 'ШІ-гід' : 'Джерела');
         } else if (updatedPoi.narrationText.isNotEmpty) {
           badgeLabel = 'Аудіогід';
         }
 
-        final category = enriched?.category ?? PoiCategoryService().categorize(widget.poi.osmTags ?? {});
-        final catLabel = PoiCategoryService.categoryLabelUk(category);
-        final catEmoji = PoiCategoryService.categoryEmoji(category);
+        final kind = poiKindOf(widget.poi);
+        // What the text rests on: the user can see where it comes from.
+        final sourceTitles = (enriched?.sources ?? const <ResearchSource>[])
+            .where((s) => s.type != 'ai')
+            .map((s) => s.title)
+            .toSet()
+            .toList();
 
         return Container(
           constraints: BoxConstraints(
@@ -1291,13 +1297,20 @@ class _PoiDetailsSheetState extends State<_PoiDetailsSheet> {
                             color: NmColors.cream,
                             borderRadius: BorderRadius.circular(12),
                           ),
-                          child: Text(
-                            '$catEmoji $catLabel',
-                            style: const TextStyle(
-                              fontSize: 12,
-                              fontWeight: FontWeight.w600,
-                              color: NmColors.ink,
-                            ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(kind.icon, size: 14, color: NmColors.ink),
+                              const SizedBox(width: 6),
+                              Text(
+                                kind.label,
+                                style: const TextStyle(
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w600,
+                                  color: NmColors.ink,
+                                ),
+                              ),
+                            ],
                           ),
                         ),
                         const SizedBox(height: 14),
@@ -1604,6 +1617,14 @@ class _PoiDetailsSheetState extends State<_PoiDetailsSheet> {
                           const SizedBox(height: 16),
                         ],
 
+                        if (sourceTitles.isNotEmpty) ...[
+                          Text(
+                            'Джерела: ${sourceTitles.join(' · ')}',
+                            style: const TextStyle(fontSize: 12, color: NmColors.muted, height: 1.35),
+                          ),
+                          const SizedBox(height: 16),
+                        ],
+
                         // Fallback message if no data at all yet
                         if (!isProcessing && narration.isEmpty && description.isEmpty && facts.isEmpty) ...[
                           Container(
@@ -1751,7 +1772,8 @@ class _AiChatSheetState extends State<_AiChatSheet> {
       widget.controller.addChatMessage(
         widget.poi.id,
         ChatMessage(
-          text: 'Вітаю! Я ваш ШІ-гід. Запитайте мене будь-що про «${widget.poi.name}»!',
+          text: 'Запитайте мене про «${widget.poi.name}»: його історію, людей і події, пов\'язані з ним. '
+              'Відповідаю лише за перевіреними джерелами.',
           isUser: false,
         ),
       );

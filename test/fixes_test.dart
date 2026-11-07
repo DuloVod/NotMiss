@@ -518,12 +518,12 @@ void main() {
 
       final result = service.getEnrichedData('poi_vehicle_test');
       expect(result, isNotNull);
-      expect(result!.researchStatus, ResearchStatus.complete);
+      // No source knows it (offline), so nothing may be claimed about it
+      expect(result!.researchStatus, ResearchStatus.insufficientInformation);
       // Guaranteed human-readable description (not raw historic: vehicle tag)
       expect(result.shortDescription, isNotNull);
       expect(result.shortDescription!.startsWith('historic:'), isFalse);
-      // Guaranteed facts
-      expect(result.keyFacts, isNotEmpty);
+      expect(result.keyFacts, isEmpty);
       // Guaranteed narration text so the app is never silent
       expect(result.narrationText, isNotNull);
       expect(result.narrationText!.isNotEmpty, isTrue);
@@ -565,7 +565,7 @@ void main() {
 
       final result = service.getEnrichedData('poi_concurrent_test');
       expect(result, isNotNull);
-      expect(result!.researchStatus, ResearchStatus.complete);
+      expect(result!.isResearchComplete, isTrue);
       expect(result.narrationText, isNotNull);
       expect(result.narrationText!.isNotEmpty, isTrue);
 

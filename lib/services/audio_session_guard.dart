@@ -5,6 +5,10 @@ import 'package:flutter/foundation.dart' show debugPrint, kIsWeb;
 abstract class SessionAdapter {
   Future<void> configure();
   Future<void> setActive(bool active);
+
+  /// Mixable configuration (lowers other audio instead of stopping it). iOS always allows it
+  /// to start from the background, unlike the primary one.
+  Future<void> configureFallback();
 }
 
 /// Real implementation: category `playback` + mode `spokenAudio` (keeps narrating with the
@@ -27,6 +31,22 @@ class PlatformSessionAdapter implements SessionAdapter {
     androidWillPauseWhenDucked: false,
   );
 
+  /// Used only when iOS refuses [configuration]: with the screen locked and another app
+  /// playing, a non-mixable session cannot start (`cannotInterruptOthers`). The narration
+  /// must still be heard, so it plays over the lowered music.
+  static const AudioSessionConfiguration fallbackConfiguration = AudioSessionConfiguration(
+    avAudioSessionCategory: AVAudioSessionCategory.playback,
+    avAudioSessionMode: AVAudioSessionMode.spokenAudio,
+    avAudioSessionCategoryOptions: AVAudioSessionCategoryOptions.duckOthers,
+    avAudioSessionSetActiveOptions: AVAudioSessionSetActiveOptions.notifyOthersOnDeactivation,
+    androidAudioAttributes: AndroidAudioAttributes(
+      contentType: AndroidAudioContentType.speech,
+      usage: AndroidAudioUsage.media,
+    ),
+    androidAudioFocusGainType: AndroidAudioFocusGainType.gainTransientMayDuck,
+    androidWillPauseWhenDucked: false,
+  );
+
   @override
   Future<void> configure() async {
     final session = await AudioSession.instance;
@@ -34,9 +54,16 @@ class PlatformSessionAdapter implements SessionAdapter {
   }
 
   @override
+  Future<void> configureFallback() async {
+    final session = await AudioSession.instance;
+    await session.configure(fallbackConfiguration);
+  }
+
+  @override
   Future<void> setActive(bool active) async {
     final session = await AudioSession.instance;
-    await session.setActive(active);
+    final ok = await session.setActive(active);
+    if (!ok) throw StateError('audio session refused setActive($active)');
   }
 }
 
@@ -72,11 +99,7 @@ class AudioSessionGuard {
     final gen = ++_gen;
     if (_enabled) {
       await prepare();
-      try {
-        await _adapter.setActive(true);
-      } catch (e) {
-        debugPrint('[AudioSessionGuard] activate failed: $e');
-      }
+      await _activate();
     }
     try {
       return await playback();
@@ -85,7 +108,33 @@ class AudioSessionGuard {
         try {
           await _adapter.setActive(false);
         } catch (_) {}
+        if (_usingFallback) {
+          _usingFallback = false;
+          try {
+            await _adapter.configure();
+          } catch (_) {}
+        }
       }
+    }
+  }
+
+  bool _usingFallback = false;
+
+  /// Activates the session; when iOS refuses (locked screen + other audio playing), switches
+  /// to the mixable configuration so the narration is heard anyway.
+  Future<void> _activate() async {
+    try {
+      await _adapter.setActive(true);
+      return;
+    } catch (e) {
+      debugPrint('[AudioSessionGuard] activate failed, trying mixable session: $e');
+    }
+    try {
+      await _adapter.configureFallback();
+      _usingFallback = true;
+      await _adapter.setActive(true);
+    } catch (e) {
+      debugPrint('[AudioSessionGuard] mixable activation failed: $e');
     }
   }
 }

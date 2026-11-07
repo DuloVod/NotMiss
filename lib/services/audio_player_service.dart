@@ -24,6 +24,16 @@ class StallDetector {
   }
 }
 
+/// The narration could not be played (no sound came out). Callers must not treat the place
+/// as listened to.
+class PlaybackFailed implements Exception {
+  final String reason;
+  const PlaybackFailed(this.reason);
+
+  @override
+  String toString() => 'PlaybackFailed($reason)';
+}
+
 /// Plays audio through the device speaker/headphones.
 ///
 /// Accepts either:
@@ -68,7 +78,7 @@ class AudioPlayerService {
   Future<void> _playChime() async {
     try {
       await _player.setAsset(_chimeAsset);
-      _player.play();
+      unawaited(_player.play().catchError((Object _) {}));
       await _player.playerStateStream
           .firstWhere((state) =>
               state.processingState == ProcessingState.completed ||
@@ -99,7 +109,13 @@ class AudioPlayerService {
           await _player.setFilePath(source);
         }
 
-        _player.play(); // Do not await this future directly
+        // Not awaited (it completes at the end of playback), but a refused audio session
+        // surfaces here: without this handler the failure would be lost.
+        String? failure;
+        unawaited(_player.play().catchError((Object e) {
+          failure = '$e';
+          _player.stop();
+        }));
 
         // Watchdog: a player that "plays" without moving (session not active, route lost)
         // is stopped, so the narration queue can never hang.
@@ -108,6 +124,7 @@ class AudioPlayerService {
           if (stall.observe(
               playing: _player.playing, position: _player.position, now: DateTime.now())) {
             debugPrint('[AudioPlayerService] playback stalled — stopping');
+            failure ??= 'stalled';
             _player.stop();
           }
         });
@@ -122,6 +139,7 @@ class AudioPlayerService {
         } finally {
           watchdog.cancel();
         }
+        if (failure != null && token == _stopToken) throw PlaybackFailed(failure!);
 
         // Cleanly reset player when playback reaches completion naturally
         try {

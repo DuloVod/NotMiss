@@ -16,7 +16,7 @@ class PlaceContextService {
         'format': 'jsonv2',
         'lat': lat.toStringAsFixed(5),
         'lon': lng.toStringAsFixed(5),
-        'zoom': '10',
+        'zoom': '14', // at city level Nominatim names the municipality, not the city
         'accept-language': 'uk',
       });
       final res = await http

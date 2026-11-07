@@ -132,6 +132,20 @@ class TextQuality {
   static String finalizeNarration(String raw) =>
       trimToLength(stripGreeting(sanitizeNarration(raw)));
 
+  static final _number = RegExp(r'\d+(?:[.,]\d+)?');
+
+  /// Numbers in [text] (years, metres, counts) that do not occur in [source]. Any such number
+  /// was made up by the model: a cheap and exact check, independent of the model's own opinion.
+  static List<String> unsupportedNumbers(String text, String source) {
+    final known = _number.allMatches(source).map((m) => m.group(0)!.replaceAll(',', '.')).toSet();
+    return _number
+        .allMatches(text)
+        .map((m) => m.group(0)!)
+        .where((n) => !known.contains(n.replaceAll(',', '.')))
+        .toSet()
+        .toList();
+  }
+
   /// Why [text] is not a usable narration, or null when it is fine.
   ///
   /// [strict] (generation time) additionally requires a real story: ≥[minChars] characters and

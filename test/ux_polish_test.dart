@@ -76,10 +76,6 @@ class _Audio extends AudioPlayerService {
 class _Ai extends AiService {
   _Ai() : super(apiKey: 'test');
   @override
-  Future<Map<String, dynamic>?> generateBackgroundFacts(
-          String name, String category, Map<String, String> tags) async =>
-      null;
-  @override
   Future<String> generateNarration(Poi poi) async => 'Розповідь про ${poi.name}.';
 }
 

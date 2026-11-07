@@ -70,6 +70,10 @@ class ResearchSource {
 /// linked by [poiId]. Contains facts, sources, category,
 /// and research status metadata.
 class EnrichedPoi {
+  /// Content generated before this version was not checked against sources: it is never shown
+  /// and gets researched again.
+  static const int currentSchema = 2;
+
   final String poiId;
   final String name;
   final String category;
@@ -88,6 +92,9 @@ class EnrichedPoi {
   final DateTime? lastResearchedAt;
   final int schemaVersion;
 
+  /// Text of all sources used for this place (basis for AI answers about it).
+  final String? sourceMaterial;
+
   const EnrichedPoi({
     required this.poiId,
     required this.name,
@@ -105,7 +112,8 @@ class EnrichedPoi {
     this.wikidataId,
     this.priority = ResearchPriority.medium,
     this.lastResearchedAt,
-    this.schemaVersion = 1,
+    this.schemaVersion = currentSchema,
+    this.sourceMaterial,
   });
 
   /// Create a copy with updated fields.
@@ -125,6 +133,8 @@ class EnrichedPoi {
     ResearchPriority? priority,
     DateTime? lastResearchedAt,
     String? category,
+    int? schemaVersion,
+    String? sourceMaterial,
   }) {
     return EnrichedPoi(
       poiId: poiId,
@@ -143,18 +153,27 @@ class EnrichedPoi {
       wikidataId: wikidataId ?? this.wikidataId,
       priority: priority ?? this.priority,
       lastResearchedAt: lastResearchedAt ?? this.lastResearchedAt,
-      schemaVersion: schemaVersion,
+      schemaVersion: schemaVersion ?? this.schemaVersion,
+      sourceMaterial: sourceMaterial ?? this.sourceMaterial,
     );
   }
+
+  /// Written by an older version of the app, without verification against sources.
+  bool get isOutdated => schemaVersion < currentSchema;
 
   /// Whether this POI has been fully researched and doesn't need more work.
   bool get isResearchComplete =>
       researchStatus == ResearchStatus.complete ||
       researchStatus == ResearchStatus.insufficientInformation;
 
+  /// Said when no source knows anything about a place: honesty instead of invention.
+  static const String noVerifiedInfoPhrase = 'Перевірених відомостей про це місце поки немає';
+
   /// Whether this POI currently holds fallback/template content rather than verified research.
   bool get hasFallbackContent {
+    if (isOutdated) return true;
     final narr = narrationText ?? '';
+    if (narr.contains(noVerifiedInfoPhrase)) return true;
     if (narr.contains('Це одне з примітних місць на вашому маршруті') ||
         narr.contains('Зверніть увагу на його вигляд та деталі довкола') ||
         narr.contains('Зверніть увагу на архітектурні деталі та атмосферу довкола!')) {
@@ -198,6 +217,7 @@ class EnrichedPoi {
     'priority': priority.name,
     'last_researched_at': lastResearchedAt?.toIso8601String(),
     'schema_version': schemaVersion,
+    'source_material': sourceMaterial,
   };
 
   factory EnrichedPoi.fromJson(Map<String, dynamic> json) {
@@ -238,6 +258,7 @@ class EnrichedPoi {
           ? DateTime.tryParse(json['last_researched_at'] as String)
           : null,
       schemaVersion: json['schema_version'] as int? ?? 1,
+      sourceMaterial: json['source_material'] as String?,
     );
   }
 
