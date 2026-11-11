@@ -2,7 +2,10 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
+import 'dart:ui' show PlatformDispatcher;
+import 'l10n/app_lang.dart';
 import 'models/destination.dart';
+import 'services/settings_store.dart';
 import 'services/background_service.dart';
 import 'ui/screens/main_screen.dart';
 import 'ui/theme/app_theme.dart';
@@ -21,6 +24,11 @@ Future<void> main() async {
     // .env not found — API key will be empty, AI/TTS features will be skipped
   }
 
+  // Language: the user's choice, otherwise the phone's language (first launch).
+  final settings = SettingsStore();
+  await settings.init();
+  L.lang = settings.lang ?? AppLang.fromDevice(PlatformDispatcher.instance.locale.languageCode);
+
   Destination? destination;
   String? loadError;
 
@@ -30,7 +38,7 @@ Future<void> main() async {
     final parsed = jsonDecode(jsonStr) as Map<String, dynamic>;
     destination = Destination.fromJson(parsed);
   } catch (e) {
-    loadError = 'Помилка завантаження даних парку:\n$e';
+    loadError = L.t('Помилка завантаження даних парку:\n$e', 'Could not load the park data:\n$e');
   }
 
   final envKey = dotenv.maybeGet('GEMINI_API_KEY');
@@ -41,6 +49,7 @@ Future<void> main() async {
   runApp(NotMissApp(
     destination: destination,
     apiKey: apiKey,
+    settings: settings,
     loadError: loadError,
   ));
 }
@@ -50,12 +59,14 @@ Future<void> main() async {
 class NotMissApp extends StatefulWidget {
   final Destination? destination;
   final String apiKey;
+  final SettingsStore settings;
   final String? loadError;
 
   const NotMissApp({
     super.key,
     required this.destination,
     required this.apiKey,
+    required this.settings,
     this.loadError,
   });
 
@@ -90,7 +101,7 @@ class _NotMissAppState extends State<NotMissApp> {
       debugShowCheckedModeBanner: false,
       theme: NmTheme.light(),
       home: _controller == null
-          ? _ErrorScreen(message: widget.loadError ?? 'Дані парку не завантажились.')
+          ? _ErrorScreen(message: widget.loadError ?? L.t('Дані парку не завантажились.', 'The park data could not be loaded.'))
           : MainScreen(controller: _controller!),
     );
   }
@@ -114,7 +125,7 @@ class _ErrorScreen extends StatelessWidget {
               const Icon(Icons.error_outline, size: 64, color: NmColors.wine),
               const SizedBox(height: 16),
               Text(
-                'Помилка запуску',
+                L.t('Помилка запуску', 'Startup error'),
                 style: NmText.title(22),
               ),
               const SizedBox(height: 12),

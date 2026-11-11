@@ -7,6 +7,8 @@ import '../../models/poi.dart';
 import '../../models/enriched_poi.dart';
 import '../../models/chat_message.dart';
 import '../../services/poi_category_service.dart';
+import '../../l10n/app_lang.dart';
+import '../../services/report_service.dart';
 import '../walk_controller.dart';
 import '../guide_status.dart';
 import '../../services/text_quality.dart';
@@ -104,6 +106,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
     final allPois = widget.controller.allPois;
     final visitedIds = widget.controller.visitedPoiIds;
     final listenedIds = widget.controller.listenedPoiIds;
+    final silentIds = widget.controller.silentPoiIds;
     final guideStatus = widget.controller.guideStatus;
 
     return Scaffold(
@@ -138,6 +141,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
                         isActive: p.id == activePoi?.id,
                         isTriggered: visitedIds.contains(p.id),
                         isListened: listenedIds.contains(p.id),
+                        isSilent: silentIds.contains(p.id),
                       )),
                   if (pos != null) _buildUserMarker(pos),
                 ],
@@ -176,6 +180,33 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
                       child: Column(
                         mainAxisSize: MainAxisSize.min,
                         children: [
+                          // Language (the interface, the stories, the AI and the voice follow it)
+                          Padding(
+                            padding: const EdgeInsets.only(bottom: 12.0),
+                            child: SizedBox(
+                              width: 48,
+                              height: 48,
+                              child: FloatingActionButton(
+                                heroTag: 'walkLanguage',
+                                backgroundColor: Colors.white,
+                                elevation: 4,
+                                tooltip: L.t('Мова', 'Language'),
+                                onPressed: () => _showLanguageSheet(context, widget.controller),
+                                child: Row(
+                                  mainAxisAlignment: MainAxisAlignment.center,
+                                  children: [
+                                    const Icon(Icons.translate, color: NmColors.ink, size: 20),
+                                    const SizedBox(width: 2),
+                                    Text(
+                                      L.lang.code.toUpperCase(),
+                                      style: const TextStyle(
+                                          fontSize: 10, fontWeight: FontWeight.w800, color: NmColors.ink),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ),
+                          ),
                           // Places already visited (always reachable, also while a place card is open)
                           Padding(
                             padding: const EdgeInsets.only(bottom: 12.0),
@@ -189,7 +220,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
                                     heroTag: 'walkVisitedList',
                                     backgroundColor: Colors.white,
                                     elevation: 4,
-                                    tooltip: 'Мої місця',
+                                    tooltip: L.t('Мої місця', 'My places'),
                                     onPressed: () => _showVisitedSheet(context),
                                     child: const Icon(Icons.checklist_rounded,
                                         color: NmColors.ink, size: 26),
@@ -237,7 +268,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
                                     heroTag: 'walkResetNorth',
                                     backgroundColor: Colors.white,
                                     elevation: 4,
-                                    tooltip: 'Орієнтувати на північ',
+                                    tooltip: L.t('Орієнтувати на північ', 'Point north'),
                                     onPressed: () => _mapController.rotate(0.0),
                                     child: Transform.rotate(
                                       angle: -rotation * (3.141592653589793 / 180),
@@ -276,7 +307,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
                               heroTag: 'walkLocateMe',
                               backgroundColor: Colors.white,
                               elevation: 4,
-                              tooltip: 'Моє розташування',
+                              tooltip: L.t('Моє розташування', 'My location'),
                               onPressed: _locateMe,
                               child: Icon(
                                 pos != null && _followUser
@@ -376,6 +407,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
                   ],
                 ),
               ),
+              _reportButton(context, widget.controller, poi),
             ],
           ),
           // Narration or Description Card (with quick open to full sheet)
@@ -402,7 +434,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
                         ),
                         const SizedBox(width: 6),
                         Text(
-                          poi.narrationText.isNotEmpty ? 'Текст розповіді гіда:' : 'Про об\'єкт:',
+                          poi.narrationText.isNotEmpty ? L.t('Текст розповіді гіда:', 'Guide\'s story:') : L.t('Про об\'єкт:', 'About the place:'),
                           style: const TextStyle(
                             fontSize: 13,
                             fontWeight: FontWeight.w600,
@@ -410,8 +442,8 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
                           ),
                         ),
                         const Spacer(),
-                        const Text(
-                          'Читати все ↗',
+                        Text(
+                          L.t('Читати все ↗', 'Read all ↗'),
                           style: TextStyle(
                             fontSize: 12,
                             fontWeight: FontWeight.w600,
@@ -446,7 +478,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
                 const SizedBox(width: 6),
                 Expanded(
                   child: Text(
-                    'Далі: ${next.poi.name} · ${next.meters.round()} м',
+                    L.t('Далі: ${next.poi.name} · ${L.distance(next.meters)}', 'Next: ${next.poi.name} · ${L.distance(next.meters)}'),
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: const TextStyle(fontSize: 13, color: NmColors.muted),
@@ -463,8 +495,8 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
             OutlinedButton.icon(
               onPressed: () => _showAiChatSheet(context, poi),
               icon: const Icon(Icons.auto_awesome, size: 20),
-              label: const Text(
-                'Запитати ШІ про це місце',
+              label: Text(
+                L.t('Запитати ШІ про це місце', 'Ask the AI about this place'),
                 style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
               ),
               style: NmButtons.primary(),
@@ -478,20 +510,22 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
                   height: 18,
                   child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
                 ),
-                label: const Text(
-                  'Готуємо розповідь…',
+                label: Text(
+                  L.t('Готуємо розповідь…', 'Preparing the story…'),
                   style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
                 ),
                 style: NmButtons.primary(),
               ),
+            ] else if (widget.controller.isSilentPoi(poi.id)) ...[
+              _silentNote(),
             ] else ...[
               ElevatedButton.icon(
                 onPressed: () {
                   widget.controller.playNarrationForPoi(poi);
                 },
                 icon: const Icon(Icons.volume_up_rounded, size: 22),
-                label: const Text(
-                  'Прослухати розповідь',
+                label: Text(
+                  L.t('Прослухати розповідь', 'Listen to the story'),
                   style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
                 ),
                 style: NmButtons.primary(),
@@ -501,8 +535,8 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
             OutlinedButton.icon(
               onPressed: () => _showAiChatSheet(context, poi),
               icon: const Icon(Icons.auto_awesome, size: 20),
-              label: const Text(
-                'Запитати ШІ про це місце',
+              label: Text(
+                L.t('Запитати ШІ про це місце', 'Ask the AI about this place'),
                 style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
               ),
               style: NmButtons.secondary(),
@@ -520,7 +554,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
       onPressed: () => _showVisitedSheet(context),
       icon: const Icon(Icons.check_circle_outline, size: 20),
       label: Text(
-        'Мої місця · $count',
+        L.t('Мої місця · $count', 'My places · $count'),
         style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
       ),
       style: NmButtons.secondary(),
@@ -565,7 +599,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
                     ),
                     Padding(
                       padding: const EdgeInsets.fromLTRB(24, 16, 24, 8),
-                      child: Text('Мої місця', style: NmText.title(22)),
+                      child: Text(L.t('Мої місця', 'My places'), style: NmText.title(22)),
                     ),
                     Padding(
                       padding: const EdgeInsets.fromLTRB(20, 0, 20, 8),
@@ -573,14 +607,14 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
                         children: [
                           ChoiceChip(
                             avatar: const Icon(Icons.headphones, size: 16),
-                            label: Text('Прослухані · ${listened.length}'),
+                            label: Text(L.t('Прослухані · ${listened.length}', 'Listened · ${listened.length}')),
                             selected: tab == 0,
                             onSelected: (_) => setSheet(() => tab = 0),
                           ),
                           const SizedBox(width: 8),
                           ChoiceChip(
                             avatar: const Icon(Icons.directions_walk, size: 16),
-                            label: Text('Пройдені · ${passed.length}'),
+                            label: Text(L.t('Пройдені · ${passed.length}', 'Passed · ${passed.length}')),
                             selected: tab == 1,
                             onSelected: (_) => setSheet(() => tab = 1),
                           ),
@@ -591,8 +625,8 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
                       padding: const EdgeInsets.fromLTRB(24, 0, 24, 8),
                       child: Text(
                         tab == 0
-                            ? 'Розповідь прослухано до кінця.'
-                            : 'Ви були поруч, але розповідь не прослухали — натисніть, щоб послухати.',
+                            ? L.t('Розповідь прослухано до кінця.', 'The story was heard to the end.')
+                            : L.t('Ви були поруч, але розповідь не прослухали — натисніть, щоб послухати.', 'You were nearby but did not hear the story — tap to listen.'),
                         style: const TextStyle(fontSize: 12, color: NmColors.muted),
                       ),
                     ),
@@ -601,8 +635,8 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
                         padding: const EdgeInsets.fromLTRB(24, 8, 24, 32),
                         child: Text(
                           tab == 0
-                              ? 'Поки що порожньо — місця з\'являться тут, коли ви дослухаєте розповідь.'
-                              : 'Поки що порожньо.',
+                              ? L.t('Поки що порожньо — місця з\'являться тут, коли ви дослухаєте розповідь.', 'Nothing yet — places appear here once you hear a story to the end.')
+                              : L.t('Поки що порожньо.', 'Nothing yet.'),
                           style: const TextStyle(fontSize: 15, color: NmColors.muted),
                         ),
                       )
@@ -634,7 +668,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
                                 child: Icon(kind.icon, size: 22, color: NmColors.ink),
                               ),
                               title: Text(
-                                place.name.isEmpty ? 'Місце' : place.name,
+                                place.name.isEmpty ? L.t('Місце', 'Place') : place.name,
                                 style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
                               ),
                               subtitle: Text(kind.label,
@@ -760,20 +794,20 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
       children: [
         _audioKey(
           icon: Icons.replay_rounded,
-          label: 'Ще раз',
+          label: L.t('Ще раз', 'Again'),
           onTap: () => c.replayAudio(),
         ),
         const SizedBox(width: 10),
         _audioKey(
           icon: c.isPlaying ? Icons.pause_rounded : Icons.play_arrow_rounded,
-          label: c.isPlaying ? 'Пауза' : 'Продовжити',
+          label: c.isPlaying ? L.t('Пауза', 'Pause') : L.t('Продовжити', 'Resume'),
           primary: true,
           onTap: () => c.isPlaying ? c.pauseAudio() : c.resumeAudio(),
         ),
         const SizedBox(width: 10),
         _audioKey(
           icon: c.hasNextNarration ? Icons.skip_next_rounded : Icons.stop_rounded,
-          label: c.hasNextNarration ? 'Наступне' : 'Зупинити',
+          label: c.hasNextNarration ? L.t('Наступне', 'Next') : L.t('Зупинити', 'Stop'),
           onTap: () => c.skipNarration(),
         ),
       ],
@@ -814,14 +848,14 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        isStopped ? 'Прогулянку завершено' : 'Потрібна геолокація',
+                        isStopped ? L.t('Прогулянку завершено', 'Walk finished') : L.t('Потрібна геолокація', 'Location needed'),
                         style: NmText.title(20),
                       ),
                       const SizedBox(height: 4),
                       Text(
                         isStopped
-                            ? 'Відвідано місць: ${widget.controller.totalVisitedCount}. Ви завжди можете розпочати новий маршрут!'
-                            : 'Для роботи аудіогіда надайте доступ до геопозиції.',
+                            ? L.t('Відвідано місць: ${widget.controller.totalVisitedCount}. Ви завжди можете розпочати новий маршрут!', 'Places visited: ${widget.controller.totalVisitedCount}. You can start a new route any time!')
+                            : L.t('Для роботи аудіогіда надайте доступ до геопозиції.', 'The audio guide needs access to your location.'),
                         style: const TextStyle(
                           fontSize: 14,
                           color: NmColors.muted,
@@ -844,7 +878,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
                     onPressed: () => widget.controller.startWalk(),
                     icon: const Icon(Icons.play_arrow_rounded, size: 22),
                     label: Text(
-                      isStopped ? 'Почати нову прогулянку' : 'Почати прогулянку',
+                      isStopped ? L.t('Почати нову прогулянку', 'Start a new walk') : L.t('Почати прогулянку', 'Start the walk'),
                       style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
                     ),
                     style: NmButtons.primary(),
@@ -885,19 +919,19 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
       }
     }
 
-    String idleTitle = 'Шукаємо цікаві місця...';
+    String idleTitle = L.t('Шукаємо цікаві місця...', 'Looking for interesting places...');
     String? idleSubtitle;
 
     if (!isAudioActive) {
       if (widget.controller.allPois.isEmpty) {
-        idleTitle = 'Шукаємо цікаві місця...';
-        idleSubtitle = 'Завантажуємо пам\'ятки з карти поруч з вами…';
+        idleTitle = L.t('Шукаємо цікаві місця...', 'Looking for interesting places...');
+        idleSubtitle = L.t('Завантажуємо пам\'ятки з карти поруч з вами…', 'Loading places from the map around you…');
       } else if (nearestPoi != null && nearestDist != null) {
-        idleTitle = 'Гід на зв\'язку';
-        idleSubtitle = 'Найближче: ${nearestPoi.name} (~${nearestDist.round()} м)';
+        idleTitle = L.t('Гід на зв\'язку', 'Guide is on');
+        idleSubtitle = L.t('Найближче: ${nearestPoi.name} (~${L.distance(nearestDist)})', 'Nearest: ${nearestPoi.name} (~${L.distance(nearestDist)})');
       } else {
-        idleTitle = 'Гід на зв\'язку';
-        idleSubtitle = 'Пам\'яток поруч: ${widget.controller.allPois.length} (підійдіть ближче)';
+        idleTitle = L.t('Гід на зв\'язку', 'Guide is on');
+        idleSubtitle = L.t('Пам\'яток поруч: ${widget.controller.allPois.length} (підійдіть ближче)', 'Places nearby: ${widget.controller.allPois.length} (get closer)');
       }
     }
 
@@ -930,7 +964,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
                   children: [
                     Text(
                       isAudioActive
-                          ? (isPaused ? 'Озвучення на паузі' : 'Грає розповідь гіда')
+                          ? (isPaused ? L.t('Озвучення на паузі', 'Narration paused') : L.t('Грає розповідь гіда', 'The guide is telling a story'))
                           : idleTitle,
                       style: NmText.title(20),
                     ),
@@ -950,7 +984,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
               ),
               if (!isAudioActive) ...[
                 IconButton(
-                  tooltip: 'Оновити об\'єкти на карті',
+                  tooltip: L.t('Оновити об\'єкти на карті', 'Refresh places on the map'),
                   icon: const Icon(Icons.refresh_rounded, color: NmColors.muted),
                   onPressed: () => widget.controller.reloadOsmPois(),
                 ),
@@ -977,7 +1011,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
   }
 
   Marker _buildPoiMarker(Poi poi,
-      {required bool isActive, required bool isTriggered, required bool isListened}) {
+      {required bool isActive, required bool isTriggered, required bool isListened, required bool isSilent}) {
     Color color = NmColors.ink; // Unvisited place
     if (isActive) color = NmColors.ochre;
     if (isTriggered && !isActive) color = NmColors.stone;
@@ -997,7 +1031,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
         child: Center(
           child: Tooltip(
             message:
-                '${poiKindOf(poi).label}: ${poi.name}${isTriggered ? (isListened ? ' — прослухано' : ' — пройдено') : ''}',
+                '${poiKindOf(poi).label}: ${poi.name}${isSilent ? L.t(' — не озвучується (немає джерел)', ' — not narrated (no sources)') : ''}${isTriggered ? (isListened ? L.t(' — прослухано', ' — listened') : L.t(' — пройдено', ' — passed')) : ''}',
             child: Container(
               width: 36,
               height: 36,
@@ -1018,7 +1052,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
                 clipBehavior: Clip.none,
                 children: [
                   Icon(poiKindOf(poi).icon, color: Colors.white, size: 19),
-                  if (isTriggered && !isActive)
+                  if ((isTriggered || isSilent) && !isActive)
                     Positioned(
                       right: -5,
                       bottom: -5,
@@ -1027,11 +1061,11 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
                         height: 15,
                         decoration: BoxDecoration(
                           // Headphones: the story was heard. Walking figure: passed, not heard.
-                          color: isListened ? NmColors.ink : NmColors.muted,
+                          color: isSilent ? NmColors.wine : (isListened ? NmColors.ink : NmColors.muted),
                           shape: BoxShape.circle,
                           border: Border.all(color: Colors.white, width: 1.5),
                         ),
-                        child: Icon(isListened ? Icons.headphones : Icons.directions_walk,
+                        child: Icon(isSilent ? Icons.volume_off : (isListened ? Icons.headphones : Icons.directions_walk),
                             color: Colors.white, size: 10),
                       ),
                     ),
@@ -1203,6 +1237,7 @@ class _PoiDetailsSheetState extends State<_PoiDetailsSheet> {
         final isPausedThisPoi = widget.controller.isAudioPaused &&
             widget.controller.activePoi?.id == widget.poi.id;
         final isAudioActiveThisPoi = isPlayingThisPoi || isPausedThisPoi;
+        final silent = widget.controller.isSilentPoi(widget.poi.id);
         final isAlreadyTriggered =
             widget.controller.triggeredPoiIds.contains(widget.poi.id);
 
@@ -1215,10 +1250,10 @@ class _PoiDetailsSheetState extends State<_PoiDetailsSheet> {
         if (enriched != null && enriched.sources.isNotEmpty) {
           final firstSource = enriched.sources.first.type;
           badgeLabel = firstSource == 'wikipedia' || enriched.sources.any((s) => s.type == 'wikipedia')
-              ? 'Вікіпедія'
-              : (firstSource == 'ai' ? 'ШІ-гід' : 'Джерела');
+              ? L.t('Вікіпедія', 'Wikipedia')
+              : (firstSource == 'ai' ? L.t('ШІ-гід', 'AI guide') : L.t('Джерела', 'Sources'));
         } else if (updatedPoi.narrationText.isNotEmpty) {
-          badgeLabel = 'Аудіогід';
+          badgeLabel = L.t('Аудіогід', 'Audio guide');
         }
 
         final kind = poiKindOf(widget.poi);
@@ -1338,8 +1373,8 @@ class _PoiDetailsSheetState extends State<_PoiDetailsSheet> {
                                     children: [
                                       Text(
                                         queuePos > 0
-                                            ? 'Об\'єкт у черзі на дослідження (позиція: $queuePos)...'
-                                            : 'Шишка шукає інформацію про це місце (Вікіпедія, ШІ)...',
+                                            ? L.t('Об\'єкт у черзі на дослідження (позиція: $queuePos)...', 'The place is queued for research (position: $queuePos)...')
+                                            : L.t('Шукаємо інформацію про це місце (Вікіпедія, Вікідані)...', 'Looking for information about this place (Wikipedia, Wikidata)...'),
                                         style: TextStyle(
                                           fontSize: 15,
                                           color: NmColors.ink,
@@ -1348,7 +1383,7 @@ class _PoiDetailsSheetState extends State<_PoiDetailsSheet> {
                                       ),
                                       const SizedBox(height: 4),
                                       Text(
-                                        'Зачекайте 1-2 секунди, інформація завантажується автоматично.',
+                                        L.t('Зачекайте 1-2 секунди, інформація завантажується автоматично.', 'Wait a second or two, the information is loading automatically.'),
                                         style: TextStyle(fontSize: 13, color: NmColors.muted),
                                       ),
                                     ],
@@ -1360,7 +1395,10 @@ class _PoiDetailsSheetState extends State<_PoiDetailsSheet> {
                         ],
 
                         // 🎧 AI Narration Card
-                        if (narration.isNotEmpty) ...[
+                        if (silent) ...[
+                          _silentNote(),
+                          const SizedBox(height: 16),
+                        ] else if (narration.isNotEmpty) ...[
                           Container(
                             margin: const EdgeInsets.only(bottom: 18),
                             padding: const EdgeInsets.all(16),
@@ -1382,9 +1420,9 @@ class _PoiDetailsSheetState extends State<_PoiDetailsSheet> {
                                   children: [
                                     const Icon(Icons.headphones, color: NmColors.ink, size: 22),
                                     const SizedBox(width: 8),
-                                    const Expanded(
+                                    Expanded(
                                       child: Text(
-                                        'Розповідь аудіогіда:',
+                                        L.t('Розповідь аудіогіда:', 'Audio guide story:'),
                                         style: TextStyle(
                                           fontSize: 16,
                                           fontWeight: FontWeight.w600,
@@ -1423,7 +1461,7 @@ class _PoiDetailsSheetState extends State<_PoiDetailsSheet> {
                                             size: 20,
                                           ),
                                           label: Text(
-                                            isPlayingThisPoi ? 'Пауза' : 'Продовжити',
+                                            isPlayingThisPoi ? L.t('Пауза', 'Pause') : L.t('Продовжити', 'Resume'),
                                             style: const TextStyle(
                                               fontWeight: FontWeight.w600,
                                               fontSize: 15,
@@ -1437,8 +1475,8 @@ class _PoiDetailsSheetState extends State<_PoiDetailsSheet> {
                                         child: ElevatedButton.icon(
                                           onPressed: () => widget.controller.stopAudio(),
                                           icon: const Icon(Icons.stop_circle_outlined, size: 20),
-                                          label: const Text(
-                                            'Зупинити',
+                                          label: Text(
+                                            L.t('Зупинити', 'Stop'),
                                             style: TextStyle(
                                               fontWeight: FontWeight.w600,
                                               fontSize: 15,
@@ -1460,8 +1498,8 @@ class _PoiDetailsSheetState extends State<_PoiDetailsSheet> {
                                           height: 18,
                                           child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
                                         ),
-                                        label: const Text(
-                                          'Готуємо розповідь…',
+                                        label: Text(
+                                          L.t('Готуємо розповідь…', 'Preparing the story…'),
                                           style: TextStyle(
                                             fontWeight: FontWeight.w600,
                                             fontSize: 15,
@@ -1485,8 +1523,8 @@ class _PoiDetailsSheetState extends State<_PoiDetailsSheet> {
                                         ),
                                         label: Text(
                                           isAlreadyTriggered
-                                              ? 'Прослухати знову'
-                                              : 'Прослухати зараз',
+                                              ? L.t('Прослухати знову', 'Listen again')
+                                              : L.t('Прослухати зараз', 'Listen now'),
                                           style: const TextStyle(
                                             fontWeight: FontWeight.w600,
                                             fontSize: 15,
@@ -1511,12 +1549,12 @@ class _PoiDetailsSheetState extends State<_PoiDetailsSheet> {
                             child: Column(
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
-                                const Row(
+                                Row(
                                   children: [
                                     Icon(Icons.headphones, color: NmColors.ink, size: 22),
                                     SizedBox(width: 8),
                                     Text(
-                                      'Аудіогід від ШІ:',
+                                      L.t('Аудіогід від ШІ:', 'AI audio guide:'),
                                       style: TextStyle(
                                         fontSize: 16,
                                         fontWeight: FontWeight.w600,
@@ -1526,8 +1564,8 @@ class _PoiDetailsSheetState extends State<_PoiDetailsSheet> {
                                   ],
                                 ),
                                 const SizedBox(height: 8),
-                                const Text(
-                                  'ШІ може озвучити розповідь про це місце для вас прямо зараз.',
+                                Text(
+                                  L.t('ШІ може озвучити розповідь про це місце для вас прямо зараз.', 'The AI can narrate a story about this place for you right now.'),
                                   style: TextStyle(fontSize: 14, color: NmColors.ink),
                                 ),
                                 const SizedBox(height: 12),
@@ -1548,8 +1586,8 @@ class _PoiDetailsSheetState extends State<_PoiDetailsSheet> {
                                         : const Icon(Icons.volume_up, size: 20),
                                     label: Text(
                                       (widget.controller.isProcessing && widget.controller.activePoi?.id == widget.poi.id)
-                                          ? 'Готуємо розповідь…'
-                                          : 'Прослухати розповідь ШІ',
+                                          ? L.t('Готуємо розповідь…', 'Preparing the story…')
+                                          : L.t('Прослухати розповідь ШІ', 'Listen to the AI story'),
                                       style: const TextStyle(
                                         fontWeight: FontWeight.w600,
                                         fontSize: 15,
@@ -1566,7 +1604,7 @@ class _PoiDetailsSheetState extends State<_PoiDetailsSheet> {
                         // 🏛 Description Section
                         if (description.isNotEmpty) ...[
                           Text(
-                            'Про місце',
+                            L.t('Про місце', 'About the place'),
                             style: NmText.title(18),
                           ),
                           const SizedBox(height: 6),
@@ -1584,7 +1622,7 @@ class _PoiDetailsSheetState extends State<_PoiDetailsSheet> {
                         // 💡 Key Facts Section
                         if (facts.isNotEmpty) ...[
                           Text(
-                            'Цікаві факти',
+                            L.t('Цікаві факти', 'Interesting facts'),
                             style: NmText.title(18),
                           ),
                           const SizedBox(height: 8),
@@ -1619,7 +1657,7 @@ class _PoiDetailsSheetState extends State<_PoiDetailsSheet> {
 
                         if (sourceTitles.isNotEmpty) ...[
                           Text(
-                            'Джерела: ${sourceTitles.join(' · ')}',
+                            L.t('Джерела: ${sourceTitles.join(' · ')}', 'Sources: ${sourceTitles.join(' · ')}'),
                             style: const TextStyle(fontSize: 12, color: NmColors.muted, height: 1.35),
                           ),
                           const SizedBox(height: 16),
@@ -1642,7 +1680,7 @@ class _PoiDetailsSheetState extends State<_PoiDetailsSheet> {
                                     const SizedBox(width: 8),
                                     Expanded(
                                       child: Text(
-                                        'Цей об\'єкт знайдено на карті',
+                                        L.t('Цей об\'єкт знайдено на карті', 'This place was found on the map'),
                                         style: TextStyle(
                                           fontSize: 15,
                                           fontWeight: FontWeight.w600,
@@ -1654,7 +1692,7 @@ class _PoiDetailsSheetState extends State<_PoiDetailsSheet> {
                                 ),
                                 const SizedBox(height: 6),
                                 Text(
-                                  'У відкритих реєстрах стаття відсутня, проте ШІ може підготувати опис та розповідь прямо зараз.',
+                                  L.t('У відкритих реєстрах стаття відсутня, проте ШІ може підготувати опис та розповідь прямо зараз.', 'There is no article in open registers, but the AI can prepare a description and story right now.'),
                                   style: TextStyle(fontSize: 14, color: NmColors.muted, height: 1.35),
                                 ),
                                 const SizedBox(height: 12),
@@ -1666,7 +1704,7 @@ class _PoiDetailsSheetState extends State<_PoiDetailsSheet> {
                                     });
                                   },
                                   icon: const Icon(Icons.auto_awesome, size: 18),
-                                  label: const Text('Згенерувати опис ШІ зараз'),
+                                  label: Text(L.t('Згенерувати опис ШІ зараз', 'Generate the AI description now')),
                                 ),
                               ],
                             ),
@@ -1690,11 +1728,19 @@ class _PoiDetailsSheetState extends State<_PoiDetailsSheet> {
                         _showAiChatModal(context, widget.controller, widget.poi);
                       },
                       icon: const Icon(Icons.auto_awesome, size: 20),
-                      label: const Text(
-                        'Запитати ШІ про це місце',
+                      label: Text(
+                        L.t('Запитати ШІ про це місце', 'Ask the AI about this place'),
                         style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
                       ),
                     ),
+                  ),
+                ),
+
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(24, 0, 24, 10),
+                  child: SizedBox(
+                    width: double.infinity,
+                    child: _reportTextButton(context, widget.controller, widget.poi),
                   ),
                 ),
 
@@ -1706,8 +1752,8 @@ class _PoiDetailsSheetState extends State<_PoiDetailsSheet> {
                     child: OutlinedButton(
                       style: NmButtons.secondary(),
                       onPressed: () => Navigator.pop(context),
-                      child: const Text(
-                        'Закрити',
+                      child: Text(
+                        L.t('Закрити', 'Close'),
                         style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
                       ),
                     ),
@@ -1756,12 +1802,12 @@ class _AiChatSheetState extends State<_AiChatSheet> {
   bool _isLoading = false;
   String? _currentlySpeakingText;
 
-  final List<String> _quickQuestions = const [
-    'Коли це з\'явилося?',
-    'Чим особливе це місце?',
-    'Хто автор чи архітектор?',
-    'Розкажи цікавий факт',
-    'Яка тут історія чи легенда?',
+  List<String> get _quickQuestions => [
+    L.t('Коли це з\'явилося?', 'When was it built?'),
+    L.t('Чим особливе це місце?', 'What is special about this place?'),
+    L.t('Хто автор чи архітектор?', 'Who is the author or architect?'),
+    L.t('Розкажи цікавий факт', 'Tell me an interesting fact'),
+    L.t('Яка тут історія чи легенда?', 'What is the history or legend here?'),
   ];
 
   @override
@@ -1772,8 +1818,11 @@ class _AiChatSheetState extends State<_AiChatSheet> {
       widget.controller.addChatMessage(
         widget.poi.id,
         ChatMessage(
-          text: 'Запитайте мене про «${widget.poi.name}»: його історію, людей і події, пов\'язані з ним. '
+          text: L.t(
+              'Запитайте мене про «${widget.poi.name}»: його історію, людей і події, пов\'язані з ним. '
               'Відповідаю лише за перевіреними джерелами.',
+              'Ask me about "${widget.poi.name}": its history and the people and events connected with it. '
+              'I answer only from verified sources.'),
           isUser: false,
         ),
       );
@@ -1820,7 +1869,7 @@ class _AiChatSheetState extends State<_AiChatSheet> {
       widget.controller.addChatMessage(
         widget.poi.id,
         ChatMessage(
-          text: 'Вибачте, виникла помилка зв\'язку з ШІ: $e',
+          text: L.t('Вибачте, виникла помилка зв\'язку з ШІ: $e', 'Sorry, there was a connection error with the AI: $e'),
           isUser: false,
         ),
       );
@@ -1927,7 +1976,7 @@ class _AiChatSheetState extends State<_AiChatSheet> {
                           overflow: TextOverflow.ellipsis,
                         ),
                         Text(
-                          'ШІ-екскурсовод • Gemini',
+                          L.t('ШІ-екскурсовод • Gemini', 'AI guide • Gemini'),
                           style: TextStyle(
                             fontSize: 12,
                             color: NmColors.muted,
@@ -2023,7 +2072,7 @@ class _AiChatSheetState extends State<_AiChatSheet> {
                       textInputAction: TextInputAction.send,
                       onSubmitted: _sendMessage,
                       decoration: InputDecoration(
-                        hintText: 'Запитайте про «${widget.poi.name}»...',
+                        hintText: L.t('Запитайте про «${widget.poi.name}»...', 'Ask about "${widget.poi.name}"...'),
                         hintStyle: TextStyle(
                           fontSize: 15,
                           color: NmColors.stone,
@@ -2178,7 +2227,7 @@ class _AiChatSheetState extends State<_AiChatSheet> {
                             ),
                             const SizedBox(width: 4),
                             Text(
-                              isSpeaking ? 'Зупинити' : 'Озвучити',
+                              isSpeaking ? L.t('Зупинити', 'Stop') : L.t('Озвучити', 'Read aloud'),
                               style: TextStyle(
                                 fontSize: 12,
                                 fontWeight: FontWeight.w600,
@@ -2225,7 +2274,7 @@ class _AiChatSheetState extends State<_AiChatSheet> {
               ),
               const SizedBox(width: 10),
               Text(
-                'ШІ думає над відповіддю...',
+                L.t('ШІ думає над відповіддю...', 'The AI is thinking...'),
                 style: TextStyle(
                   color: NmColors.muted,
                   fontSize: 14,
@@ -2233,6 +2282,257 @@ class _AiChatSheetState extends State<_AiChatSheet> {
                 ),
               ),
             ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+
+/// "This place is on the map but has no verified story, so it is not narrated."
+Widget _silentNote() {
+  return Container(
+    padding: const EdgeInsets.all(12),
+    decoration: BoxDecoration(
+      color: NmColors.cream,
+      borderRadius: BorderRadius.circular(14),
+    ),
+    child: Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Icon(Icons.volume_off, size: 20, color: NmColors.wine),
+        const SizedBox(width: 10),
+        Expanded(
+          child: Text(
+            L.t(
+              'Цей об\'єкт не озвучується: про нього немає перевірених джерел. Його видно лише на мапі.',
+              'This place is not narrated: there are no verified sources about it. It is shown on the map only.',
+            ),
+            style: const TextStyle(fontSize: 14, color: NmColors.ink, height: 1.35),
+          ),
+        ),
+      ],
+    ),
+  );
+}
+
+/// Compact flag on a card: "inaccurate information".
+Widget _reportButton(BuildContext context, WalkController controller, Poi poi) {
+  final reported = controller.reportedPoiIds.contains(poi.id);
+  return IconButton(
+    tooltip: reported
+        ? L.t('Ви вже повідомили про неточність', 'You already reported this')
+        : L.t('Неточна інформація', 'Inaccurate information'),
+    onPressed: () => _showReportSheet(context, controller, poi),
+    icon: Icon(
+      reported ? Icons.report : Icons.report_gmailerrorred_outlined,
+      color: reported ? NmColors.wine : NmColors.muted,
+    ),
+  );
+}
+
+Widget _reportTextButton(BuildContext context, WalkController controller, Poi poi) {
+  final reported = controller.reportedPoiIds.contains(poi.id);
+  return TextButton.icon(
+    onPressed: () => _showReportSheet(context, controller, poi),
+    icon: Icon(
+      reported ? Icons.report : Icons.report_gmailerrorred_outlined,
+      size: 20,
+      color: reported ? NmColors.wine : NmColors.muted,
+    ),
+    label: Text(
+      reported
+          ? L.t('Ви повідомили про неточність', 'You reported this')
+          : L.t('Неточна інформація', 'Inaccurate information'),
+      style: TextStyle(
+        fontSize: 14,
+        fontWeight: FontWeight.w600,
+        color: reported ? NmColors.wine : NmColors.muted,
+      ),
+    ),
+  );
+}
+
+void _showLanguageSheet(BuildContext context, WalkController controller) {
+  showModalBottomSheet(
+    context: context,
+    backgroundColor: Colors.transparent,
+    builder: (ctx) => ListenableBuilder(
+      listenable: controller,
+      builder: (ctx, _) => Container(
+        decoration: const BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+        ),
+        child: SafeArea(
+          top: false,
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(24, 20, 24, 20),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Text('Мова / Language', style: NmText.title(22)),
+                const SizedBox(height: 6),
+                Text(
+                  L.t(
+                    'Мова інтерфейсу, розповідей, відповідей ШІ та голосу гіда.',
+                    'Language of the interface, the stories, the AI answers and the guide\'s voice.',
+                  ),
+                  style: const TextStyle(fontSize: 13, color: NmColors.muted),
+                ),
+                const SizedBox(height: 14),
+                for (final lang in AppLang.values)
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 8),
+                    child: ListTile(
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(14),
+                        side: BorderSide(
+                          color: controller.lang == lang ? NmColors.ink : NmColors.line,
+                          width: controller.lang == lang ? 2 : 1,
+                        ),
+                      ),
+                      title: Text(lang.nativeName,
+                          style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
+                      trailing: controller.lang == lang
+                          ? const Icon(Icons.check_circle, color: NmColors.ink)
+                          : null,
+                      onTap: () async {
+                        await controller.setLang(lang);
+                        if (ctx.mounted) Navigator.of(ctx).pop();
+                      },
+                    ),
+                  ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    ),
+  );
+}
+
+void _showReportSheet(BuildContext context, WalkController controller, Poi poi) {
+  showModalBottomSheet(
+    context: context,
+    isScrollControlled: true,
+    backgroundColor: Colors.transparent,
+    builder: (ctx) => _ReportSheet(controller: controller, poi: poi),
+  );
+}
+
+class _ReportSheet extends StatefulWidget {
+  final WalkController controller;
+  final Poi poi;
+
+  const _ReportSheet({required this.controller, required this.poi});
+
+  @override
+  State<_ReportSheet> createState() => _ReportSheetState();
+}
+
+class _ReportSheetState extends State<_ReportSheet> {
+  ReportReason _reason = ReportReason.wrongFacts;
+  final TextEditingController _comment = TextEditingController();
+  bool _busy = false;
+
+  @override
+  void dispose() {
+    _comment.dispose();
+    super.dispose();
+  }
+
+  Future<void> _send() async {
+    if (_busy) return;
+    setState(() => _busy = true);
+    final box = context.findRenderObject() as RenderBox?;
+    final origin = box == null ? null : box.localToGlobal(Offset.zero) & box.size;
+    final ok = await widget.controller.reportPlace(widget.poi, _reason, comment: _comment.text, origin: origin);
+    if (!mounted) return;
+    if (ok) {
+      Navigator.of(context).pop();
+    } else {
+      setState(() => _busy = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
+      child: Container(
+        decoration: const BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+        ),
+        child: SafeArea(
+          top: false,
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.fromLTRB(24, 20, 24, 20),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Row(
+                  children: [
+                    const Icon(Icons.report_gmailerrorred_outlined, color: NmColors.wine),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Text(L.t('Неточна інформація', 'Inaccurate information'),
+                          style: NmText.title(22)),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  '«${widget.poi.name}»',
+                  style: const TextStyle(fontSize: 14, color: NmColors.muted),
+                ),
+                const SizedBox(height: 14),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: [
+                    for (final r in ReportReason.values)
+                      ChoiceChip(
+                        label: Text(r.label),
+                        selected: _reason == r,
+                        onSelected: (_) => setState(() => _reason = r),
+                      ),
+                  ],
+                ),
+                const SizedBox(height: 14),
+                TextField(
+                  controller: _comment,
+                  maxLength: 300,
+                  maxLines: 3,
+                  decoration: InputDecoration(
+                    hintText: L.t('Що саме не так? (необов\'язково)', 'What exactly is wrong? (optional)'),
+                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(14)),
+                  ),
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  L.t(
+                    'Відкриється меню «Поділитися»: оберіть пошту чи месенджер, щоб надіслати повідомлення розробникам. У ньому лише це місце та що застосунок розповів про нього.',
+                    'The share menu opens: pick mail or a messenger to send the message to the developers. It contains only this place and what the app said about it.',
+                  ),
+                  style: const TextStyle(fontSize: 12, color: NmColors.muted, height: 1.35),
+                ),
+                const SizedBox(height: 12),
+                ElevatedButton.icon(
+                  style: NmButtons.primary(),
+                  onPressed: _busy ? null : _send,
+                  icon: const Icon(Icons.send_rounded, size: 18),
+                  label: Text(
+                    L.t('Надіслати', 'Send'),
+                    style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+                  ),
+                ),
+              ],
+            ),
           ),
         ),
       ),

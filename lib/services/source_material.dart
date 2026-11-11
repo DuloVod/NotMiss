@@ -1,3 +1,4 @@
+import '../l10n/app_lang.dart';
 import 'dart:convert';
 import 'package:flutter/foundation.dart' show debugPrint;
 import 'package:http/http.dart' as http;
@@ -57,6 +58,34 @@ class OsmFacts {
     'lutheran': 'лютеранська',
   };
 
+  static const _denominationsEn = {
+    'greek_catholic': 'Greek Catholic',
+    'ukrainian_greek_catholic': 'Greek Catholic',
+    'roman_catholic': 'Roman Catholic',
+    'catholic': 'Catholic',
+    'orthodox': 'Orthodox',
+    'ukrainian_orthodox': 'Orthodox',
+    'armenian_apostolic': 'Armenian Apostolic',
+    'lutheran': 'Lutheran',
+  };
+
+  static const _religionsEn = {'christian': 'Christianity', 'jewish': 'Judaism', 'muslim': 'Islam'};
+
+  static const _stylesEn = {
+    'baroque': 'Baroque',
+    'gothic': 'Gothic',
+    'renaissance': 'Renaissance',
+    'neoclassicism': 'Neoclassicism',
+    'classicism': 'Classicism',
+    'art_nouveau': 'Art Nouveau',
+    'secession': 'Secession',
+    'neo-renaissance': 'Neo-Renaissance',
+    'neo-baroque': 'Neo-Baroque',
+    'neo-gothic': 'Neo-Gothic',
+    'functionalism': 'Functionalism',
+    'modern': 'Modernism',
+  };
+
   static const _religions = {
     'christian': 'християнство',
     'jewish': 'юдаїзм',
@@ -103,31 +132,32 @@ class OsmFacts {
     final description = _first(t, ['description:uk', 'description']);
     if (description != null && description.length >= 30) out.add(description);
     final year = withDates ? (_date(t['start_date']) ?? _date(t['construction_date'])) : null;
-    if (year != null) out.add('Рік створення: $year.');
+    if (year != null) out.add(L.t('Рік створення: $year.', 'Built: $year.'));
     final architect = _first(t, ['architect:uk', 'architect']);
-    if (architect != null) out.add('Архітектор: $architect.');
+    if (architect != null) out.add(L.t('Архітектор: $architect.', 'Architect: $architect.'));
     final artist = _first(t, ['artist_name:uk', 'artist_name', 'sculptor', 'artist']);
-    if (artist != null) out.add('Автор: $artist.');
+    if (artist != null) out.add(L.t('Автор: $artist.', 'Artist: $artist.'));
     final inscription = _first(t, ['inscription:uk', 'inscription']);
-    if (inscription != null) out.add('Напис: «$inscription».');
+    if (inscription != null) out.add(L.t('Напис: «$inscription».', 'Inscription: "$inscription".'));
     final oldName = _first(t, ['old_name:uk', 'old_name']);
-    if (oldName != null) out.add('Колишня назва: $oldName.');
+    if (oldName != null) out.add(L.t('Колишня назва: $oldName.', 'Former name: $oldName.'));
     final official = _first(t, ['official_name:uk', 'official_name']);
-    if (official != null && official != t['name']) out.add('Офіційна назва: $official.');
-    final denomination = _denominations[t['denomination']];
+    if (official != null && official != t['name']) out.add(L.t('Офіційна назва: $official.', 'Official name: $official.'));
+    final denomination = (L.en ? _denominationsEn : _denominations)[t['denomination']];
     if (denomination != null) {
-      out.add('Конфесія: $denomination.');
+      out.add(L.t('Конфесія: $denomination.', 'Denomination: $denomination.'));
     } else {
-      final religion = _religions[t['religion']];
-      if (religion != null) out.add('Релігія: $religion.');
+      final religion = (L.en ? _religionsEn : _religions)[t['religion']];
+      if (religion != null) out.add(L.t('Релігія: $religion.', 'Religion: $religion.'));
     }
-    final style = _styles[t['building:architecture'] ?? t['architecture']];
-    if (style != null) out.add('Архітектурний стиль: $style.');
+    final style = (L.en ? _stylesEn : _styles)[t['building:architecture'] ?? t['architecture']];
+    if (style != null) out.add(L.t('Архітектурний стиль: $style.', 'Architectural style: $style.'));
     final subject = _first(t, ['subject:uk', 'subject']);
-    if (subject != null) out.add('Присвячено: $subject.');
+    if (subject != null) out.add(L.t('Присвячено: $subject.', 'Dedicated to: $subject.'));
     if (t.containsKey('heritage') && t['heritage'] != 'no') {
       final ref = _first(t, ['ref:heritage', 'heritage:ref', 'ref:UA:monument']);
-      out.add(ref == null ? 'Має статус пам\'ятки.' : 'Має статус пам\'ятки (охоронний номер $ref).');
+      out.add(L.t(ref == null ? 'Має статус пам\'ятки.' : 'Має статус пам\'ятки (охоронний номер $ref).',
+          ref == null ? 'Protected as a heritage site.' : 'Protected as a heritage site (register number $ref).'));
     }
     return out;
   }
@@ -138,14 +168,14 @@ class OsmFacts {
     final street = t['addr:street'];
     if (street != null) {
       final number = t['addr:housenumber'];
-      out.add('Адреса: $street${number != null ? ', $number' : ''}.');
+      out.add(L.t('Адреса: $street${number != null ? ', $number' : ''}.', 'Address: $street${number != null ? ', $number' : ''}.'));
     }
     final hours = t['opening_hours'];
-    if (hours != null) out.add('Години роботи (формат OpenStreetMap): $hours.');
+    if (hours != null) out.add(L.t('Години роботи (формат OpenStreetMap): $hours.', 'Opening hours (OpenStreetMap format): $hours.'));
     final operator = t['operator'];
-    if (operator != null) out.add('Належить або керує: $operator.');
+    if (operator != null) out.add(L.t('Належить або керує: $operator.', 'Owned or run by: $operator.'));
     final website = websiteOf(t);
-    if (website != null) out.add('Сайт: $website.');
+    if (website != null) out.add(L.t('Сайт: $website.', 'Website: $website.'));
     return out;
   }
 

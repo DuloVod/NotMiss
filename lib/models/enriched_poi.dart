@@ -1,3 +1,4 @@
+import '../l10n/app_lang.dart';
 import '../services/text_quality.dart';
 
 /// Research status for a POI.
@@ -95,6 +96,10 @@ class EnrichedPoi {
   /// Text of all sources used for this place (basis for AI answers about it).
   final String? sourceMaterial;
 
+  /// Language of the stored story and facts ([AppLang.code]). Content in another language than
+  /// the current one is not shown and is researched again.
+  final String contentLang;
+
   const EnrichedPoi({
     required this.poiId,
     required this.name,
@@ -114,6 +119,7 @@ class EnrichedPoi {
     this.lastResearchedAt,
     this.schemaVersion = currentSchema,
     this.sourceMaterial,
+    this.contentLang = 'uk',
   });
 
   /// Create a copy with updated fields.
@@ -135,6 +141,7 @@ class EnrichedPoi {
     String? category,
     int? schemaVersion,
     String? sourceMaterial,
+    String? contentLang,
   }) {
     return EnrichedPoi(
       poiId: poiId,
@@ -155,11 +162,12 @@ class EnrichedPoi {
       lastResearchedAt: lastResearchedAt ?? this.lastResearchedAt,
       schemaVersion: schemaVersion ?? this.schemaVersion,
       sourceMaterial: sourceMaterial ?? this.sourceMaterial,
+      contentLang: contentLang ?? this.contentLang,
     );
   }
 
   /// Written by an older version of the app, without verification against sources.
-  bool get isOutdated => schemaVersion < currentSchema;
+  bool get isOutdated => schemaVersion < currentSchema || contentLang != L.lang.code;
 
   /// Whether this POI has been fully researched and doesn't need more work.
   bool get isResearchComplete =>
@@ -167,13 +175,24 @@ class EnrichedPoi {
       researchStatus == ResearchStatus.insufficientInformation;
 
   /// Said when no source knows anything about a place: honesty instead of invention.
-  static const String noVerifiedInfoPhrase = 'Перевірених відомостей про це місце поки немає';
+  static const String noVerifiedInfoPhraseUk = 'Перевірених відомостей про це місце поки немає';
+  static const String noVerifiedInfoPhraseEn = 'There is no verified information about this place yet';
+  static String get noVerifiedInfoPhrase => L.en ? noVerifiedInfoPhraseEn : noVerifiedInfoPhraseUk;
+
+  /// The text is the honest "nothing is known" line: such a place is shown, not narrated.
+  static bool hasNoVerifiedInfo(String? text) =>
+      text != null && (text.contains(noVerifiedInfoPhraseUk) || text.contains(noVerifiedInfoPhraseEn));
+
+  /// No source knows anything about this place: it is marked on the map but not narrated.
+  bool get isSilent =>
+      !isOutdated &&
+      (researchStatus == ResearchStatus.insufficientInformation || hasNoVerifiedInfo(narrationText));
 
   /// Whether this POI currently holds fallback/template content rather than verified research.
   bool get hasFallbackContent {
     if (isOutdated) return true;
     final narr = narrationText ?? '';
-    if (narr.contains(noVerifiedInfoPhrase)) return true;
+    if (hasNoVerifiedInfo(narr)) return true;
     if (narr.contains('Це одне з примітних місць на вашому маршруті') ||
         narr.contains('Зверніть увагу на його вигляд та деталі довкола') ||
         narr.contains('Зверніть увагу на архітектурні деталі та атмосферу довкола!')) {
@@ -218,6 +237,7 @@ class EnrichedPoi {
     'last_researched_at': lastResearchedAt?.toIso8601String(),
     'schema_version': schemaVersion,
     'source_material': sourceMaterial,
+    'content_lang': contentLang,
   };
 
   factory EnrichedPoi.fromJson(Map<String, dynamic> json) {
@@ -259,6 +279,7 @@ class EnrichedPoi {
           : null,
       schemaVersion: json['schema_version'] as int? ?? 1,
       sourceMaterial: json['source_material'] as String?,
+      contentLang: json['content_lang'] as String? ?? 'uk',
     );
   }
 

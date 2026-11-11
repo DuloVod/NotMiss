@@ -84,6 +84,9 @@ class _NoOverpass extends OverpassService {
   bool shouldReload(double lat, double lng) => false;
 }
 
+const _srcDescription = 'Міська будівля, у якій понад шість століть працювала міська влада; '
+    'нинішню споруду звели на місці попередньої, що обвалилася.';
+
 Poi _poi(String id, String name, {double lat = 49.84, double lng = 24.03, Map<String, String>? tags}) => Poi(
       id: id,
       name: name,
@@ -94,7 +97,7 @@ Poi _poi(String id, String name, {double lat = 49.84, double lng = 24.03, Map<St
       facts: const [],
       narrationText: '',
       sources: const [],
-      osmTags: tags,
+      osmTags: tags ?? {'description': _srcDescription},
     );
 
 Position _pos([double lat = 49.84, double lng = 24.03]) => Position(

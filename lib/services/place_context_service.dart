@@ -1,3 +1,4 @@
+import '../l10n/app_lang.dart';
 import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/foundation.dart' show debugPrint;
@@ -10,14 +11,24 @@ class PlaceContextService {
   static const double reuseRadiusM = 5000;
 
   /// "Львів, Україна" for the given point; null when it cannot be determined.
-  Future<String?> lookup(double lat, double lng) async {
+  /// The city's name in Ukrainian ("Львів"), whatever the app's language is: encyclopedia
+  /// articles about a place are matched against it ("…у Львові").
+  Future<String?> lookupLocalCity(double lat, double lng) async {
+    final full = await lookupIn(lat, lng, AppLang.uk);
+    return full?.split(',').first.trim();
+  }
+
+  /// "Lviv, Ukraine" / "Львів, Україна" for the point, in the app's language.
+  Future<String?> lookup(double lat, double lng) => lookupIn(lat, lng, L.lang);
+
+  Future<String?> lookupIn(double lat, double lng, AppLang lang) async {
     try {
       final uri = Uri.https('nominatim.openstreetmap.org', '/reverse', {
         'format': 'jsonv2',
         'lat': lat.toStringAsFixed(5),
         'lon': lng.toStringAsFixed(5),
         'zoom': '14', // at city level Nominatim names the municipality, not the city
-        'accept-language': 'uk',
+        'accept-language': lang.code,
       });
       final res = await http
           .get(uri, headers: {'User-Agent': 'NotMiss/0.2 (com.dulo.notmiss)'})

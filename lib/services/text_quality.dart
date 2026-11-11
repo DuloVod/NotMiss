@@ -1,3 +1,5 @@
+import '../l10n/app_lang.dart';
+
 /// Validation / cleanup of AI- and Wikipedia-sourced text before it is shown or spoken.
 class TextQuality {
   TextQuality._();
@@ -12,6 +14,29 @@ class TextQuality {
     r'тільки текст розповіді|as an ai|я — штучний|я штучний',
     caseSensitive: false,
   );
+
+  static final _leakEn = RegExp(
+    r'markdown|bullet point|constraint|persona|word count|output only|as an ai|language model|'
+    r'system prompt|\bdraft\b|\binstructions?\b|\bNO\s+[a-z]+\s+(?:markdown|lists?)',
+    caseSensitive: false,
+  );
+
+  /// Share of Latin among Cyrillic+Latin letters (0 when there are none).
+  static double latinShare(String text) {
+    final c = _cyr.allMatches(text).length;
+    final l = _lat.allMatches(text).length;
+    final total = c + l;
+    return total == 0 ? 0 : l / total;
+  }
+
+  /// Share of letters in the script of the current language.
+  static double scriptShare(String text) => L.en ? latinShare(text) : cyrillicShare(text);
+
+  /// Text fit to show in the current language: mostly in its script, no glitchy mixed words.
+  static bool isCleanText(String? text) {
+    if (text == null || text.trim().isEmpty) return false;
+    return scriptShare(text) >= 0.6 && !hasMixedScript(text);
+  }
 
   /// Share of Cyrillic among Cyrillic+Latin letters (0 when there are none).
   static double cyrillicShare(String text) {
@@ -54,7 +79,13 @@ class TextQuality {
     unicode: true,
   );
 
-  static bool hasStockOpening(String text) => _stockOpening.hasMatch(text);
+  static final _stockOpeningEn = RegExp(
+    r'^\s*(?:look at|take a moment|stop for a moment|stop and|pause for a moment|in front of you|pay attention|notice the|welcome|hello|hi\b|hey\b)',
+    caseSensitive: false,
+  );
+
+  static bool hasStockOpening(String text) =>
+      (L.en ? _stockOpeningEn : _stockOpening).hasMatch(text);
 
   /// First two words, lower-case, without punctuation — to spot repeated openings.
   static String openingKey(String text) {
@@ -87,12 +118,25 @@ class TextQuality {
     unicode: true,
   );
 
+  static const _greetWordsEn =
+      r'(?:hello|hi|hey|greetings|welcome|good\s+(?:morning|afternoon|evening|day))';
+
+  static final _greetSentenceEn = RegExp(
+    '^\\s*$_greetWordsEn\\b[^.!?…]*[.!?…]+\\s*',
+    caseSensitive: false,
+  );
+
+  static final _greetPrefixEn = RegExp(
+    '^\\s*$_greetWordsEn\\b(?:\\s+(?:to\\s+\\w+|everyone|all|friends|traveler|traveller|there))*\\s*[,!:—–-]*\\s*',
+    caseSensitive: false,
+  );
+
   /// Drops greetings ("Вітаю!", "Привіт, мандрівнику!") from the start: the guide goes
   /// straight to the place, also for the very first point of a walk.
   static String stripGreeting(String text) {
     var t = text.trim();
     for (var i = 0; i < 3; i++) {
-      final m = _greetSentence.firstMatch(t);
+      final m = (L.en ? _greetSentenceEn : _greetSentence).firstMatch(t);
       if (m == null) break;
       final sentence = m.group(0)!;
       final words = sentence.trim().split(RegExp(r'\s+')).length;
@@ -100,7 +144,7 @@ class TextQuality {
       if (words <= 12) {
         rest = t.substring(m.end);
       } else {
-        final p = _greetPrefix.firstMatch(t);
+        final p = (L.en ? _greetPrefixEn : _greetPrefix).firstMatch(t);
         rest = p == null ? t : t.substring(p.end);
         if (rest.isNotEmpty) rest = rest[0].toUpperCase() + rest.substring(1);
         t = rest.trim();
@@ -156,8 +200,8 @@ class TextQuality {
     if (strict && t.length < minChars) return 'too short (${t.length})';
     if (t.length > 2000) return 'too long';
     if (RegExp(r'[*#`\[\]{}<>]').hasMatch(t)) return 'markup characters';
-    if (_leak.hasMatch(t)) return 'prompt leak';
-    if (cyrillicShare(t) < 0.8) return 'not Ukrainian';
+    if ((L.en ? _leakEn : _leak).hasMatch(t)) return 'prompt leak';
+    if (scriptShare(t) < 0.8) return 'wrong language';
     if (hasMixedScript(t)) return 'mixed-script word';
     if (!RegExp(r'[.!?…»")]$').hasMatch(t)) return 'truncated (no final punctuation)';
     final sentences = RegExp(r'[.!?…]+(\s|$)').allMatches(t).length;
@@ -180,5 +224,5 @@ class TextQuality {
 
   /// "+1998-05-00T00:00:00Z" → "1998 рік"; leaves other text untouched.
   static String normalizeFact(String fact) =>
-      fact.replaceAllMapped(_isoDate, (m) => '${int.parse(m.group(1)!)} рік');
+      fact.replaceAllMapped(_isoDate, (m) => L.t('${int.parse(m.group(1)!)} рік', '${int.parse(m.group(1)!)}'));
 }

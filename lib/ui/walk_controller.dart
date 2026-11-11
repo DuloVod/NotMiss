@@ -1,10 +1,14 @@
 import 'dart:async';
+import 'dart:ui' show Rect;
 import 'dart:math' as math;
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart' show HapticFeedback;
 import 'package:flutter/widgets.dart' show AppLifecycleState;
 import 'package:geolocator/geolocator.dart';
+import '../l10n/app_lang.dart';
 import '../models/destination.dart';
+import '../services/settings_store.dart';
+import '../services/report_service.dart';
 import '../models/poi.dart';
 import '../models/enriched_poi.dart';
 import '../models/proximity_event.dart';
@@ -57,6 +61,8 @@ class WalkController extends ChangeNotifier {
   final NowPlayingService _nowPlaying;
   final VisitedStore _visitedStore;
   final LiveActivityService _liveActivity;
+  final SettingsStore _settings;
+  final ReportService _reports;
   final PlaceContextService _placeService;
 
   WalkStatus _status = WalkStatus.idle;
@@ -96,12 +102,12 @@ class WalkController extends ChangeNotifier {
   /// Dynamic string representing current background activity
   String get backgroundActivity {
     if (_isOsmLoading) {
-      return 'Пошук нових об\'єктів (OSM)...';
+      return L.t('Пошук нових об\'єктів (OSM)...', 'Looking for new places (OSM)...');
     }
     final active = _researchService.activeResearchCount;
     final pending = _researchService.pendingResearchCount;
     if (active > 0 || pending > 0) {
-      return 'Збір історичних даних (Вікіпедія) - залишок: $pending';
+      return L.t('Збір історичних даних (Вікіпедія) - залишок: $pending', 'Gathering history (Wikipedia) - left: $pending');
     }
     return '';
   }
@@ -121,7 +127,11 @@ class WalkController extends ChangeNotifier {
     VisitedStore? visitedStore,
     PlaceContextService? placeService,
     LiveActivityService? liveActivity,
-  })  : _liveActivity = liveActivity ?? LiveActivityService(),
+    SettingsStore? settingsStore,
+    ReportService? reportService,
+  })  : _settings = settingsStore ?? SettingsStore(),
+        _reports = reportService ?? ReportService(),
+        _liveActivity = liveActivity ?? LiveActivityService(),
         _placeService = placeService ?? PlaceContextService(),
          _nowPlaying = nowPlaying ?? NowPlayingService(),
         _visitedStore = visitedStore ?? VisitedStore(),
@@ -164,6 +174,52 @@ class WalkController extends ChangeNotifier {
     _allPois = [];
   }
 
+  AppLang get lang => L.lang;
+
+  /// Places the user has reported as inaccurate.
+  Set<String> get reportedPoiIds => _settings.reported;
+
+  /// Opens the share sheet with a ready message about [poi] (what the app said, where it came
+  /// from, why it is wrong). Returns false when the sheet could not be opened.
+  Future<bool> reportPlace(Poi poi, ReportReason reason, {String comment = '', Rect? origin}) async {
+    final text = ReportService.compose(
+      poi: getUpdatedPoi(poi),
+      enriched: _researchService.getEnrichedData(poi.id),
+      reason: reason,
+      comment: comment,
+      lang: L.lang,
+    );
+    try {
+      await _reports.send(text, origin: origin);
+    } catch (e) {
+      debugPrint('[WalkController] report failed: $e');
+      return false;
+    }
+    await _settings.markReported(poi.id);
+    notifyListeners();
+    return true;
+  }
+
+  /// Switches the language of the interface, the stories, the AI and the voice. Places researched
+  /// in the other language are researched again when the walker gets close.
+  Future<void> setLang(AppLang lang) async {
+    if (lang == L.lang) return;
+    L.lang = lang;
+    await _settings.setLang(lang);
+    AiService.placeContext = null; // "Львів, Україна" → "Lviv, Ukraine"
+    AiService.localCity = null;
+    _contextPos = null;
+    final pos = _currentPosition;
+    if (pos != null) unawaited(_refreshPlaceContext(pos));
+    if (_status == WalkStatus.walking && pos != null) {
+      _researchService.processDiscoveredPois(_allPois, queueIf: (p) =>
+          Geolocator.distanceBetween(pos.latitude, pos.longitude, p.latitude, p.longitude) <= researchAheadM);
+    }
+    _lastLive = null;
+    _refreshLiveActivity(force: true);
+    notifyListeners();
+  }
+
   WalkStatus get status => _status;
   Position? get currentPosition => _currentPosition;
   Poi? get activePoi => _activePoi;
@@ -173,6 +229,15 @@ class WalkController extends ChangeNotifier {
   bool get isAudioPaused => _audioService.isPaused;
   bool get isAudioActive => isPlaying || isAudioPaused;
   Set<String> get triggeredPoiIds => _poiEngine.triggeredPoiIds;
+
+  /// Places that no verified source knows anything about: shown on the map with a "not narrated"
+  /// mark, never narrated (an animal enclosure, a tank, a sign without a story).
+  Set<String> get silentPoiIds => {
+        for (final p in _allPois)
+          if (isSilentPoi(p.id)) p.id,
+      };
+
+  bool isSilentPoi(String id) => _researchService.getEnrichedData(id)?.isSilent ?? false;
 
   /// Places the user has physically passed (this walk + earlier walks, persisted).
   Set<String> get passedPoiIds => {
@@ -262,11 +327,7 @@ class WalkController extends ChangeNotifier {
   }
 
   /// "85 м" / "1,2 км" — rounded so that the always-on indicator does not flicker.
-  static String formatDistance(double meters) {
-    if (meters >= 1000) return '${(meters / 1000).toStringAsFixed(1).replaceAll('.', ',')} км';
-    final rounded = meters < 100 ? (meters / 5).round() * 5 : (meters / 10).round() * 10;
-    return '$rounded м';
-  }
+  static String formatDistance(double meters) => L.distance(meters);
 
   /// What the always-on indicator (Live Activity) should say right now; null when no walk.
   GuideLiveState? get liveState {
@@ -276,7 +337,9 @@ class WalkController extends ChangeNotifier {
       final next = nearestUnvisited(excluding: poi.id, maxMeters: 400);
       return GuideLiveState(
         title: poi.name,
-        subtitle: next != null ? 'Далі: ${next.poi.name} · ${formatDistance(next.meters)}' : 'Гід розповідає',
+        subtitle: next != null
+            ? L.t('Далі: ${next.poi.name} · ${formatDistance(next.meters)}', 'Next: ${next.poi.name} · ${formatDistance(next.meters)}')
+            : L.t('Гід розповідає', 'The guide is telling'),
         badge: next != null ? formatDistance(next.meters) : '',
         speaking: true,
         paused: isAudioPaused,
@@ -285,19 +348,21 @@ class WalkController extends ChangeNotifier {
       );
     }
     if (_isProcessing && poi != null) {
-      return GuideLiveState(title: poi.name, subtitle: 'Готуємо розповідь…', speaking: true);
+      return GuideLiveState(title: poi.name, subtitle: L.t('Готуємо розповідь…', 'Preparing the story…'), speaking: true);
     }
     final near = nearestUnvisited();
     if (near != null) {
       return GuideLiveState(
         title: near.poi.name,
-        subtitle: 'Найближче місце · ${poiKindOf(near.poi).label}',
+        subtitle: L.t('Найближче місце · ${poiKindOf(near.poi).label}', 'Nearest place · ${poiKindOf(near.poi).label}'),
         badge: formatDistance(near.meters),
       );
     }
     return GuideLiveState(
-      title: 'Гід працює',
-      subtitle: _osmLoaded ? 'Поруч немає нових місць' : 'Шукаємо місця поруч…',
+      title: L.t('Гід працює', 'Guide is on'),
+      subtitle: _osmLoaded
+          ? L.t('Поруч немає нових місць', 'No new places nearby')
+          : L.t('Шукаємо місця поруч…', 'Looking for places nearby…'),
     );
   }
 
@@ -337,7 +402,7 @@ class WalkController extends ChangeNotifier {
   /// kind of the current place when nothing is close.
   String _lockScreenSubtitle(Poi current) {
     final next = nearestUnvisited(excluding: current.id, maxMeters: 400);
-    if (next != null) return 'Далі: ${next.poi.name} · ${next.meters.round()} м';
+    if (next != null) return L.t('Далі: ${next.poi.name} · ${formatDistance(next.meters)}', 'Next: ${next.poi.name} · ${formatDistance(next.meters)}');
     return poiKindOf(current).label;
   }
 
@@ -375,27 +440,29 @@ class WalkController extends ChangeNotifier {
   GuideStatus? get guideStatus {
     if (_status == WalkStatus.idle) {
       return _permissionDenied
-          ? const GuideStatus('Потрібен доступ до геолокації', GuideTone.attention,
-              actionLabel: 'Дозволити')
+          ? GuideStatus(L.t('Потрібен доступ до геолокації', 'Location access is needed'), GuideTone.attention,
+              actionLabel: L.t('Дозволити', 'Allow'))
           : null;
     }
     if (_status == WalkStatus.stopped) return null;
 
     if (_narrationFailed && _activePoi != null && !_isProcessing) {
-      return const GuideStatus('Не вдалося озвучити — розповідь текстом', GuideTone.attention,
-          actionLabel: 'Повторити');
+      return GuideStatus(L.t('Не вдалося озвучити — розповідь текстом', 'Could not play the voice — story as text'),
+          GuideTone.attention,
+          actionLabel: L.t('Повторити', 'Retry'));
     }
     if (isAudioActive) return null;
-    if (_isProcessing) return const GuideStatus('Готуємо розповідь…', GuideTone.busy);
+    if (_isProcessing) return GuideStatus(L.t('Готуємо розповідь…', 'Preparing the story…'), GuideTone.busy);
     if (!_osmLoaded) {
       if (_waitingForGps) {
-        return const GuideStatus('Шукаємо GPS-сигнал…', GuideTone.busy);
+        return GuideStatus(L.t('Шукаємо GPS-сигнал…', 'Looking for a GPS signal…'), GuideTone.busy);
       }
       if (_osmFailures >= osmFailuresBeforeNotice) {
-        return const GuideStatus('Немає зв\'язку — місця не завантажились', GuideTone.attention,
-            actionLabel: 'Повторити');
+        return GuideStatus(L.t('Немає зв\'язку — місця не завантажились', 'No connection — places did not load'),
+            GuideTone.attention,
+            actionLabel: L.t('Повторити', 'Retry'));
       }
-      return const GuideStatus('Шукаємо місця поруч…', GuideTone.busy);
+      return GuideStatus(L.t('Шукаємо місця поруч…', 'Looking for places nearby…'), GuideTone.busy);
     }
     return null;
   }
@@ -489,14 +556,14 @@ class WalkController extends ChangeNotifier {
     if (enriched.isOutdated) return poi;
     final facts = enriched.keyFacts
         .map((f) => TextQuality.normalizeFact(f.fact))
-        .where((f) => TextQuality.isCleanUkrainian(f) && !ResearchService.isFallbackFact(f))
+        .where((f) => TextQuality.isCleanText(f) && !ResearchService.isFallbackFact(f))
         .toList();
     final desc = enriched.shortDescription;
     final narr = enriched.narrationText;
     return poi.copyWith(
       shortDescription: (desc != null &&
               desc.isNotEmpty &&
-              TextQuality.isCleanUkrainian(desc) &&
+              TextQuality.isCleanText(desc) &&
               !ResearchService.isFallbackDescription(desc))
           ? desc
           : poi.shortDescription,
@@ -547,7 +614,7 @@ class WalkController extends ChangeNotifier {
       onProximityEvent?.call(event);
     }
     _activePoi = updated;
-    _statusMessage = '📍 ${updated.name} — підготовка розповіді…';
+    _statusMessage = L.t('📍 ${updated.name} — підготовка розповіді…', '📍 ${updated.name} — preparing the story…');
     _isProcessing = true;
     notifyListeners();
 
@@ -588,10 +655,18 @@ class WalkController extends ChangeNotifier {
         narration = _researchService.quickNarration(currentPoi);
       }
 
+      if (EnrichedPoi.hasNoVerifiedInfo(narration) || isSilentPoi(currentPoi.id)) {
+        _activePoi = currentPoi.copyWith(narrationText: narration);
+        _statusMessage = L.t('📍 ${currentPoi.name} — не озвучується: немає перевірених джерел',
+            '📍 ${currentPoi.name} — not narrated: no verified sources');
+        notifyListeners();
+        return;
+      }
+
       if (narration.isNotEmpty) {
         currentPoi = currentPoi.copyWith(narrationText: narration);
         _activePoi = currentPoi;
-        _statusMessage = '🔊 ${currentPoi.name} — озвучення…';
+        _statusMessage = L.t('🔊 ${currentPoi.name} — озвучення…', '🔊 ${currentPoi.name} — generating the voice…');
         notifyListeners();
         final audioPath = await _synthesizeWithRetry(narration, currentPoi.id, () => gen != _manualPlayGen);
         if (gen != _manualPlayGen || audioPath == null) return;
@@ -608,7 +683,7 @@ class WalkController extends ChangeNotifier {
       if (gen == _manualPlayGen) {
         failed = true;
         _narrationFailed = true;
-        _statusMessage = '📍 ${updated.name} — озвучення недоступне, розповідь текстом';
+        _statusMessage = L.t('📍 ${updated.name} — озвучення недоступне, розповідь текстом', '📍 ${updated.name} — voice unavailable, story as text');
         notifyListeners();
       }
     } finally {
@@ -619,7 +694,7 @@ class WalkController extends ChangeNotifier {
         // Keep the card (and its text) after a failure so the user can read / retry.
         if (!failed) {
           if (_status == WalkStatus.walking) {
-            _statusMessage = 'Прогулянка — слухаю (${_proximityEvents.length} зафіксовано)';
+            _statusMessage = L.t('Прогулянка — слухаю (${_proximityEvents.length} зафіксовано)', 'Walk — listening (${_proximityEvents.length} recorded)');
           } else {
             _statusMessage = null;
           }
@@ -635,7 +710,7 @@ class WalkController extends ChangeNotifier {
     await _audioService.pause();
     _refreshLiveActivity();
     if (_activePoi != null) {
-      _statusMessage = '⏸️ ${_activePoi!.name} — пауза';
+      _statusMessage = L.t('⏸️ ${_activePoi!.name} — пауза', '⏸️ ${_activePoi!.name} — paused');
     }
     notifyListeners();
   }
@@ -676,7 +751,7 @@ class WalkController extends ChangeNotifier {
     _narrationFailed = false;
     _isProcessing = false;
     if (_status == WalkStatus.walking) {
-      _statusMessage = 'Прогулянка — слухаю (${_proximityEvents.length} зафіксовано)';
+      _statusMessage = L.t('Прогулянка — слухаю (${_proximityEvents.length} зафіксовано)', 'Walk — listening (${_proximityEvents.length} recorded)');
     } else {
       _statusMessage = null;
     }
@@ -743,7 +818,7 @@ class WalkController extends ChangeNotifier {
     final granted = await _locationService.requestPermission();
     _permissionDenied = !granted;
     if (!granted) {
-      _statusMessage = 'Для роботи аудіогіда потрібен доступ до геолокації.';
+      _statusMessage = L.t('Для роботи аудіогіда потрібен доступ до геолокації.', 'The audio guide needs location access.');
       notifyListeners();
       return;
     }
@@ -762,7 +837,7 @@ class WalkController extends ChangeNotifier {
     _activePoi = null;
 
     _allPois = [];
-    _statusMessage = 'Завантаження точок інтересу…';
+    _statusMessage = L.t('Завантаження точок інтересу…', 'Loading points of interest…');
     notifyListeners();
 
     // Always-on indicator (lock screen / Dynamic Island) — must be started in the foreground.
@@ -866,7 +941,7 @@ class WalkController extends ChangeNotifier {
 
       if (_status == WalkStatus.walking) {
         _statusMessage =
-            'Прогулянка — ${_allPois.length} точок (${deduped.length} з OSM)';
+            L.t('Прогулянка — ${_allPois.length} точок (${deduped.length} з OSM)', 'Walk — ${_allPois.length} places (${deduped.length} from OSM)');
         notifyListeners();
       }
 
@@ -878,8 +953,8 @@ class WalkController extends ChangeNotifier {
       if (e is! TimeoutException) _osmFailures++;
       if (_status == WalkStatus.walking) {
         _statusMessage = e is TimeoutException
-            ? 'Очікую GPS-сигнал… (вийдіть на відкрите місце)'
-            : 'Немає зв\'язку з картою — повторюю пошук точок…';
+            ? L.t('Очікую GPS-сигнал… (вийдіть на відкрите місце)', 'Waiting for GPS… (step out into the open)')
+            : L.t('Немає зв\'язку з картою — повторюю пошук точок…', 'No connection to the map — retrying the search…');
         notifyListeners();
         // Retry on its own: do not depend on the user moving to trigger another attempt.
         _osmRetryTimer?.cancel();
@@ -913,7 +988,7 @@ class WalkController extends ChangeNotifier {
     unawaited(_liveActivity.end());
     _pendingPoiIds.clear();
     _statusMessage =
-        'Прогулянка завершена. ${_poiEngine.triggeredPoiIds.length} місць відвідано.';
+        L.t('Прогулянка завершена. ${_poiEngine.triggeredPoiIds.length} місць відвідано.', 'Walk finished. ${_poiEngine.triggeredPoiIds.length} places visited.');
     notifyListeners();
 
     // Stop the foreground service
@@ -962,6 +1037,9 @@ class WalkController extends ChangeNotifier {
       if (ctx != null) {
         AiService.placeContext = ctx;
         _contextPos = pos;
+        AiService.localCity = L.uk
+            ? ctx.split(',').first.trim()
+            : await _placeService.lookupLocalCity(pos.latitude, pos.longitude);
       }
     } finally {
       _contextLoading = false;
@@ -1104,7 +1182,7 @@ class WalkController extends ChangeNotifier {
 
     onProximityEvent?.call(event);
 
-    _statusMessage = '📍 ${activePoi.name} — генерація розповіді…';
+    _statusMessage = L.t('📍 ${activePoi.name} — генерація розповіді…', '📍 ${activePoi.name} — preparing the story…');
     notifyListeners();
 
     BackgroundService.updateNotification(
@@ -1114,6 +1192,7 @@ class WalkController extends ChangeNotifier {
 
     var currentPoi = activePoi;
     var failed = false;
+    var keepStatus = false; // the "not narrated" note stays until the next place
     await IosBackgroundTask.begin();
     try {
       String narration = currentPoi.narrationText;
@@ -1136,10 +1215,20 @@ class WalkController extends ChangeNotifier {
         narration = _researchService.quickNarration(currentPoi);
       }
 
+      // Nothing verified is known about the place: it stays on the map, but is not narrated.
+      if (EnrichedPoi.hasNoVerifiedInfo(narration) || isSilentPoi(currentPoi.id)) {
+        _activePoi = currentPoi.copyWith(narrationText: narration);
+        _statusMessage = L.t('📍 ${currentPoi.name} — не озвучується: немає перевірених джерел',
+            '📍 ${currentPoi.name} — not narrated: no verified sources');
+        keepStatus = true;
+        notifyListeners();
+        return;
+      }
+
       // Show the text in the card right away, before (possibly slow) synthesis.
       currentPoi = currentPoi.copyWith(narrationText: narration);
       _activePoi = currentPoi;
-      _statusMessage = '🔊 ${currentPoi.name} — озвучення…';
+      _statusMessage = L.t('🔊 ${currentPoi.name} — озвучення…', '🔊 ${currentPoi.name} — generating the voice…');
       notifyListeners();
 
       final audioPath = await _synthesizeWithRetry(narration, currentPoi.id, () => gen != _processGen);
@@ -1189,8 +1278,8 @@ class WalkController extends ChangeNotifier {
         _isProcessing = false;
         // _activePoi is intentionally kept: the card with the text stays until the user
         // walks away (see _dismissStaleCard), starts another POI or closes it.
-        if (_status == WalkStatus.walking && !failed) {
-          _statusMessage = 'Прогулянка — слухаю (${_proximityEvents.length} зафіксовано)';
+        if (_status == WalkStatus.walking && !failed && !keepStatus) {
+          _statusMessage = L.t('Прогулянка — слухаю (${_proximityEvents.length} зафіксовано)', 'Walk — listening (${_proximityEvents.length} recorded)');
         }
         notifyListeners();
 
@@ -1219,7 +1308,7 @@ class WalkController extends ChangeNotifier {
         lastError = e;
         debugPrint('[WalkController] TTS attempt $attempt/$ttsAttempts failed: $e');
         if (attempt < ttsAttempts) {
-          _statusMessage = '🔊 повторна спроба озвучення ($attempt/$ttsAttempts)…';
+          _statusMessage = L.t('🔊 повторна спроба озвучення ($attempt/$ttsAttempts)…', '🔊 retrying the voice ($attempt/$ttsAttempts)…');
           notifyListeners();
           await Future.delayed(ttsRetryPause);
           if (isCancelled()) return null;
@@ -1271,7 +1360,7 @@ class WalkController extends ChangeNotifier {
       _activePoi = null;
       _narrationFailed = false;
       if (_status == WalkStatus.walking) {
-        _statusMessage = 'Прогулянка — слухаю (${_proximityEvents.length} зафіксовано)';
+        _statusMessage = L.t('Прогулянка — слухаю (${_proximityEvents.length} зафіксовано)', 'Walk — listening (${_proximityEvents.length} recorded)');
       }
     }
   }

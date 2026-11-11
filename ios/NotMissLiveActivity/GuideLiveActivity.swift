@@ -12,6 +12,9 @@ private enum Brand {
   static let ochre = Color(red: 0xC9 / 255, green: 0x92 / 255, blue: 0x28 / 255)
 }
 
+/// The widget has no access to the app's language setting: the phone's language decides.
+private let isUkrainian = ["uk", "ru", "be"].contains(Locale.current.language.languageCode?.identifier ?? "")
+
 private func modeSymbol(_ state: GuideActivityAttributes.ContentState) -> String {
   if state.speaking { return state.paused ? "pause.fill" : "waveform" }
   return "figure.walk"
@@ -81,11 +84,11 @@ private struct LockScreenView: View {
       .frame(width: 40, height: 40)
 
       VStack(alignment: .leading, spacing: 2) {
-        Text(isStale ? "Гід зараз не активний" : state.title)
+        Text(isStale ? (isUkrainian ? "Гід зараз не активний" : "Guide is not active") : state.title)
           .font(.system(size: 17, weight: .semibold, design: .serif))
           .foregroundStyle(Brand.ink)
           .lineLimit(1)
-        Text(isStale ? "Відкрийте NotMiss, щоб продовжити" : state.subtitle)
+        Text(isStale ? (isUkrainian ? "Відкрийте NotMiss, щоб продовжити" : "Open NotMiss to continue") : state.subtitle)
           .font(.system(size: 13))
           .foregroundStyle(Brand.muted)
           .lineLimit(1)

@@ -1,3 +1,4 @@
+import '../l10n/app_lang.dart';
 import 'dart:async';
 import 'package:flutter/foundation.dart' show debugPrint;
 import '../models/poi.dart';
@@ -245,7 +246,13 @@ class ResearchService {
     final desc = (usable && cached.shortDescription?.isNotEmpty == true)
         ? cached.shortDescription
         : (poi.shortDescription.isNotEmpty ? poi.shortDescription : null);
-    return _buildSourceOnlyNarration(enriched, desc, usable ? cached.keyFacts : const []);
+    // Offline and before the research finishes: what the map itself says about the place
+    // (description, architect, former name…) is already a verified, if short, story.
+    var facts = usable ? cached.keyFacts : const <KeyFact>[];
+    if (facts.isEmpty) {
+      facts = [for (final line in OsmFacts.from(poi.osmTags ?? const {})) KeyFact(fact: line, confidence: 'high')];
+    }
+    return _buildSourceOnlyNarration(enriched, desc, facts);
   }
 
   /// Entry point for both the background queue and [researchImmediately].
@@ -313,6 +320,7 @@ class ResearchService {
           ? latest.narrationText!
           : _buildSourceOnlyNarration(latest, null, const []);
       final failed = latest.copyWith(
+        contentLang: L.lang.code,
         researchStatus: ResearchStatus.failed,
         narrationText: offlineNarration,
         lastResearchedAt: DateTime.now(),
@@ -336,6 +344,7 @@ class ResearchService {
   /// source knows anything, the user is told so instead of hearing an invented story.
   Future<void> _doResearch(EnrichedPoi enriched, String poiId) async {
     try {
+      final lang = L.lang; // the content is stamped with the language it was made for
       // Everything is gathered anew: earlier content may not have been verified.
       final facts = <KeyFact>[];
       final sources = <ResearchSource>[];
@@ -346,7 +355,7 @@ class ResearchService {
       void addFact(String factText, String? sourceUrl, String confidence) {
         final trimmed = TextQuality.normalizeFact(factText.trim());
         if (trimmed.isNotEmpty &&
-            TextQuality.isCleanUkrainian(trimmed) &&
+            TextQuality.isCleanText(trimmed) &&
             !isFallbackFact(trimmed) &&
             !facts.any((f) => _sameMeaning(f.fact, trimmed))) {
           facts.add(KeyFact(fact: trimmed, sourceUrl: sourceUrl, confidence: confidence));
@@ -359,8 +368,8 @@ class ResearchService {
           ? await _wikidataService.fetchById(taggedId)
           : await _wikidataService.searchNear(enriched.name, enriched.latitude, enriched.longitude);
       if (wiki != null) {
-        if (TextQuality.isCleanUkrainian(wiki.descriptionUk)) {
-          shortDesc = wiki.descriptionUk;
+        if (TextQuality.isCleanText(wiki.localDescription) && !isWikimediaMeta(wiki.localDescription)) {
+          shortDesc = wiki.localDescription;
         }
       }
 
@@ -369,7 +378,7 @@ class ResearchService {
       Future<void> useArticle(WikipediaArticle article) async {
         final full = await _wikipediaService.fetchFullText(article.title, lang: article.lang);
         final text = (full != null && full.length > article.extract.length) ? full : article.extract;
-        docs.add(SourceDoc(type: 'wikipedia', title: 'Вікіпедія: ${article.title}', url: article.url, text: text));
+        docs.add(SourceDoc(type: 'wikipedia', title: L.t('Вікіпедія: ${article.title}', 'Wikipedia: ${article.title}'), url: article.url, text: text));
         sources.add(ResearchSource(url: article.url, title: 'Wikipedia (${article.title})', type: 'wikipedia'));
         wikiChars += text.length;
         if (shortDesc == null || shortDesc!.isEmpty) shortDesc = _pickDescription(article);
@@ -377,13 +386,15 @@ class ResearchService {
       }
 
       final linked = <(String, String)>[
+        if (L.en && wiki?.wikipediaEn != null) (wiki!.wikipediaEn!, 'en'),
+        if (L.en && tags['wikipedia:en'] != null) (tags['wikipedia:en']!, 'en'),
         if (wiki?.wikipediaUk != null) (wiki!.wikipediaUk!, 'uk'),
         if (tags['wikipedia:uk'] != null) (tags['wikipedia:uk']!, 'uk'),
         if (tags['wikipedia'] != null) (tags['wikipedia']!, 'uk'),
-        if (wiki?.wikipediaEn != null) (wiki!.wikipediaEn!, 'en'),
+        if (!L.en && wiki?.wikipediaEn != null) (wiki!.wikipediaEn!, 'en'),
         if (wiki?.wikipediaPl != null) (wiki!.wikipediaPl!, 'pl'),
         if (wiki?.wikipediaDe != null) (wiki!.wikipediaDe!, 'de'),
-        if (tags['wikipedia:en'] != null) (tags['wikipedia:en']!, 'en'),
+        if (!L.en && tags['wikipedia:en'] != null) (tags['wikipedia:en']!, 'en'),
       ];
       final seen = <String>{};
       for (final (title, lang) in linked) {
@@ -396,7 +407,7 @@ class ResearchService {
 
       // … otherwise search by name; a hit must prove it is about this place (see isAboutPlace)
       if (!docs.any((d) => d.type == 'wikipedia')) {
-        final city = AiService.placeContext?.split(',').first.trim();
+        final city = (AiService.localCity ?? AiService.placeContext?.split(',').first.trim());
         for (final lang in const ['uk', 'en']) {
           final article = await _wikipediaService.fetchSummaryOrSearch(
             enriched.name,
@@ -419,10 +430,10 @@ class ResearchService {
           enriched.name,
           lat: enriched.latitude,
           lng: enriched.longitude,
-          city: AiService.placeContext?.split(',').first.trim(),
+          city: (AiService.localCity ?? AiService.placeContext?.split(',').first.trim()),
         );
         if (mention != null) {
-          final title = 'Вікіпедія, стаття «${mention.articleTitle}»';
+          final title = L.t('Вікіпедія, стаття «${mention.articleTitle}»', 'Wikipedia, article "${mention.articleTitle}"');
           docs.add(SourceDoc(type: 'wikipedia', title: title, url: mention.url, text: mention.sentences.join('\n')));
           sources.add(ResearchSource(url: mention.url, title: title, type: 'wikipedia'));
           wikiChars += mention.sentences.join().length;
@@ -440,21 +451,22 @@ class ResearchService {
         final trustDate = year != null && (articles.isEmpty || articles.contains(year));
         final url = 'https://www.wikidata.org/wiki/${wiki.wikidataId}';
         final lines = <String>[
-          if (TextQuality.isCleanUkrainian(wiki.descriptionUk)) wiki.descriptionUk!,
-          if (trustDate) 'Створено/засновано: ${wiki.inception}',
+          if (TextQuality.isCleanText(wiki.localDescription) && !isWikimediaMeta(wiki.localDescription))
+            wiki.localDescription!,
+          if (trustDate) L.t('Створено/засновано: ${wiki.inception}', 'Built / founded: ${wiki.inception}'),
           if (wiki.architect?.isNotEmpty == true)
-            'Архітектор: ${wiki.architect}'
+            L.t('Архітектор: ${wiki.architect}', 'Architect: ${wiki.architect}')
           else if (wiki.creator?.isNotEmpty == true)
-            'Автор/скульптор: ${wiki.creator}',
-          if (wiki.style?.isNotEmpty == true) 'Архітектурний стиль: ${wiki.style}',
-          if (wiki.namedAfter?.isNotEmpty == true) 'Названо на честь: ${wiki.namedAfter}',
-          if (wiki.commemorates?.isNotEmpty == true) 'Присвячено: ${wiki.commemorates}',
-          if (wiki.heritageStatus?.isNotEmpty == true) 'Охоронний статус: ${wiki.heritageStatus}',
+            L.t('Автор/скульптор: ${wiki.creator}', 'Creator: ${wiki.creator}'),
+          if (wiki.style?.isNotEmpty == true) L.t('Архітектурний стиль: ${wiki.style}', 'Architectural style: ${wiki.style}'),
+          if (wiki.namedAfter?.isNotEmpty == true) L.t('Названо на честь: ${wiki.namedAfter}', 'Named after: ${wiki.namedAfter}'),
+          if (wiki.commemorates?.isNotEmpty == true) L.t('Присвячено: ${wiki.commemorates}', 'Commemorates: ${wiki.commemorates}'),
+          if (wiki.heritageStatus?.isNotEmpty == true) L.t('Охоронний статус: ${wiki.heritageStatus}', 'Heritage status: ${wiki.heritageStatus}'),
         ];
         if (lines.isNotEmpty) {
-          docs.insert(0, SourceDoc(type: 'wikidata', title: 'Вікідані', url: url, text: lines.join('\n')));
+          docs.insert(0, SourceDoc(type: 'wikidata', title: L.t('Вікідані', 'Wikidata'), url: url, text: lines.join('\n')));
           sources.insert(0, ResearchSource(url: url, title: 'Wikidata (${wiki.label ?? wiki.wikidataId})', type: 'wikidata'));
-          for (final line in lines.skip(TextQuality.isCleanUkrainian(wiki.descriptionUk) ? 1 : 0)) {
+          for (final line in lines.skip(TextQuality.isCleanText(wiki.localDescription) && !isWikimediaMeta(wiki.localDescription) ? 1 : 0)) {
             addFact(line, url, 'high');
           }
         }
@@ -474,7 +486,7 @@ class ResearchService {
         if ((shortDesc == null || shortDesc!.isEmpty) &&
             description != null &&
             description.length >= 30 &&
-            TextQuality.isCleanUkrainian(description)) {
+            TextQuality.isCleanText(description)) {
           shortDesc = description;
         }
       }
@@ -484,8 +496,8 @@ class ResearchService {
       if (website != null && wikiChars < _enoughWikipediaChars ~/ 2) {
         final text = await _officialSite.fetchText(website);
         if (text != null) {
-          docs.add(SourceDoc(type: 'official', title: 'Сайт об\'єкта', url: website, text: text));
-          sources.add(ResearchSource(url: website, title: 'Сайт об\'єкта', type: 'official'));
+          docs.add(SourceDoc(type: 'official', title: L.t('Сайт об\'єкта', 'Official website'), url: website, text: text));
+          sources.add(ResearchSource(url: website, title: L.t('Сайт об\'єкта', 'Official website'), type: 'official'));
         }
       }
 
@@ -528,7 +540,7 @@ class ResearchService {
           ));
           if (generated.isNotEmpty) {
             narrationText = generated.trim();
-            sources.add(const ResearchSource(url: '', title: 'Текст переказано ШІ за цими джерелами', type: 'ai'));
+            sources.add(ResearchSource(url: '', title: L.t('Текст переказано ШІ за цими джерелами', 'Retold by the AI from these sources'), type: 'ai'));
           }
         }
       }
@@ -550,6 +562,7 @@ class ResearchService {
         sources: sources,
         lastResearchedAt: DateTime.now(),
         schemaVersion: EnrichedPoi.currentSchema,
+        contentLang: lang.code,
         sourceMaterial: [material.promptText, ...practical].where((e) => e.isNotEmpty).join('\n'),
       );
 
@@ -573,6 +586,14 @@ class ResearchService {
     if (x.isEmpty || y.isEmpty) return a.trim() == b.trim();
     final common = x.intersection(y).length;
     return common / (x.length < y.length ? x.length : y.length) >= 0.7;
+  }
+
+  /// "Wikimedia disambiguation page" and "list article" are not descriptions of a place: a wrong
+  /// entity id (or a vague match) must not put them on the card.
+  static bool isWikimediaMeta(String? text) {
+    if (text == null) return false;
+    final t = text.toLowerCase();
+    return t.contains('wikimedia') || t.contains('вікімедіа') || t.contains('вікіпедії');
   }
 
   /// A longer article adds little to a 45-second story, so another language is not fetched.
@@ -667,7 +688,7 @@ class ResearchService {
   }
 
   static final _abbrevRegex = RegExp(
-    r'(?:^|\s)(вул|просп|пл|бул|пров|пер|ім|р|рр|м|с|див|напр|тис|млн|грн|ст|в)\.$',
+    r'(?:^|\s)(вул|просп|пл|бул|пров|пер|ім|р|рр|м|с|див|напр|тис|млн|грн|ст|в|st|mr|mrs|ms|dr|no|vs|etc|approx)\.$',
     caseSensitive: false,
   );
 
@@ -734,9 +755,9 @@ class ResearchService {
   /// Article description when it is Ukrainian, otherwise the first sentence of the extract
   /// (if that is Ukrainian); null when only English is available.
   String? _pickDescription(WikipediaArticle a) {
-    if (TextQuality.isCleanUkrainian(a.description)) return a.description;
+    if (TextQuality.isCleanText(a.description)) return a.description;
     final first = _firstSentence(a.extract);
-    return TextQuality.isCleanUkrainian(first) ? first : null;
+    return TextQuality.isCleanText(first) ? first : null;
   }
 
   String _truncate(String text, int maxLength) {
@@ -764,7 +785,9 @@ class ResearchService {
     final label = kind.label.toLowerCase();
     final saysItsKind = [label, ...kindWordsOf(kind)]
         .any((w) => name.toLowerCase().contains(w.length > 5 ? w.substring(0, 5) : w));
-    final intro = saysItsKind ? 'Поруч — «$name».' : 'Поруч — $label «$name».';
+    final intro = L.en
+        ? (saysItsKind ? 'Nearby: "$name".' : 'Nearby: $label "$name".')
+        : (saysItsKind ? 'Поруч — «$name».' : 'Поруч — $label «$name».');
 
     final parts = <String>[intro];
     final known = <String>[
@@ -774,7 +797,7 @@ class ResearchService {
     ];
     for (final raw in known) {
       final line = raw.trim();
-      if (line.isEmpty || line.endsWith('...') || !TextQuality.isCleanUkrainian(line)) continue;
+      if (line.isEmpty || line.endsWith('...') || !TextQuality.isCleanText(line)) continue;
       final sentence = RegExp(r'[.!?…]$').hasMatch(line) ? line : '$line.';
       if (parts.any((p) => _sameMeaning(p, sentence))) continue;
       if (parts.join(' ').length + sentence.length > TextQuality.maxNarrationChars) break;

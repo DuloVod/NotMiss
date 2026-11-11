@@ -1,3 +1,5 @@
+import '../l10n/app_lang.dart';
+
 /// First line of defence for the AI chat: decides locally, without spending a model request.
 /// The model has its own topic check on top (see AiService.answerQuestionAboutPoi).
 class ChatGuard {
@@ -27,18 +29,25 @@ class ChatGuard {
     unicode: true,
   );
 
-  static String refusal(String poiName) =>
+  static String refusal(String poiName) => L.t(
       'Я відповідаю лише про «$poiName»: його історію, людей і події, пов\'язані з ним, '
-      'архітектуру та відвідування. Запитайте, будь ласка, про це місце.';
+          'архітектуру та відвідування. Запитайте, будь ласка, про це місце.',
+      'I only answer about "$poiName": its history, the people and events connected with it, '
+          'its architecture and visiting it. Please ask about this place.');
 
-  static String unknown(String poiName) =>
+  static String unknown(String poiName) => L.t(
       'У перевірених джерелах про «$poiName» цього немає, тож не хочу вигадувати. '
-      'Спробуйте запитати про його історію чи особливості.';
+          'Спробуйте запитати про його історію чи особливості.',
+      'The verified sources about "$poiName" do not say, and I do not want to make things up. '
+          'Try asking about its history or features.');
 
-  static const String tooLong = 'Запитання задовге. Сформулюйте його коротше, до 300 символів.';
+  static String get tooLong => L.t(
+      'Запитання задовге. Сформулюйте його коротше, до 300 символів.',
+      'The question is too long. Please keep it under 300 characters.');
 
-  static const String limitReached =
-      'Про це місце вже поставлено багато запитань. Перейдемо до наступної точки маршруту?';
+  static String get limitReached => L.t(
+      'Про це місце вже поставлено багато запитань. Перейдемо до наступної точки маршруту?',
+      'That is a lot of questions about this place. Shall we move on to the next stop?');
 
   /// Answer to give straight away, or null when the question may go to the model.
   static String? localAnswer(String question, String poiName) {

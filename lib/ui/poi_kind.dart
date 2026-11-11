@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../l10n/app_lang.dart';
 import '../models/poi.dart';
 
 /// What sort of place a POI is — drives the map icon and the label on its card.
@@ -65,39 +66,39 @@ extension PoiKindInfo on PoiKind {
   String get label {
     switch (this) {
       case PoiKind.church:
-        return 'Храм';
+        return L.t('Храм', 'Church');
       case PoiKind.museum:
-        return 'Музей';
+        return L.t('Музей', 'Museum');
       case PoiKind.castle:
-        return 'Замок / палац';
+        return L.t('Замок / палац', 'Castle / palace');
       case PoiKind.monument:
-        return 'Пам\'ятник';
+        return L.t('Пам\'ятник', 'Monument');
       case PoiKind.fountain:
-        return 'Фонтан';
+        return L.t('Фонтан', 'Fountain');
       case PoiKind.street:
-        return 'Вулиця';
+        return L.t('Вулиця', 'Street');
       case PoiKind.square:
-        return 'Площа';
+        return L.t('Площа', 'Square');
       case PoiKind.park:
-        return 'Парк';
+        return L.t('Парк', 'Park');
       case PoiKind.water:
-        return 'Водойма';
+        return L.t('Водойма', 'Water');
       case PoiKind.viewpoint:
-        return 'Оглядовий майданчик';
+        return L.t('Оглядовий майданчик', 'Viewpoint');
       case PoiKind.artwork:
-        return 'Арт-об\'єкт';
+        return L.t('Арт-об\'єкт', 'Artwork');
       case PoiKind.theatre:
-        return 'Театр';
+        return L.t('Театр', 'Theatre');
       case PoiKind.library:
-        return 'Бібліотека';
+        return L.t('Бібліотека', 'Library');
       case PoiKind.tower:
-        return 'Вежа';
+        return L.t('Вежа', 'Tower');
       case PoiKind.station:
-        return 'Залізнична станція';
+        return L.t('Залізнична станція', 'Railway station');
       case PoiKind.building:
-        return 'Будівля';
+        return L.t('Будівля', 'Building');
       case PoiKind.other:
-        return 'Цікаве місце';
+        return L.t('Цікаве місце', 'Place of interest');
     }
   }
 }

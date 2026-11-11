@@ -52,6 +52,7 @@ Position _at(double lat, [double lng = _lng]) => Position(
       speedAccuracy: 0,
     );
 
+/// A place with a source (an OSM description): it is narrated. `tags: const {}` makes it unsourced.
 Poi _poi(String id, String name, {double? lat, Map<String, String>? tags}) => Poi(
       id: id,
       name: name,
@@ -62,7 +63,7 @@ Poi _poi(String id, String name, {double? lat, Map<String, String>? tags}) => Po
       facts: const [],
       narrationText: '',
       sources: const [],
-      osmTags: tags,
+      osmTags: tags ?? {'description': _longDescription},
     );
 
 const _longDescription = 'Міська будівля, у якій понад шість століть працювала міська влада; '
@@ -364,7 +365,7 @@ void main() {
     test('no source: honest short text, the AI is not even asked', () async {
       final ai = _Ai();
       final service = _research(ai);
-      await service.researchImmediately('p', poi: _poi('p', 'Лама'), force: true);
+      await service.researchImmediately('p', poi: _poi('p', 'Лама', tags: const {}), force: true);
       final e = service.getEnrichedData('p')!;
       expect(e.researchStatus, ResearchStatus.insufficientInformation);
       expect(e.narrationText, contains('Лама'));
@@ -459,7 +460,7 @@ void main() {
                   articleTitle: 'Стрийський парк',
                   url: 'u',
                   sentences: ['У парку стоїть пам\'ятник Соколу-Батьку, символ спортивного руху в Галичині.'])));
-      await service.researchImmediately('p', poi: _poi('p', 'Соколу-Батьку'), force: true);
+      await service.researchImmediately('p', poi: _poi('p', 'Соколу-Батьку', tags: const {}), force: true);
       final e = service.getEnrichedData('p')!;
       expect(e.keyFacts.single.fact, contains('символ спортивного руху'));
       expect(e.sources.single.title, contains('Стрийський парк'));
@@ -913,7 +914,7 @@ void main() {
       c.debugSetPois([
         _poi('a', 'Перша', lat: _north(100), tags: {'historic': 'memorial', 'description': _longDescription}),
         _poi('b', 'Друга', lat: _north(300), tags: {'historic': 'memorial', 'description': _longDescription}),
-        _poi('c', 'Третя', lat: _north(500), tags: {'historic': 'memorial'}),
+        _poi('c', 'Третя', lat: _north(500), tags: {'historic': 'memorial', 'description': _longDescription}),
       ]);
 
       for (var m = 0.0; m <= 600; m += 20) {
@@ -1061,7 +1062,7 @@ void main() {
       final tts = _Tts();
       final audio = _Audio();
       final c = _controller(_Ai(narration: ''), audio, tts: tts);
-      final p = _poi('a', 'Перша', tags: {'historic': 'building'});
+      final p = _poi('a', 'Перша', tags: {'historic': 'building', 'description': _longDescription});
       c.debugSetPois([p]);
       await c.debugProcessPoi(p, _at(_lat));
       expect(tts.spoken.single, isNot(contains('Львов')));

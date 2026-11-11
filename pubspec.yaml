@@ -1,7 +1,7 @@
 name: notmiss
 description: AI Voice Guide for Walking Tours
 publish_to: none
-version: 1.1.1+14
+version: 1.1.1+15
 
 environment:
   sdk: ">=3.3.0 <4.0.0"
@@ -34,6 +34,7 @@ dependencies:
   uuid: ^4.4.0
   flutter_foreground_task: ^11.0.3
   flutter_compass: ^0.8.1
+  share_plus: ^13.3.1
 
 flutter:
   uses-material-design: true

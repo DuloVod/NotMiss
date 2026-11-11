@@ -128,6 +128,10 @@ const _tower = Poi(
   facts: [],
   narrationText: '',
   sources: [],
+  osmTags: {
+    'description': 'Оборонна споруда XVI століття, де зберігали порох; нині тут працює музей, '
+        'а башту видно з усієї площі навколо.',
+  },
 );
 
 void main() {

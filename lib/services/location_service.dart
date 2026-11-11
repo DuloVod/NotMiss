@@ -4,6 +4,80 @@ import 'dart:math' show exp;
 import 'package:flutter/foundation.dart' show kIsWeb, debugPrint;
 import 'package:geolocator/geolocator.dart';
 
+/// How hard the GPS works.
+enum GpsMode {
+  /// Walking: best accuracy, every update (points are triggered within metres).
+  precise,
+
+  /// Standing still: coarser accuracy and an update only after real movement — the GPS chip
+  /// sleeps most of the time, which is what drains the battery on a long walk with stops.
+  saving,
+}
+
+/// Decides when to switch between [GpsMode]s from the stream of accepted fixes.
+class GpsPowerPolicy {
+  /// How long the user must stand still before the GPS goes to sleep.
+  final Duration stillFor;
+
+  /// Slower than this counts as standing (m/s).
+  final double stillSpeedMps;
+
+  /// Moving further than this from the spot where the stop began wakes the GPS (m).
+  final double wakeMeters;
+
+  GpsPowerPolicy({
+    this.stillFor = const Duration(seconds: 60),
+    this.stillSpeedMps = 0.5,
+    this.wakeMeters = 15,
+  });
+
+  GpsMode mode = GpsMode.precise;
+  DateTime? _stillSince;
+  double? _anchorLat;
+  double? _anchorLng;
+
+  /// Feeds one accepted fix; returns the mode to use from now on.
+  GpsMode onFix({
+    required double speedMps,
+    required double lat,
+    required double lng,
+    required DateTime now,
+  }) {
+    final moved = _anchorLat == null
+        ? 0.0
+        : Geolocator.distanceBetween(_anchorLat!, _anchorLng!, lat, lng);
+    final slow = speedMps < stillSpeedMps; // an unknown speed (-1) counts as slow
+    final walking = !slow && speedMps >= 0.8 || moved >= wakeMeters;
+
+    if (mode == GpsMode.saving) {
+      if (walking) _wake(lat, lng, now);
+      return mode;
+    }
+    if (walking || _stillSince == null) {
+      _stillSince = now;
+      _anchorLat = lat;
+      _anchorLng = lng;
+    } else if (now.difference(_stillSince!) >= stillFor) {
+      mode = GpsMode.saving;
+    }
+    return mode;
+  }
+
+  void _wake(double lat, double lng, DateTime now) {
+    mode = GpsMode.precise;
+    _stillSince = now;
+    _anchorLat = lat;
+    _anchorLng = lng;
+  }
+
+  void reset() {
+    mode = GpsMode.precise;
+    _stillSince = null;
+    _anchorLat = null;
+    _anchorLng = null;
+  }
+}
+
 /// Obtains GPS coordinates and exposes a stream of position updates.
 ///
 /// Improvements over the raw Geolocator stream:
@@ -17,7 +91,8 @@ class LocationService {
   /// while still filtering coarse cellular cell tower approximations (500m+).
   static const double _maxAccuracyM = 65.0;
 
-  static LocationSettings get _settings {
+  static LocationSettings settingsFor(GpsMode mode) {
+    final precise = mode == GpsMode.precise;
     if (kIsWeb) {
       return const LocationSettings(
         accuracy: LocationAccuracy.high,
@@ -26,16 +101,16 @@ class LocationService {
     }
     if (Platform.isAndroid) {
       return AndroidSettings(
-        accuracy: LocationAccuracy.bestForNavigation,
-        distanceFilter: 0,
-        intervalDuration: const Duration(milliseconds: 500),
+        accuracy: precise ? LocationAccuracy.bestForNavigation : LocationAccuracy.high,
+        distanceFilter: precise ? 0 : 12,
+        intervalDuration: precise ? const Duration(milliseconds: 500) : const Duration(seconds: 4),
         forceLocationManager: false,
       );
     }
     if (Platform.isIOS || Platform.isMacOS) {
       return AppleSettings(
-        accuracy: LocationAccuracy.bestForNavigation,
-        distanceFilter: 0,
+        accuracy: precise ? LocationAccuracy.bestForNavigation : LocationAccuracy.high,
+        distanceFilter: precise ? 0 : 12,
         activityType: ActivityType.otherNavigation,
         allowBackgroundLocationUpdates: true,
         showBackgroundLocationIndicator: true,
@@ -48,6 +123,25 @@ class LocationService {
       distanceFilter: 0,
     );
   }
+
+  /// Switches the platform stream to the settings of [mode] (a stream's settings are fixed
+  /// when it is created, so it is re-created).
+  void _applyMode(GpsMode mode) {
+    _subscription?.cancel();
+    _subscription = null;
+    if (!_running) return;
+    debugPrint('[LocationService] GPS mode → ${mode.name}');
+    _subscription = Geolocator.getPositionStream(locationSettings: settingsFor(mode)).listen(
+      _onFix,
+      onError: (Object error) => debugPrint('[LocationService] Stream error: $error'),
+    );
+  }
+
+  bool _running = false;
+  final GpsPowerPolicy _policy = GpsPowerPolicy();
+
+  /// Current GPS mode (for tests and diagnostics).
+  GpsMode get mode => _policy.mode;
 
   StreamSubscription<Position>? _subscription;
   final StreamController<Position> _controller =
@@ -99,63 +193,75 @@ class LocationService {
 
   /// Start streaming position updates.
   void start() {
-    _subscription ??=
-        Geolocator.getPositionStream(locationSettings: _settings).listen((pos) {
-      // ── 1. Accuracy gate ───────────────────────────────────────────────
-      if (!kIsWeb && pos.accuracy > _maxAccuracyM) {
-        // Too inaccurate — discard and wait for a better fix
+    if (_subscription != null) return;
+    _running = true;
+    _policy.reset();
+    _applyMode(GpsMode.precise);
+  }
+
+  void _onFix(Position pos) {
+    // ── 1. Accuracy gate ───────────────────────────────────────────────
+    if (!kIsWeb && pos.accuracy > _maxAccuracyM) {
+      // Too inaccurate — discard and wait for a better fix
+      return;
+    }
+
+    // ── 2. Deduplicate (web only) ──────────────────────────────────────
+    if (kIsWeb && _lastPosition != null) {
+      if (_lastPosition!.latitude == pos.latitude &&
+          _lastPosition!.longitude == pos.longitude) {
         return;
       }
+    }
 
-      // ── 2. Deduplicate (web only) ──────────────────────────────────────
-      if (kIsWeb && _lastPosition != null) {
-        if (_lastPosition!.latitude == pos.latitude &&
-            _lastPosition!.longitude == pos.longitude) {
-          return;
-        }
+    // ── 3. Kalman-style smoothing (native only) ─────────────────────────
+    // On first fix, initialise the smoothed state directly.
+    if (!kIsWeb) {
+      if (_smoothLat == null) {
+        _smoothLat = pos.latitude;
+        _smoothLng = pos.longitude;
+      } else {
+        // Adaptive gain: trust the new measurement more when accuracy is good
+        // and less when it's poor. Maps accuracy 0→40 to gain 0.85→0.35.
+        final adaptiveGain =
+            _adaptiveGain(pos.accuracy, min: 0.35, max: 0.85);
+        _smoothLat = _smoothLat! + adaptiveGain * (pos.latitude - _smoothLat!);
+        _smoothLng =
+            _smoothLng! + adaptiveGain * (pos.longitude - _smoothLng!);
       }
 
-      // ── 3. Kalman-style smoothing (native only) ─────────────────────────
-      // On first fix, initialise the smoothed state directly.
-      if (!kIsWeb) {
-        if (_smoothLat == null) {
-          _smoothLat = pos.latitude;
-          _smoothLng = pos.longitude;
-        } else {
-          // Adaptive gain: trust the new measurement more when accuracy is good
-          // and less when it's poor. Maps accuracy 0→40 to gain 0.85→0.35.
-          final adaptiveGain =
-              _adaptiveGain(pos.accuracy, min: 0.35, max: 0.85);
-          _smoothLat = _smoothLat! + adaptiveGain * (pos.latitude - _smoothLat!);
-          _smoothLng =
-              _smoothLng! + adaptiveGain * (pos.longitude - _smoothLng!);
-        }
+      // Re-package as a Position with the smoothed coordinates.
+      // We keep the original accuracy/altitude/speed fields from the fix.
+      pos = Position(
+        latitude: _smoothLat!,
+        longitude: _smoothLng!,
+        timestamp: pos.timestamp,
+        accuracy: pos.accuracy,
+        altitude: pos.altitude,
+        altitudeAccuracy: pos.altitudeAccuracy,
+        heading: pos.heading,
+        headingAccuracy: pos.headingAccuracy,
+        speed: pos.speed,
+        speedAccuracy: pos.speedAccuracy,
+      );
+    }
 
-        // Re-package as a Position with the smoothed coordinates.
-        // We keep the original accuracy/altitude/speed fields from the fix.
-        pos = Position(
-          latitude: _smoothLat!,
-          longitude: _smoothLng!,
-          timestamp: pos.timestamp,
-          accuracy: pos.accuracy,
-          altitude: pos.altitude,
-          altitudeAccuracy: pos.altitudeAccuracy,
-          heading: pos.heading,
-          headingAccuracy: pos.headingAccuracy,
-          speed: pos.speed,
-          speedAccuracy: pos.speedAccuracy,
-        );
-      }
+    _lastPosition = pos;
+    _controller.add(pos);
 
-      _lastPosition = pos;
-      _controller.add(pos);
-    }, onError: (error) {
-      debugPrint('[LocationService] Stream error: $error');
-    });
+    final before = _policy.mode;
+    final after = _policy.onFix(
+      speedMps: pos.speed,
+      lat: pos.latitude,
+      lng: pos.longitude,
+      now: DateTime.now(),
+    );
+    if (after != before) _applyMode(after);
   }
 
   /// Stop streaming.
   void stop() {
+    _running = false;
     _subscription?.cancel();
     _subscription = null;
     // Reset smoothing state so the next walk starts fresh

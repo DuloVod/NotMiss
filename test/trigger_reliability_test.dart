@@ -79,6 +79,10 @@ const _poi = Poi(
   facts: [],
   narrationText: '',
   sources: [],
+  osmTags: {
+    'description': 'Адміністративна будівля в центрі міста, де протягом усього часу її існування '
+        'працювала міська влада; сучасну споруду звели на місці старої, що обвалилася.',
+  },
 );
 
 /// A place some source knows about (an OSM description long enough for a story).
