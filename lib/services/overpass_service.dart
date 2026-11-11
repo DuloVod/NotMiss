@@ -51,7 +51,20 @@ class OverpassService {
   /// previous one if nothing has answered yet, so one dead server costs seconds, not 12 s each.
   final Duration staggerDelay;
 
-  OverpassService({this.staggerDelay = const Duration(seconds: 2)});
+  /// How long one mirror may take. The public servers are often overloaded: a small query then
+  /// needs 15–25 s, and a client that gives up at 12 s never gets any answer.
+  final Duration requestTimeout;
+
+  OverpassService({
+    this.staggerDelay = const Duration(seconds: 2),
+    this.requestTimeout = const Duration(seconds: 28),
+  });
+
+  /// The cached list comes from the quick, reduced search: the full one follows soon.
+  bool _partial = false;
+
+  /// Radius of the quick search (metres).
+  static const double quickRadiusM = 450.0;
 
   /// True when the last [loadPois] returned an empty list because the network / all mirrors
   /// failed (as opposed to a genuinely empty area). Callers must retry instead of
@@ -68,6 +81,7 @@ class OverpassService {
   /// Whether we need to reload POIs because user moved far enough.
   bool shouldReload(double lat, double lng) {
     if (_cachedPois == null) return true;
+    if (_partial) return true; // the rate limit spaces the full search out
     if (_cacheCenterLat == null || _cacheCenterLng == null) return true;
     final dist = Geolocator.distanceBetween(
       lat, lng, _cacheCenterLat!, _cacheCenterLng!,
@@ -123,14 +137,32 @@ class OverpassService {
     // 4. Fetch from Overpass
     try {
       _lastRequestTime = DateTime.now();
-      final pois = await _fetchFromOverpass(lat, lng);
+      // First search in an area: the quick one, so the walker has points within seconds even when
+      // the servers are slow. The full search follows (see [shouldReload]).
+      final quickFirst = _cachedPois == null || _isFarFromCache(lat, lng);
+      List<Poi> pois;
+      var partial = false;
+      if (quickFirst) {
+        pois = await _fetchFromOverpass(lat, lng, quick: true);
+        partial = true;
+      } else {
+        try {
+          pois = await _fetchFromOverpass(lat, lng);
+        } catch (e) {
+          debugPrint('[OverpassService] Full search failed, trying the quick one: $e');
+          pois = await _fetchFromOverpass(lat, lng, quick: true);
+          partial = true;
+        }
+      }
+      _partial = partial;
       _cachedPois = pois;
       _cacheCenterLat = lat;
       _cacheCenterLng = lng;
       _consecutiveErrors = 0;
       lastLoadFailed = false;
       await _saveToDisk(pois, lat, lng);
-      debugPrint('[OverpassService] Fetched from Overpass: ${pois.length} POIs');
+      debugPrint('[OverpassService] Fetched from Overpass: ${pois.length} POIs'
+          '${partial ? ' (quick search, full one follows)' : ''}');
       return pois;
     } catch (e) {
       _consecutiveErrors++;
@@ -150,12 +182,17 @@ class OverpassService {
   }
 
   /// Build and execute the Overpass QL query with fallback support.
-  Future<List<Poi>> _fetchFromOverpass(double lat, double lng) async {
-    final query = _buildQuery(lat, lng, searchRadiusM);
+  bool _isFarFromCache(double lat, double lng) {
+    if (_cacheCenterLat == null || _cacheCenterLng == null) return true;
+    return Geolocator.distanceBetween(lat, lng, _cacheCenterLat!, _cacheCenterLng!) > _cacheValidRadiusM;
+  }
+
+  Future<List<Poi>> _fetchFromOverpass(double lat, double lng, {bool quick = false}) async {
+    final query = quick ? _buildQuickQuery(lat, lng, quickRadiusM) : _buildQuery(lat, lng, searchRadiusM);
     final bodyStr = 'data=${Uri.encodeComponent(query)}';
     final headers = {
       'Content-Type': 'application/x-www-form-urlencoded',
-      'User-Agent': 'NotMiss/0.3.0 (walking tour guide app)',
+      'User-Agent': 'NotMiss/1.1 (https://github.com/DuloVod/NotMiss; walking tour guide app)',
     };
 
     // Prioritize the server that succeeded last time
@@ -174,7 +211,7 @@ class OverpassService {
         debugPrint('[OverpassService] Trying endpoint: $endpoint');
         final response = await http
             .post(Uri.parse(endpoint), headers: headers, body: bodyStr)
-            .timeout(const Duration(seconds: 12)); // 12s timeout for Overpass 10s query
+            .timeout(requestTimeout);
         if (response.statusCode == 200) {
           final json = jsonDecode(response.body) as Map<String, dynamic>;
           final elements = json['elements'] as List<dynamic>? ?? [];
@@ -209,11 +246,28 @@ class OverpassService {
     return _parseElements(elements);
   }
 
+  /// Light search for a slow server: the kinds of places people actually walk up to, nearby.
+  String _buildQuickQuery(double lat, double lng, double radiusM) {
+    final r = radiusM.toInt();
+    return '''
+[out:json][timeout:25];
+(
+  nwr["tourism"~"attraction|museum|viewpoint|artwork|gallery"](around:$r,$lat,$lng);
+  nwr["historic"](around:$r,$lat,$lng);
+  nwr["amenity"~"place_of_worship|fountain|theatre|library|monastery|arts_centre"](around:$r,$lat,$lng);
+  nwr["leisure"~"park|garden"](around:$r,$lat,$lng);
+  nwr["place"="square"](around:$r,$lat,$lng);
+  nwr["wikidata"](around:$r,$lat,$lng);
+);
+out center;
+''';
+  }
+
   /// Overpass QL query: get named POIs of relevant categories within search radius.
   String _buildQuery(double lat, double lng, double radiusM) {
     final r = radiusM.toInt();
     return '''
-[out:json][timeout:15];
+[out:json][timeout:25];
 (
   // Tourism & Attractions
   node["tourism"~"attraction|museum|viewpoint|artwork|information|gallery|theme_park|zoo"](around:$r,$lat,$lng);
