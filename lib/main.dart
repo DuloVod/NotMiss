@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'package:flutter/material.dart';
+import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'dart:ui' show PlatformDispatcher;
@@ -96,13 +97,22 @@ class _NotMissAppState extends State<NotMissApp> {
 
   @override
   Widget build(BuildContext context) {
-    return MaterialApp(
-      title: 'NotMiss — AI Voice Guide',
-      debugShowCheckedModeBanner: false,
-      theme: NmTheme.light(),
-      home: _controller == null
-          ? _ErrorScreen(message: widget.loadError ?? L.t('Дані парку не завантажились.', 'The park data could not be loaded.'))
-          : MainScreen(controller: _controller!),
+    final controller = _controller;
+    // The app's language follows the selected one: system texts (copy / paste menu, dialogs,
+    // screen-reader labels) come out in it too.
+    return ListenableBuilder(
+      listenable: controller ?? ValueNotifier<int>(0),
+      builder: (context, _) => MaterialApp(
+        title: 'NotMiss',
+        debugShowCheckedModeBanner: false,
+        theme: NmTheme.light(),
+        locale: Locale(L.lang.code),
+        supportedLocales: [for (final l in AppLang.values) Locale(l.code)],
+        localizationsDelegates: GlobalMaterialLocalizations.delegates,
+        home: controller == null
+            ? _ErrorScreen(message: widget.loadError ?? L.t('Дані парку не завантажились.', 'The park data could not be loaded.'))
+            : MainScreen(controller: controller),
+      ),
     );
   }
 }

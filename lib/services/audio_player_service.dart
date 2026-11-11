@@ -63,6 +63,18 @@ class AudioPlayerService {
   Stream<PlayerState> get playerStateStream => _player.playerStateStream;
 
   Duration get position => _player.position;
+
+  /// Position of the playing file, about ten times a second (to follow the text while it is spoken).
+  Stream<Duration> get positionStream => _player.createPositionStream(
+        minPeriod: const Duration(milliseconds: 80),
+        maxPeriod: const Duration(milliseconds: 160),
+      );
+
+  bool _narrationLoaded = false;
+
+  /// The loaded file is the narration (not the arrival chime): only then do position and
+  /// duration say how far the story has got.
+  bool get isNarrationLoaded => _narrationLoaded;
   Duration? get duration => _player.duration;
 
   bool _cueNext = false;
@@ -109,6 +121,8 @@ class AudioPlayerService {
           await _player.setFilePath(source);
         }
 
+        _narrationLoaded = true;
+
         // Not awaited (it completes at the end of playback), but a refused audio session
         // surfaces here: without this handler the failure would be lost.
         String? failure;
@@ -138,6 +152,7 @@ class AudioPlayerService {
               state.processingState == ProcessingState.idle);
         } finally {
           watchdog.cancel();
+          _narrationLoaded = false;
         }
         if (failure != null && token == _stopToken) throw PlaybackFailed(failure!);
 
@@ -161,6 +176,7 @@ class AudioPlayerService {
   Future<void> stop() async {
     _stopToken++;
     _cueNext = false;
+    _narrationLoaded = false;
     await _player.stop();
   }
 

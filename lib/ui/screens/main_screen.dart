@@ -8,8 +8,10 @@ import '../../models/enriched_poi.dart';
 import '../../models/chat_message.dart';
 import '../../services/poi_category_service.dart';
 import '../../l10n/app_lang.dart';
+import '../../l10n/place_name.dart';
 import '../../services/report_service.dart';
 import '../walk_controller.dart';
+import '../spoken_text.dart';
 import '../guide_status.dart';
 import '../../services/text_quality.dart';
 import '../poi_kind.dart';
@@ -56,7 +58,8 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
   void didChangeAppLifecycleState(AppLifecycleState state) {
     widget.controller.setAppLifecycle(state);
     // When returning from iOS/Android Settings, auto-start if permission was granted
-    if (state == AppLifecycleState.resumed && widget.controller.status != WalkStatus.walking) {
+    if (state == AppLifecycleState.resumed &&
+        widget.controller.status != WalkStatus.walking) {
       widget.controller.startWalk();
     }
   }
@@ -150,7 +153,8 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
           ),
 
           // ── One calm status line (only while walking, only when it matters) ─────
-          if (guideStatus != null && widget.controller.status == WalkStatus.walking)
+          if (guideStatus != null &&
+              widget.controller.status == WalkStatus.walking)
             Positioned(
               top: MediaQuery.of(context).padding.top + 12,
               left: 16,
@@ -191,16 +195,20 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
                                 backgroundColor: Colors.white,
                                 elevation: 4,
                                 tooltip: L.t('Мова', 'Language'),
-                                onPressed: () => _showLanguageSheet(context, widget.controller),
+                                onPressed: () => _showLanguageSheet(
+                                    context, widget.controller),
                                 child: Row(
                                   mainAxisAlignment: MainAxisAlignment.center,
                                   children: [
-                                    const Icon(Icons.translate, color: NmColors.ink, size: 20),
+                                    const Icon(Icons.translate,
+                                        color: NmColors.ink, size: 20),
                                     const SizedBox(width: 2),
                                     Text(
                                       L.lang.code.toUpperCase(),
                                       style: const TextStyle(
-                                          fontSize: 10, fontWeight: FontWeight.w800, color: NmColors.ink),
+                                          fontSize: 10,
+                                          fontWeight: FontWeight.w800,
+                                          color: NmColors.ink),
                                     ),
                                   ],
                                 ),
@@ -225,16 +233,20 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
                                     child: const Icon(Icons.checklist_rounded,
                                         color: NmColors.ink, size: 26),
                                   ),
-                                  if (widget.controller.visitedPlaces.isNotEmpty)
+                                  if (widget
+                                      .controller.visitedPlaces.isNotEmpty)
                                     Positioned(
                                       right: -2,
                                       top: -2,
                                       child: Container(
-                                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                        padding: const EdgeInsets.symmetric(
+                                            horizontal: 6, vertical: 2),
                                         decoration: BoxDecoration(
                                           color: NmColors.ink,
-                                          borderRadius: BorderRadius.circular(10),
-                                          border: Border.all(color: Colors.white, width: 1.5),
+                                          borderRadius:
+                                              BorderRadius.circular(10),
+                                          border: Border.all(
+                                              color: Colors.white, width: 1.5),
                                         ),
                                         child: Text(
                                           '${widget.controller.visitedPlaces.length}',
@@ -268,16 +280,20 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
                                     heroTag: 'walkResetNorth',
                                     backgroundColor: Colors.white,
                                     elevation: 4,
-                                    tooltip: L.t('Орієнтувати на північ', 'Point north'),
+                                    tooltip: L.t(
+                                        'Орієнтувати на північ', 'Point north'),
                                     onPressed: () => _mapController.rotate(0.0),
                                     child: Transform.rotate(
-                                      angle: -rotation * (3.141592653589793 / 180),
+                                      angle:
+                                          -rotation * (3.141592653589793 / 180),
                                       child: Stack(
                                         alignment: Alignment.center,
                                         children: [
                                           Icon(
                                             Icons.navigation,
-                                            color: isRotated ? NmColors.compassRed : NmColors.muted,
+                                            color: isRotated
+                                                ? NmColors.compassRed
+                                                : NmColors.muted,
                                             size: 24,
                                           ),
                                           Positioned(
@@ -287,7 +303,9 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
                                               style: TextStyle(
                                                 fontSize: 9,
                                                 fontWeight: FontWeight.w600,
-                                                color: isRotated ? NmColors.compassRed : NmColors.muted,
+                                                color: isRotated
+                                                    ? NmColors.compassRed
+                                                    : NmColors.muted,
                                               ),
                                             ),
                                           ),
@@ -313,7 +331,9 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
                                 pos != null && _followUser
                                     ? Icons.my_location
                                     : Icons.location_searching,
-                                color: _followUser ? NmColors.userDot : NmColors.muted,
+                                color: _followUser
+                                    ? NmColors.userDot
+                                    : NmColors.muted,
                                 size: 26,
                               ),
                             ),
@@ -380,7 +400,9 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
                 ),
                 child: Icon(
                   isAudioActive
-                      ? (isPaused ? Icons.pause_circle_outline : Icons.volume_up)
+                      ? (isPaused
+                          ? Icons.pause_circle_outline
+                          : Icons.volume_up)
                       : poiKindOf(poi).icon,
                   color: NmColors.ink,
                   size: 30,
@@ -401,7 +423,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
                     ),
                     const SizedBox(height: 2),
                     Text(
-                      poi.name,
+                      poi.shownName,
                       style: NmText.title(22),
                     ),
                   ],
@@ -428,20 +450,29 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
                     Row(
                       children: [
                         Icon(
-                          poi.narrationText.isNotEmpty ? Icons.auto_awesome : Icons.info_outline,
+                          poi.narrationText.isNotEmpty
+                              ? Icons.auto_awesome
+                              : Icons.info_outline,
                           size: 16,
                           color: NmColors.ink,
                         ),
                         const SizedBox(width: 6),
-                        Text(
-                          poi.narrationText.isNotEmpty ? L.t('Текст розповіді гіда:', 'Guide\'s story:') : L.t('Про об\'єкт:', 'About the place:'),
-                          style: const TextStyle(
-                            fontSize: 13,
-                            fontWeight: FontWeight.w600,
-                            color: NmColors.ink,
+                        Expanded(
+                          child: Text(
+                            poi.narrationText.isNotEmpty
+                                ? L.t(
+                                    'Текст розповіді гіда:', 'Guide\'s story:')
+                                : L.t('Про об\'єкт:', 'About the place:'),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              fontSize: 13,
+                              fontWeight: FontWeight.w600,
+                              color: NmColors.ink,
+                            ),
                           ),
                         ),
-                        const Spacer(),
+                        const SizedBox(width: 8),
                         Text(
                           L.t('Читати все ↗', 'Read all ↗'),
                           style: TextStyle(
@@ -470,15 +501,18 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
           ],
           const SizedBox(height: 20),
           // Where the next place is
-          if (widget.controller.nearestUnvisited(excluding: poi.id) case final next?) ...[
+          if (widget.controller.nearestUnvisited(excluding: poi.id)
+              case final next?) ...[
             const SizedBox(height: 10),
             Row(
               children: [
-                const Icon(Icons.near_me_outlined, size: 16, color: NmColors.muted),
+                const Icon(Icons.near_me_outlined,
+                    size: 16, color: NmColors.muted),
                 const SizedBox(width: 6),
                 Expanded(
                   child: Text(
-                    L.t('Далі: ${next.poi.name} · ${L.distance(next.meters)}', 'Next: ${next.poi.name} · ${L.distance(next.meters)}'),
+                    L.t('Далі: ${next.poi.shownName} · ${L.distance(next.meters)}',
+                        'Next: ${next.poi.shownName} · ${L.distance(next.meters)}'),
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: const TextStyle(fontSize: 13, color: NmColors.muted),
@@ -502,13 +536,15 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
               style: NmButtons.primary(),
             ),
           ] else ...[
-            if (widget.controller.isProcessing && widget.controller.activePoi?.id == poi.id) ...[
+            if (widget.controller.isProcessing &&
+                widget.controller.activePoi?.id == poi.id) ...[
               ElevatedButton.icon(
                 onPressed: null,
                 icon: const SizedBox(
                   width: 18,
                   height: 18,
-                  child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                  child: CircularProgressIndicator(
+                      strokeWidth: 2, color: Colors.white),
                 ),
                 label: Text(
                   L.t('Готуємо розповідь…', 'Preparing the story…'),
@@ -574,121 +610,147 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
             final listened = widget.controller.listenedPlaces;
             final passed = widget.controller.passedOnlyPlaces;
             final places = tab == 0 ? listened : passed;
-            return Container(
-              constraints: BoxConstraints(maxHeight: MediaQuery.of(ctx).size.height * 0.75),
-              decoration: const BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
-              ),
-              child: SafeArea(
-                top: false,
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    const SizedBox(height: 12),
-                    Center(
-                      child: Container(
-                        width: 44,
-                        height: 4,
-                        decoration: BoxDecoration(
-                          color: NmColors.sand,
-                          borderRadius: BorderRadius.circular(2),
+            return Material(
+              color: Colors.white,
+              borderRadius:
+                  const BorderRadius.vertical(top: Radius.circular(24)),
+              clipBehavior: Clip.antiAlias,
+              child: ConstrainedBox(
+                constraints: BoxConstraints(
+                    maxHeight: MediaQuery.of(ctx).size.height * 0.75),
+                child: SafeArea(
+                  top: false,
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      const SizedBox(height: 12),
+                      Center(
+                        child: Container(
+                          width: 44,
+                          height: 4,
+                          decoration: BoxDecoration(
+                            color: NmColors.sand,
+                            borderRadius: BorderRadius.circular(2),
+                          ),
                         ),
                       ),
-                    ),
-                    Padding(
-                      padding: const EdgeInsets.fromLTRB(24, 16, 24, 8),
-                      child: Text(L.t('Мої місця', 'My places'), style: NmText.title(22)),
-                    ),
-                    Padding(
-                      padding: const EdgeInsets.fromLTRB(20, 0, 20, 8),
-                      child: Row(
-                        children: [
-                          ChoiceChip(
-                            avatar: const Icon(Icons.headphones, size: 16),
-                            label: Text(L.t('Прослухані · ${listened.length}', 'Listened · ${listened.length}')),
-                            selected: tab == 0,
-                            onSelected: (_) => setSheet(() => tab = 0),
-                          ),
-                          const SizedBox(width: 8),
-                          ChoiceChip(
-                            avatar: const Icon(Icons.directions_walk, size: 16),
-                            label: Text(L.t('Пройдені · ${passed.length}', 'Passed · ${passed.length}')),
-                            selected: tab == 1,
-                            onSelected: (_) => setSheet(() => tab = 1),
-                          ),
-                        ],
-                      ),
-                    ),
-                    Padding(
-                      padding: const EdgeInsets.fromLTRB(24, 0, 24, 8),
-                      child: Text(
-                        tab == 0
-                            ? L.t('Розповідь прослухано до кінця.', 'The story was heard to the end.')
-                            : L.t('Ви були поруч, але розповідь не прослухали — натисніть, щоб послухати.', 'You were nearby but did not hear the story — tap to listen.'),
-                        style: const TextStyle(fontSize: 12, color: NmColors.muted),
-                      ),
-                    ),
-                    if (places.isEmpty)
                       Padding(
-                        padding: const EdgeInsets.fromLTRB(24, 8, 24, 32),
+                        padding: const EdgeInsets.fromLTRB(24, 16, 24, 8),
+                        child: Text(L.t('Мої місця', 'My places'),
+                            style: NmText.title(22)),
+                      ),
+                      Padding(
+                        padding: const EdgeInsets.fromLTRB(20, 0, 20, 8),
+                        child: Wrap(
+                          spacing: 8,
+                          runSpacing: 4,
+                          children: [
+                            ChoiceChip(
+                              avatar: const Icon(Icons.headphones, size: 16),
+                              label: Text(L.t('Прослухані · ${listened.length}',
+                                  'Listened · ${listened.length}')),
+                              selected: tab == 0,
+                              onSelected: (_) => setSheet(() => tab = 0),
+                            ),
+                            ChoiceChip(
+                              avatar:
+                                  const Icon(Icons.directions_walk, size: 16),
+                              label: Text(L.t('Пройдені · ${passed.length}',
+                                  'Passed · ${passed.length}')),
+                              selected: tab == 1,
+                              onSelected: (_) => setSheet(() => tab = 1),
+                            ),
+                          ],
+                        ),
+                      ),
+                      Padding(
+                        padding: const EdgeInsets.fromLTRB(24, 0, 24, 8),
                         child: Text(
                           tab == 0
-                              ? L.t('Поки що порожньо — місця з\'являться тут, коли ви дослухаєте розповідь.', 'Nothing yet — places appear here once you hear a story to the end.')
-                              : L.t('Поки що порожньо.', 'Nothing yet.'),
-                          style: const TextStyle(fontSize: 15, color: NmColors.muted),
-                        ),
-                      )
-                    else
-                      Flexible(
-                        child: ListView.separated(
-                          shrinkWrap: true,
-                          padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-                          itemCount: places.length,
-                          separatorBuilder: (_, __) => const Divider(height: 1, color: NmColors.line),
-                          itemBuilder: (ctx, i) {
-                            final place = places[i];
-                            final kind = PoiKind.values.asNameMap()[place.kind] ?? PoiKind.other;
-                            Poi? poi;
-                            for (final p in widget.controller.allPois) {
-                              if (p.id == place.id) {
-                                poi = p;
-                                break;
-                              }
-                            }
-                            return ListTile(
-                              leading: Container(
-                                width: 40,
-                                height: 40,
-                                decoration: const BoxDecoration(
-                                  color: NmColors.cream,
-                                  shape: BoxShape.circle,
-                                ),
-                                child: Icon(kind.icon, size: 22, color: NmColors.ink),
-                              ),
-                              title: Text(
-                                place.name.isEmpty ? L.t('Місце', 'Place') : place.name,
-                                style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
-                              ),
-                              subtitle: Text(kind.label,
-                                  style: const TextStyle(fontSize: 12, color: NmColors.muted)),
-                              trailing: Icon(
-                                place.listened ? Icons.headphones : Icons.directions_walk,
-                                size: 18,
-                                color: NmColors.stone,
-                              ),
-                              onTap: poi == null
-                                  ? null
-                                  : () {
-                                      Navigator.of(ctx).pop();
-                                      _showPoiDetails(context, poi!);
-                                    },
-                            );
-                          },
+                              ? L.t('Розповідь прослухано до кінця.',
+                                  'The story was heard to the end.')
+                              : L.t(
+                                  'Ви були поруч, але розповідь не прослухали — натисніть, щоб послухати.',
+                                  'You were nearby but did not hear the story — tap to listen.'),
+                          style: const TextStyle(
+                              fontSize: 12, color: NmColors.muted),
                         ),
                       ),
-                  ],
+                      if (places.isEmpty)
+                        Padding(
+                          padding: const EdgeInsets.fromLTRB(24, 8, 24, 32),
+                          child: Text(
+                            tab == 0
+                                ? L.t(
+                                    'Поки що порожньо — місця з\'являться тут, коли ви дослухаєте розповідь.',
+                                    'Nothing yet — places appear here once you hear a story to the end.')
+                                : L.t('Поки що порожньо.', 'Nothing yet.'),
+                            style: const TextStyle(
+                                fontSize: 15, color: NmColors.muted),
+                          ),
+                        )
+                      else
+                        Flexible(
+                          child: ListView.separated(
+                            shrinkWrap: true,
+                            padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+                            itemCount: places.length,
+                            separatorBuilder: (_, __) =>
+                                const Divider(height: 1, color: NmColors.line),
+                            itemBuilder: (ctx, i) {
+                              final place = places[i];
+                              final kind =
+                                  PoiKind.values.asNameMap()[place.kind] ??
+                                      PoiKind.other;
+                              Poi? poi;
+                              for (final p in widget.controller.allPois) {
+                                if (p.id == place.id) {
+                                  poi = p;
+                                  break;
+                                }
+                              }
+                              return ListTile(
+                                leading: Container(
+                                  width: 40,
+                                  height: 40,
+                                  decoration: const BoxDecoration(
+                                    color: NmColors.cream,
+                                    shape: BoxShape.circle,
+                                  ),
+                                  child: Icon(kind.icon,
+                                      size: 22, color: NmColors.ink),
+                                ),
+                                title: Text(
+                                  place.name.isEmpty
+                                      ? L.t('Місце', 'Place')
+                                      : PlaceNames.of(place.name, null),
+                                  style: const TextStyle(
+                                      fontSize: 15,
+                                      fontWeight: FontWeight.w600),
+                                ),
+                                subtitle: Text(kind.label,
+                                    style: const TextStyle(
+                                        fontSize: 12, color: NmColors.muted)),
+                                trailing: Icon(
+                                  place.listened
+                                      ? Icons.headphones
+                                      : Icons.directions_walk,
+                                  size: 18,
+                                  color: NmColors.stone,
+                                ),
+                                onTap: poi == null
+                                    ? null
+                                    : () {
+                                        Navigator.of(ctx).pop();
+                                        _showPoiDetails(context, poi!);
+                                      },
+                              );
+                            },
+                          ),
+                        ),
+                    ],
+                  ),
                 ),
               ),
             );
@@ -719,7 +781,8 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
             const SizedBox(
               width: 14,
               height: 14,
-              child: CircularProgressIndicator(strokeWidth: 2, color: NmColors.ink),
+              child: CircularProgressIndicator(
+                  strokeWidth: 2, color: NmColors.ink),
             )
           else
             const Icon(Icons.info_outline, size: 18, color: NmColors.ink),
@@ -777,7 +840,8 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
                 const SizedBox(height: 2),
                 Text(
                   label,
-                  style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: fg),
+                  style: TextStyle(
+                      fontSize: 12, fontWeight: FontWeight.w600, color: fg),
                 ),
               ],
             ),
@@ -800,14 +864,18 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
         const SizedBox(width: 10),
         _audioKey(
           icon: c.isPlaying ? Icons.pause_rounded : Icons.play_arrow_rounded,
-          label: c.isPlaying ? L.t('Пауза', 'Pause') : L.t('Продовжити', 'Resume'),
+          label:
+              c.isPlaying ? L.t('Пауза', 'Pause') : L.t('Продовжити', 'Resume'),
           primary: true,
           onTap: () => c.isPlaying ? c.pauseAudio() : c.resumeAudio(),
         ),
         const SizedBox(width: 10),
         _audioKey(
-          icon: c.hasNextNarration ? Icons.skip_next_rounded : Icons.stop_rounded,
-          label: c.hasNextNarration ? L.t('Наступне', 'Next') : L.t('Зупинити', 'Stop'),
+          icon:
+              c.hasNextNarration ? Icons.skip_next_rounded : Icons.stop_rounded,
+          label: c.hasNextNarration
+              ? L.t('Наступне', 'Next')
+              : L.t('Зупинити', 'Stop'),
           onTap: () => c.skipNarration(),
         ),
       ],
@@ -837,7 +905,9 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
                     shape: BoxShape.circle,
                   ),
                   child: Icon(
-                    isStopped ? Icons.flag_outlined : Icons.location_on_outlined,
+                    isStopped
+                        ? Icons.flag_outlined
+                        : Icons.location_on_outlined,
                     color: NmColors.ink,
                     size: 30,
                   ),
@@ -848,14 +918,20 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        isStopped ? L.t('Прогулянку завершено', 'Walk finished') : L.t('Потрібна геолокація', 'Location needed'),
+                        isStopped
+                            ? L.t('Прогулянку завершено', 'Walk finished')
+                            : L.t('Потрібна геолокація', 'Location needed'),
                         style: NmText.title(20),
                       ),
                       const SizedBox(height: 4),
                       Text(
                         isStopped
-                            ? L.t('Відвідано місць: ${widget.controller.totalVisitedCount}. Ви завжди можете розпочати новий маршрут!', 'Places visited: ${widget.controller.totalVisitedCount}. You can start a new route any time!')
-                            : L.t('Для роботи аудіогіда надайте доступ до геопозиції.', 'The audio guide needs access to your location.'),
+                            ? L.t(
+                                'Відвідано місць: ${widget.controller.totalVisitedCount}. Ви завжди можете розпочати новий маршрут!',
+                                'Places visited: ${widget.controller.totalVisitedCount}. You can start a new route any time!')
+                            : L.t(
+                                'Для роботи аудіогіда надайте доступ до геопозиції.',
+                                'The audio guide needs access to your location.'),
                         style: const TextStyle(
                           fontSize: 14,
                           color: NmColors.muted,
@@ -878,8 +954,11 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
                     onPressed: () => widget.controller.startWalk(),
                     icon: const Icon(Icons.play_arrow_rounded, size: 22),
                     label: Text(
-                      isStopped ? L.t('Почати нову прогулянку', 'Start a new walk') : L.t('Почати прогулянку', 'Start the walk'),
-                      style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+                      isStopped
+                          ? L.t('Почати нову прогулянку', 'Start a new walk')
+                          : L.t('Почати прогулянку', 'Start the walk'),
+                      style: const TextStyle(
+                          fontSize: 16, fontWeight: FontWeight.w600),
                     ),
                     style: NmButtons.primary(),
                   ),
@@ -909,7 +988,10 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
       for (final p in widget.controller.allPois) {
         if (!visitedIds.contains(p.id)) {
           final d = Geolocator.distanceBetween(
-            pos.latitude, pos.longitude, p.latitude, p.longitude,
+            pos.latitude,
+            pos.longitude,
+            p.latitude,
+            p.longitude,
           );
           if (nearestDist == null || d < nearestDist) {
             nearestDist = d;
@@ -919,19 +1001,26 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
       }
     }
 
-    String idleTitle = L.t('Шукаємо цікаві місця...', 'Looking for interesting places...');
+    String idleTitle =
+        L.t('Шукаємо цікаві місця...', 'Looking for interesting places...');
     String? idleSubtitle;
 
     if (!isAudioActive) {
       if (widget.controller.allPois.isEmpty) {
-        idleTitle = L.t('Шукаємо цікаві місця...', 'Looking for interesting places...');
-        idleSubtitle = L.t('Завантажуємо пам\'ятки з карти поруч з вами…', 'Loading places from the map around you…');
+        idleTitle =
+            L.t('Шукаємо цікаві місця...', 'Looking for interesting places...');
+        idleSubtitle = L.t('Завантажуємо пам\'ятки з карти поруч з вами…',
+            'Loading places from the map around you…');
       } else if (nearestPoi != null && nearestDist != null) {
         idleTitle = L.t('Гід на зв\'язку', 'Guide is on');
-        idleSubtitle = L.t('Найближче: ${nearestPoi.name} (~${L.distance(nearestDist)})', 'Nearest: ${nearestPoi.name} (~${L.distance(nearestDist)})');
+        idleSubtitle = L.t(
+            'Найближче: ${nearestPoi.shownName} (~${L.distance(nearestDist)})',
+            'Nearest: ${nearestPoi.shownName} (~${L.distance(nearestDist)})');
       } else {
         idleTitle = L.t('Гід на зв\'язку', 'Guide is on');
-        idleSubtitle = L.t('Пам\'яток поруч: ${widget.controller.allPois.length} (підійдіть ближче)', 'Places nearby: ${widget.controller.allPois.length} (get closer)');
+        idleSubtitle = L.t(
+            'Пам\'яток поруч: ${widget.controller.allPois.length} (підійдіть ближче)',
+            'Places nearby: ${widget.controller.allPois.length} (get closer)');
       }
     }
 
@@ -951,7 +1040,9 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
                 ),
                 child: Icon(
                   isAudioActive
-                      ? (isPaused ? Icons.pause_circle_outline : Icons.volume_up)
+                      ? (isPaused
+                          ? Icons.pause_circle_outline
+                          : Icons.volume_up)
                       : Icons.directions_walk,
                   color: NmColors.ink,
                   size: 32,
@@ -964,7 +1055,10 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
                   children: [
                     Text(
                       isAudioActive
-                          ? (isPaused ? L.t('Озвучення на паузі', 'Narration paused') : L.t('Грає розповідь гіда', 'The guide is telling a story'))
+                          ? (isPaused
+                              ? L.t('Озвучення на паузі', 'Narration paused')
+                              : L.t('Грає розповідь гіда',
+                                  'The guide is telling a story'))
                           : idleTitle,
                       style: NmText.title(20),
                     ),
@@ -975,7 +1069,9 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
                         style: TextStyle(
                           fontSize: 15,
                           color: isAudioActive ? NmColors.ink : NmColors.muted,
-                          fontWeight: isAudioActive ? FontWeight.w500 : FontWeight.normal,
+                          fontWeight: isAudioActive
+                              ? FontWeight.w500
+                              : FontWeight.normal,
                         ),
                       ),
                     ],
@@ -984,8 +1080,10 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
               ),
               if (!isAudioActive) ...[
                 IconButton(
-                  tooltip: L.t('Оновити об\'єкти на карті', 'Refresh places on the map'),
-                  icon: const Icon(Icons.refresh_rounded, color: NmColors.muted),
+                  tooltip: L.t(
+                      'Оновити об\'єкти на карті', 'Refresh places on the map'),
+                  icon:
+                      const Icon(Icons.refresh_rounded, color: NmColors.muted),
                   onPressed: () => widget.controller.reloadOsmPois(),
                 ),
               ],
@@ -1011,7 +1109,10 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
   }
 
   Marker _buildPoiMarker(Poi poi,
-      {required bool isActive, required bool isTriggered, required bool isListened, required bool isSilent}) {
+      {required bool isActive,
+      required bool isTriggered,
+      required bool isListened,
+      required bool isSilent}) {
     Color color = NmColors.ink; // Unvisited place
     if (isActive) color = NmColors.ochre;
     if (isTriggered && !isActive) color = NmColors.stone;
@@ -1024,14 +1125,15 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
         behavior: HitTestBehavior.opaque,
         onTap: () {
           try {
-            _mapController.move(LatLng(poi.latitude, poi.longitude), _mapController.camera.zoom);
+            _mapController.move(LatLng(poi.latitude, poi.longitude),
+                _mapController.camera.zoom);
           } catch (_) {}
           _showPoiDetails(context, poi);
         },
         child: Center(
           child: Tooltip(
             message:
-                '${poiKindOf(poi).label}: ${poi.name}${isSilent ? L.t(' — не озвучується (немає джерел)', ' — not narrated (no sources)') : ''}${isTriggered ? (isListened ? L.t(' — прослухано', ' — listened') : L.t(' — пройдено', ' — passed')) : ''}',
+                '${poiKindOf(poi).label}: ${poi.shownName}${isSilent ? L.t(' — не озвучується (немає джерел)', ' — not narrated (no sources)') : ''}${isTriggered ? (isListened ? L.t(' — прослухано', ' — listened') : L.t(' — пройдено', ' — passed')) : ''}',
             child: Container(
               width: 36,
               height: 36,
@@ -1061,12 +1163,20 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
                         height: 15,
                         decoration: BoxDecoration(
                           // Headphones: the story was heard. Walking figure: passed, not heard.
-                          color: isSilent ? NmColors.wine : (isListened ? NmColors.ink : NmColors.muted),
+                          color: isSilent
+                              ? NmColors.wine
+                              : (isListened ? NmColors.ink : NmColors.muted),
                           shape: BoxShape.circle,
                           border: Border.all(color: Colors.white, width: 1.5),
                         ),
-                        child: Icon(isSilent ? Icons.volume_off : (isListened ? Icons.headphones : Icons.directions_walk),
-                            color: Colors.white, size: 10),
+                        child: Icon(
+                            isSilent
+                                ? Icons.volume_off
+                                : (isListened
+                                    ? Icons.headphones
+                                    : Icons.directions_walk),
+                            color: Colors.white,
+                            size: 10),
                       ),
                     ),
                 ],
@@ -1187,20 +1297,26 @@ class _PoiDetailsSheetState extends State<_PoiDetailsSheet> {
     final updatedPoi = widget.controller.getUpdatedPoi(widget.poi);
     final enriched = widget.controller.getEnrichedPoi(widget.poi.id);
 
-    final hasNarration = (enriched?.narrationText?.isNotEmpty == true || updatedPoi.narrationText.isNotEmpty);
+    final hasNarration = (enriched?.narrationText?.isNotEmpty == true ||
+        updatedPoi.narrationText.isNotEmpty);
     final rawDesc = (enriched?.shortDescription?.isNotEmpty == true)
         ? enriched!.shortDescription!
         : updatedPoi.shortDescription;
     final hasRichDesc = !PoiCategoryService.isTrivialDescription(rawDesc);
-    final hasFacts = (enriched?.keyFacts.isNotEmpty == true || updatedPoi.facts.isNotEmpty);
+    final hasFacts =
+        (enriched?.keyFacts.isNotEmpty == true || updatedPoi.facts.isNotEmpty);
 
     final hasFallback = enriched?.hasFallbackContent ?? false;
-    final hasCompleteData = hasNarration && hasRichDesc && hasFacts && !hasFallback;
-    final isAlreadyResearched = (enriched?.isResearchComplete == true) && !hasFallback;
+    final hasCompleteData =
+        hasNarration && hasRichDesc && hasFacts && !hasFallback;
+    final isAlreadyResearched =
+        (enriched?.isResearchComplete == true) && !hasFallback;
 
     if ((!hasCompleteData || hasFallback) && !_isRequesting) {
       _isRequesting = true;
-      widget.controller.researchPoiNow(widget.poi, force: hasFallback).whenComplete(() {
+      widget.controller
+          .researchPoiNow(widget.poi, force: hasFallback)
+          .whenComplete(() {
         if (mounted) {
           setState(() => _isRequesting = false);
         }
@@ -1226,7 +1342,8 @@ class _PoiDetailsSheetState extends State<_PoiDetailsSheet> {
         final rawDesc = (enriched?.shortDescription?.isNotEmpty == true)
             ? enriched!.shortDescription!
             : updatedPoi.shortDescription;
-        final description = PoiCategoryService.isTrivialDescription(rawDesc) ? '' : rawDesc;
+        final description =
+            PoiCategoryService.isTrivialDescription(rawDesc) ? '' : rawDesc;
 
         final facts = (enriched?.keyFacts.isNotEmpty == true)
             ? enriched!.keyFacts.map((f) => f.fact).toList()
@@ -1243,15 +1360,19 @@ class _PoiDetailsSheetState extends State<_PoiDetailsSheet> {
 
         final isProcessing = _isRequesting ||
             queuePos == 0 ||
-            (enriched != null && enriched.researchStatus == ResearchStatus.inProgress);
+            (enriched != null &&
+                enriched.researchStatus == ResearchStatus.inProgress);
 
         // Determine badge label
         String? badgeLabel;
         if (enriched != null && enriched.sources.isNotEmpty) {
           final firstSource = enriched.sources.first.type;
-          badgeLabel = firstSource == 'wikipedia' || enriched.sources.any((s) => s.type == 'wikipedia')
+          badgeLabel = firstSource == 'wikipedia' ||
+                  enriched.sources.any((s) => s.type == 'wikipedia')
               ? L.t('Вікіпедія', 'Wikipedia')
-              : (firstSource == 'ai' ? L.t('ШІ-гід', 'AI guide') : L.t('Джерела', 'Sources'));
+              : (firstSource == 'ai'
+                  ? L.t('ШІ-гід', 'AI guide')
+                  : L.t('Джерела', 'Sources'));
         } else if (updatedPoi.narrationText.isNotEmpty) {
           badgeLabel = L.t('Аудіогід', 'Audio guide');
         }
@@ -1301,14 +1422,15 @@ class _PoiDetailsSheetState extends State<_PoiDetailsSheet> {
                           children: [
                             Expanded(
                               child: Text(
-                                widget.poi.name,
+                                widget.poi.shownName,
                                 style: NmText.title(28),
                               ),
                             ),
                             if (badgeLabel != null) ...[
                               const SizedBox(width: 10),
                               Container(
-                                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                                padding: const EdgeInsets.symmetric(
+                                    horizontal: 10, vertical: 4),
                                 decoration: BoxDecoration(
                                   color: NmColors.cream,
                                   borderRadius: BorderRadius.circular(12),
@@ -1327,7 +1449,8 @@ class _PoiDetailsSheetState extends State<_PoiDetailsSheet> {
                         ),
                         const SizedBox(height: 8),
                         Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 10, vertical: 4),
                           decoration: BoxDecoration(
                             color: NmColors.cream,
                             borderRadius: BorderRadius.circular(12),
@@ -1351,7 +1474,8 @@ class _PoiDetailsSheetState extends State<_PoiDetailsSheet> {
                         const SizedBox(height: 14),
 
                         // Queue / Processing Banner
-                        if (isProcessing && (narration.isEmpty || description.isEmpty)) ...[
+                        if (isProcessing &&
+                            (narration.isEmpty || description.isEmpty)) ...[
                           Container(
                             margin: const EdgeInsets.only(bottom: 16),
                             padding: const EdgeInsets.all(16),
@@ -1364,17 +1488,23 @@ class _PoiDetailsSheetState extends State<_PoiDetailsSheet> {
                                 const SizedBox(
                                   width: 22,
                                   height: 22,
-                                  child: CircularProgressIndicator(strokeWidth: 2.5),
+                                  child: CircularProgressIndicator(
+                                      strokeWidth: 2.5),
                                 ),
                                 const SizedBox(width: 14),
                                 Expanded(
                                   child: Column(
-                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
                                     children: [
                                       Text(
                                         queuePos > 0
-                                            ? L.t('Об\'єкт у черзі на дослідження (позиція: $queuePos)...', 'The place is queued for research (position: $queuePos)...')
-                                            : L.t('Шукаємо інформацію про це місце (Вікіпедія, Вікідані)...', 'Looking for information about this place (Wikipedia, Wikidata)...'),
+                                            ? L.t(
+                                                'Об\'єкт у черзі на дослідження (позиція: $queuePos)...',
+                                                'The place is queued for research (position: $queuePos)...')
+                                            : L.t(
+                                                'Шукаємо інформацію про це місце (Вікіпедія, Вікідані)...',
+                                                'Looking for information about this place (Wikipedia, Wikidata)...'),
                                         style: TextStyle(
                                           fontSize: 15,
                                           color: NmColors.ink,
@@ -1383,8 +1513,11 @@ class _PoiDetailsSheetState extends State<_PoiDetailsSheet> {
                                       ),
                                       const SizedBox(height: 4),
                                       Text(
-                                        L.t('Зачекайте 1-2 секунди, інформація завантажується автоматично.', 'Wait a second or two, the information is loading automatically.'),
-                                        style: TextStyle(fontSize: 13, color: NmColors.muted),
+                                        L.t('Зачекайте 1-2 секунди, інформація завантажується автоматично.',
+                                            'Wait a second or two, the information is loading automatically.'),
+                                        style: TextStyle(
+                                            fontSize: 13,
+                                            color: NmColors.muted),
                                       ),
                                     ],
                                   ),
@@ -1418,11 +1551,13 @@ class _PoiDetailsSheetState extends State<_PoiDetailsSheet> {
                               children: [
                                 Row(
                                   children: [
-                                    const Icon(Icons.headphones, color: NmColors.ink, size: 22),
+                                    const Icon(Icons.headphones,
+                                        color: NmColors.ink, size: 22),
                                     const SizedBox(width: 8),
                                     Expanded(
                                       child: Text(
-                                        L.t('Розповідь аудіогіда:', 'Audio guide story:'),
+                                        L.t('Розповідь аудіогіда:',
+                                            'Audio guide story:'),
                                         style: TextStyle(
                                           fontSize: 16,
                                           fontWeight: FontWeight.w600,
@@ -1433,8 +1568,13 @@ class _PoiDetailsSheetState extends State<_PoiDetailsSheet> {
                                   ],
                                 ),
                                 const SizedBox(height: 10),
-                                Text(
-                                  narration,
+                                SpokenText(
+                                  text: narration,
+                                  // Only while this place's story (not the chime) is playing.
+                                  active: isAudioActiveThisPoi && widget.controller.isNarrationLoaded,
+                                  position: widget.controller.audioPositionStream,
+                                  currentPosition: () => widget.controller.audioPosition,
+                                  duration: () => widget.controller.audioDuration,
                                   style: const TextStyle(
                                     fontSize: 15,
                                     color: NmColors.ink,
@@ -1456,12 +1596,16 @@ class _PoiDetailsSheetState extends State<_PoiDetailsSheet> {
                                           },
                                           icon: Icon(
                                             isPlayingThisPoi
-                                                ? Icons.pause_circle_filled_rounded
-                                                : Icons.play_circle_filled_rounded,
+                                                ? Icons
+                                                    .pause_circle_filled_rounded
+                                                : Icons
+                                                    .play_circle_filled_rounded,
                                             size: 20,
                                           ),
                                           label: Text(
-                                            isPlayingThisPoi ? L.t('Пауза', 'Pause') : L.t('Продовжити', 'Resume'),
+                                            isPlayingThisPoi
+                                                ? L.t('Пауза', 'Pause')
+                                                : L.t('Продовжити', 'Resume'),
                                             style: const TextStyle(
                                               fontWeight: FontWeight.w600,
                                               fontSize: 15,
@@ -1473,8 +1617,11 @@ class _PoiDetailsSheetState extends State<_PoiDetailsSheet> {
                                       const SizedBox(width: 10),
                                       Expanded(
                                         child: ElevatedButton.icon(
-                                          onPressed: () => widget.controller.stopAudio(),
-                                          icon: const Icon(Icons.stop_circle_outlined, size: 20),
+                                          onPressed: () =>
+                                              widget.controller.stopAudio(),
+                                          icon: const Icon(
+                                              Icons.stop_circle_outlined,
+                                              size: 20),
                                           label: Text(
                                             L.t('Зупинити', 'Stop'),
                                             style: TextStyle(
@@ -1488,7 +1635,9 @@ class _PoiDetailsSheetState extends State<_PoiDetailsSheet> {
                                     ],
                                   ),
                                 ] else ...[
-                                  if (widget.controller.isProcessing && widget.controller.activePoi?.id == widget.poi.id) ...[
+                                  if (widget.controller.isProcessing &&
+                                      widget.controller.activePoi?.id ==
+                                          widget.poi.id) ...[
                                     SizedBox(
                                       width: double.infinity,
                                       child: ElevatedButton.icon(
@@ -1496,10 +1645,13 @@ class _PoiDetailsSheetState extends State<_PoiDetailsSheet> {
                                         icon: const SizedBox(
                                           width: 18,
                                           height: 18,
-                                          child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                                          child: CircularProgressIndicator(
+                                              strokeWidth: 2,
+                                              color: Colors.white),
                                         ),
                                         label: Text(
-                                          L.t('Готуємо розповідь…', 'Preparing the story…'),
+                                          L.t('Готуємо розповідь…',
+                                              'Preparing the story…'),
                                           style: TextStyle(
                                             fontWeight: FontWeight.w600,
                                             fontSize: 15,
@@ -1513,7 +1665,8 @@ class _PoiDetailsSheetState extends State<_PoiDetailsSheet> {
                                       width: double.infinity,
                                       child: ElevatedButton.icon(
                                         onPressed: () {
-                                          widget.controller.playNarrationForPoi(widget.poi);
+                                          widget.controller
+                                              .playNarrationForPoi(widget.poi);
                                         },
                                         icon: Icon(
                                           isAlreadyTriggered
@@ -1523,8 +1676,10 @@ class _PoiDetailsSheetState extends State<_PoiDetailsSheet> {
                                         ),
                                         label: Text(
                                           isAlreadyTriggered
-                                              ? L.t('Прослухати знову', 'Listen again')
-                                              : L.t('Прослухати зараз', 'Listen now'),
+                                              ? L.t('Прослухати знову',
+                                                  'Listen again')
+                                              : L.t('Прослухати зараз',
+                                                  'Listen now'),
                                           style: const TextStyle(
                                             fontWeight: FontWeight.w600,
                                             fontSize: 15,
@@ -1551,10 +1706,12 @@ class _PoiDetailsSheetState extends State<_PoiDetailsSheet> {
                               children: [
                                 Row(
                                   children: [
-                                    Icon(Icons.headphones, color: NmColors.ink, size: 22),
+                                    Icon(Icons.headphones,
+                                        color: NmColors.ink, size: 22),
                                     SizedBox(width: 8),
                                     Text(
-                                      L.t('Аудіогід від ШІ:', 'AI audio guide:'),
+                                      L.t('Аудіогід від ШІ:',
+                                          'AI audio guide:'),
                                       style: TextStyle(
                                         fontSize: 16,
                                         fontWeight: FontWeight.w600,
@@ -1565,29 +1722,44 @@ class _PoiDetailsSheetState extends State<_PoiDetailsSheet> {
                                 ),
                                 const SizedBox(height: 8),
                                 Text(
-                                  L.t('ШІ може озвучити розповідь про це місце для вас прямо зараз.', 'The AI can narrate a story about this place for you right now.'),
-                                  style: TextStyle(fontSize: 14, color: NmColors.ink),
+                                  L.t('ШІ може озвучити розповідь про це місце для вас прямо зараз.',
+                                      'The AI can narrate a story about this place for you right now.'),
+                                  style: TextStyle(
+                                      fontSize: 14, color: NmColors.ink),
                                 ),
                                 const SizedBox(height: 12),
                                 SizedBox(
                                   width: double.infinity,
                                   child: ElevatedButton.icon(
-                                    onPressed: (widget.controller.isProcessing && widget.controller.activePoi?.id == widget.poi.id)
+                                    onPressed: (widget
+                                                .controller.isProcessing &&
+                                            widget.controller.activePoi?.id ==
+                                                widget.poi.id)
                                         ? null
                                         : () {
-                                            widget.controller.playNarrationForPoi(widget.poi);
+                                            widget.controller
+                                                .playNarrationForPoi(
+                                                    widget.poi);
                                           },
-                                    icon: (widget.controller.isProcessing && widget.controller.activePoi?.id == widget.poi.id)
+                                    icon: (widget.controller.isProcessing &&
+                                            widget.controller.activePoi?.id ==
+                                                widget.poi.id)
                                         ? const SizedBox(
                                             width: 18,
                                             height: 18,
-                                            child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                                            child: CircularProgressIndicator(
+                                                strokeWidth: 2,
+                                                color: Colors.white),
                                           )
                                         : const Icon(Icons.volume_up, size: 20),
                                     label: Text(
-                                      (widget.controller.isProcessing && widget.controller.activePoi?.id == widget.poi.id)
-                                          ? L.t('Готуємо розповідь…', 'Preparing the story…')
-                                          : L.t('Прослухати розповідь ШІ', 'Listen to the AI story'),
+                                      (widget.controller.isProcessing &&
+                                              widget.controller.activePoi?.id ==
+                                                  widget.poi.id)
+                                          ? L.t('Готуємо розповідь…',
+                                              'Preparing the story…')
+                                          : L.t('Прослухати розповідь ШІ',
+                                              'Listen to the AI story'),
                                       style: const TextStyle(
                                         fontWeight: FontWeight.w600,
                                         fontSize: 15,
@@ -1657,14 +1829,21 @@ class _PoiDetailsSheetState extends State<_PoiDetailsSheet> {
 
                         if (sourceTitles.isNotEmpty) ...[
                           Text(
-                            L.t('Джерела: ${sourceTitles.join(' · ')}', 'Sources: ${sourceTitles.join(' · ')}'),
-                            style: const TextStyle(fontSize: 12, color: NmColors.muted, height: 1.35),
+                            L.t('Джерела: ${sourceTitles.join(' · ')}',
+                                'Sources: ${sourceTitles.join(' · ')}'),
+                            style: const TextStyle(
+                                fontSize: 12,
+                                color: NmColors.muted,
+                                height: 1.35),
                           ),
                           const SizedBox(height: 16),
                         ],
 
                         // Fallback message if no data at all yet
-                        if (!isProcessing && narration.isEmpty && description.isEmpty && facts.isEmpty) ...[
+                        if (!isProcessing &&
+                            narration.isEmpty &&
+                            description.isEmpty &&
+                            facts.isEmpty) ...[
                           Container(
                             padding: const EdgeInsets.all(14),
                             decoration: BoxDecoration(
@@ -1676,11 +1855,13 @@ class _PoiDetailsSheetState extends State<_PoiDetailsSheet> {
                               children: [
                                 Row(
                                   children: [
-                                    Icon(Icons.info_outline, size: 20, color: NmColors.muted),
+                                    Icon(Icons.info_outline,
+                                        size: 20, color: NmColors.muted),
                                     const SizedBox(width: 8),
                                     Expanded(
                                       child: Text(
-                                        L.t('Цей об\'єкт знайдено на карті', 'This place was found on the map'),
+                                        L.t('Цей об\'єкт знайдено на карті',
+                                            'This place was found on the map'),
                                         style: TextStyle(
                                           fontSize: 15,
                                           fontWeight: FontWeight.w600,
@@ -1692,19 +1873,28 @@ class _PoiDetailsSheetState extends State<_PoiDetailsSheet> {
                                 ),
                                 const SizedBox(height: 6),
                                 Text(
-                                  L.t('У відкритих реєстрах стаття відсутня, проте ШІ може підготувати опис та розповідь прямо зараз.', 'There is no article in open registers, but the AI can prepare a description and story right now.'),
-                                  style: TextStyle(fontSize: 14, color: NmColors.muted, height: 1.35),
+                                  L.t('У відкритих реєстрах стаття відсутня, проте ШІ може підготувати опис та розповідь прямо зараз.',
+                                      'There is no article in open registers, but the AI can prepare a description and story right now.'),
+                                  style: TextStyle(
+                                      fontSize: 14,
+                                      color: NmColors.muted,
+                                      height: 1.35),
                                 ),
                                 const SizedBox(height: 12),
                                 OutlinedButton.icon(
                                   onPressed: () {
                                     setState(() => _isRequesting = true);
-                                    widget.controller.researchPoiNow(widget.poi, force: true).whenComplete(() {
-                                      if (mounted) setState(() => _isRequesting = false);
+                                    widget.controller
+                                        .researchPoiNow(widget.poi, force: true)
+                                        .whenComplete(() {
+                                      if (mounted)
+                                        setState(() => _isRequesting = false);
                                     });
                                   },
-                                  icon: const Icon(Icons.auto_awesome, size: 18),
-                                  label: Text(L.t('Згенерувати опис ШІ зараз', 'Generate the AI description now')),
+                                  icon:
+                                      const Icon(Icons.auto_awesome, size: 18),
+                                  label: Text(L.t('Згенерувати опис ШІ зараз',
+                                      'Generate the AI description now')),
                                 ),
                               ],
                             ),
@@ -1725,12 +1915,15 @@ class _PoiDetailsSheetState extends State<_PoiDetailsSheet> {
                       style: NmButtons.primary(),
                       onPressed: () {
                         Navigator.pop(context);
-                        _showAiChatModal(context, widget.controller, widget.poi);
+                        _showAiChatModal(
+                            context, widget.controller, widget.poi);
                       },
                       icon: const Icon(Icons.auto_awesome, size: 20),
                       label: Text(
-                        L.t('Запитати ШІ про це місце', 'Ask the AI about this place'),
-                        style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+                        L.t('Запитати ШІ про це місце',
+                            'Ask the AI about this place'),
+                        style: TextStyle(
+                            fontSize: 16, fontWeight: FontWeight.w600),
                       ),
                     ),
                   ),
@@ -1740,7 +1933,8 @@ class _PoiDetailsSheetState extends State<_PoiDetailsSheet> {
                   padding: const EdgeInsets.fromLTRB(24, 0, 24, 10),
                   child: SizedBox(
                     width: double.infinity,
-                    child: _reportTextButton(context, widget.controller, widget.poi),
+                    child: _reportTextButton(
+                        context, widget.controller, widget.poi),
                   ),
                 ),
 
@@ -1754,7 +1948,8 @@ class _PoiDetailsSheetState extends State<_PoiDetailsSheet> {
                       onPressed: () => Navigator.pop(context),
                       child: Text(
                         L.t('Закрити', 'Close'),
-                        style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+                        style: TextStyle(
+                            fontSize: 16, fontWeight: FontWeight.w600),
                       ),
                     ),
                   ),
@@ -1769,7 +1964,8 @@ class _PoiDetailsSheetState extends State<_PoiDetailsSheet> {
 }
 
 /// Helper to open the AI Chat Bottom Sheet.
-void _showAiChatModal(BuildContext context, WalkController controller, Poi poi) {
+void _showAiChatModal(
+    BuildContext context, WalkController controller, Poi poi) {
   showModalBottomSheet(
     context: context,
     isScrollControlled: true,
@@ -1798,17 +1994,19 @@ class _AiChatSheet extends StatefulWidget {
 class _AiChatSheetState extends State<_AiChatSheet> {
   final TextEditingController _textController = TextEditingController();
   final ScrollController _scrollController = ScrollController();
-  List<ChatMessage> get _messages => widget.controller.getChatHistory(widget.poi.id);
+  List<ChatMessage> get _messages =>
+      widget.controller.getChatHistory(widget.poi.id);
   bool _isLoading = false;
   String? _currentlySpeakingText;
 
   List<String> get _quickQuestions => [
-    L.t('Коли це з\'явилося?', 'When was it built?'),
-    L.t('Чим особливе це місце?', 'What is special about this place?'),
-    L.t('Хто автор чи архітектор?', 'Who is the author or architect?'),
-    L.t('Розкажи цікавий факт', 'Tell me an interesting fact'),
-    L.t('Яка тут історія чи легенда?', 'What is the history or legend here?'),
-  ];
+        L.t('Коли це з\'явилося?', 'When was it built?'),
+        L.t('Чим особливе це місце?', 'What is special about this place?'),
+        L.t('Хто автор чи архітектор?', 'Who is the author or architect?'),
+        L.t('Розкажи цікавий факт', 'Tell me an interesting fact'),
+        L.t('Яка тут історія чи легенда?',
+            'What is the history or legend here?'),
+      ];
 
   @override
   void initState() {
@@ -1819,10 +2017,10 @@ class _AiChatSheetState extends State<_AiChatSheet> {
         widget.poi.id,
         ChatMessage(
           text: L.t(
-              'Запитайте мене про «${widget.poi.name}»: його історію, людей і події, пов\'язані з ним. '
-              'Відповідаю лише за перевіреними джерелами.',
-              'Ask me about "${widget.poi.name}": its history and the people and events connected with it. '
-              'I answer only from verified sources.'),
+              'Запитайте мене про «${widget.poi.shownName}»: його історію, людей і події, пов\'язані з ним. '
+                  'Відповідаю лише за перевіреними джерелами.',
+              'Ask me about "${widget.poi.shownName}": its history and the people and events connected with it. '
+                  'I answer only from verified sources.'),
           isUser: false,
         ),
       );
@@ -1869,7 +2067,8 @@ class _AiChatSheetState extends State<_AiChatSheet> {
       widget.controller.addChatMessage(
         widget.poi.id,
         ChatMessage(
-          text: L.t('Вибачте, виникла помилка зв\'язку з ШІ: $e', 'Sorry, there was a connection error with the AI: $e'),
+          text: L.t('Вибачте, виникла помилка зв\'язку з ШІ: $e',
+              'Sorry, there was a connection error with the AI: $e'),
           isUser: false,
         ),
       );
@@ -1970,7 +2169,7 @@ class _AiChatSheetState extends State<_AiChatSheet> {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(
-                          widget.poi.name,
+                          widget.poi.shownName,
                           style: NmText.title(20),
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
@@ -2008,7 +2207,8 @@ class _AiChatSheetState extends State<_AiChatSheet> {
                     onTap: _isLoading ? null : () => _sendMessage(q),
                     borderRadius: BorderRadius.circular(16),
                     child: Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 12, vertical: 6),
                       decoration: BoxDecoration(
                         color: NmColors.background,
                         borderRadius: BorderRadius.circular(16),
@@ -2031,8 +2231,10 @@ class _AiChatSheetState extends State<_AiChatSheet> {
             Expanded(
               child: ListView.builder(
                 controller: _scrollController,
-                keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                keyboardDismissBehavior:
+                    ScrollViewKeyboardDismissBehavior.onDrag,
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
                 itemCount: _messages.length + (_isLoading ? 1 : 0),
                 itemBuilder: (context, index) {
                   if (index == _messages.length && _isLoading) {
@@ -2072,7 +2274,9 @@ class _AiChatSheetState extends State<_AiChatSheet> {
                       textInputAction: TextInputAction.send,
                       onSubmitted: _sendMessage,
                       decoration: InputDecoration(
-                        hintText: L.t('Запитайте про «${widget.poi.name}»...', 'Ask about "${widget.poi.name}"...'),
+                        hintText: L.t(
+                            'Запитайте про «${widget.poi.shownName}»...',
+                            'Ask about "${widget.poi.shownName}"...'),
                         hintStyle: TextStyle(
                           fontSize: 15,
                           color: NmColors.stone,
@@ -2099,9 +2303,7 @@ class _AiChatSheetState extends State<_AiChatSheet> {
                       width: 48,
                       height: 48,
                       decoration: BoxDecoration(
-                        color: _isLoading
-                            ? NmColors.stone
-                            : NmColors.ink,
+                        color: _isLoading ? NmColors.stone : NmColors.ink,
                         shape: BoxShape.circle,
                         boxShadow: [
                           if (!_isLoading)
@@ -2221,19 +2423,18 @@ class _AiChatSheetState extends State<_AiChatSheet> {
                                   ? Icons.stop_circle_outlined
                                   : Icons.volume_up_outlined,
                               size: 18,
-                              color: isSpeaking
-                                  ? NmColors.ink
-                                  : NmColors.muted,
+                              color: isSpeaking ? NmColors.ink : NmColors.muted,
                             ),
                             const SizedBox(width: 4),
                             Text(
-                              isSpeaking ? L.t('Зупинити', 'Stop') : L.t('Озвучити', 'Read aloud'),
+                              isSpeaking
+                                  ? L.t('Зупинити', 'Stop')
+                                  : L.t('Озвучити', 'Read aloud'),
                               style: TextStyle(
                                 fontSize: 12,
                                 fontWeight: FontWeight.w600,
-                                color: isSpeaking
-                                    ? NmColors.ink
-                                    : NmColors.muted,
+                                color:
+                                    isSpeaking ? NmColors.ink : NmColors.muted,
                               ),
                             ),
                           ],
@@ -2289,7 +2490,6 @@ class _AiChatSheetState extends State<_AiChatSheet> {
   }
 }
 
-
 /// "This place is on the map but has no verified story, so it is not narrated."
 Widget _silentNote() {
   return Container(
@@ -2309,7 +2509,8 @@ Widget _silentNote() {
               'Цей об\'єкт не озвучується: про нього немає перевірених джерел. Його видно лише на мапі.',
               'This place is not narrated: there are no verified sources about it. It is shown on the map only.',
             ),
-            style: const TextStyle(fontSize: 14, color: NmColors.ink, height: 1.35),
+            style: const TextStyle(
+                fontSize: 14, color: NmColors.ink, height: 1.35),
           ),
         ),
       ],
@@ -2332,7 +2533,8 @@ Widget _reportButton(BuildContext context, WalkController controller, Poi poi) {
   );
 }
 
-Widget _reportTextButton(BuildContext context, WalkController controller, Poi poi) {
+Widget _reportTextButton(
+    BuildContext context, WalkController controller, Poi poi) {
   final reported = controller.reportedPoiIds.contains(poi.id);
   return TextButton.icon(
     onPressed: () => _showReportSheet(context, controller, poi),
@@ -2360,11 +2562,9 @@ void _showLanguageSheet(BuildContext context, WalkController controller) {
     backgroundColor: Colors.transparent,
     builder: (ctx) => ListenableBuilder(
       listenable: controller,
-      builder: (ctx, _) => Container(
-        decoration: const BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
-        ),
+      builder: (ctx, _) => Material(
+        color: Colors.white,
+        borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
         child: SafeArea(
           top: false,
           child: Padding(
@@ -2390,12 +2590,15 @@ void _showLanguageSheet(BuildContext context, WalkController controller) {
                       shape: RoundedRectangleBorder(
                         borderRadius: BorderRadius.circular(14),
                         side: BorderSide(
-                          color: controller.lang == lang ? NmColors.ink : NmColors.line,
+                          color: controller.lang == lang
+                              ? NmColors.ink
+                              : NmColors.line,
                           width: controller.lang == lang ? 2 : 1,
                         ),
                       ),
                       title: Text(lang.nativeName,
-                          style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
+                          style: const TextStyle(
+                              fontSize: 16, fontWeight: FontWeight.w600)),
                       trailing: controller.lang == lang
                           ? const Icon(Icons.check_circle, color: NmColors.ink)
                           : null,
@@ -2414,7 +2617,8 @@ void _showLanguageSheet(BuildContext context, WalkController controller) {
   );
 }
 
-void _showReportSheet(BuildContext context, WalkController controller, Poi poi) {
+void _showReportSheet(
+    BuildContext context, WalkController controller, Poi poi) {
   showModalBottomSheet(
     context: context,
     isScrollControlled: true,
@@ -2448,8 +2652,10 @@ class _ReportSheetState extends State<_ReportSheet> {
     if (_busy) return;
     setState(() => _busy = true);
     final box = context.findRenderObject() as RenderBox?;
-    final origin = box == null ? null : box.localToGlobal(Offset.zero) & box.size;
-    final ok = await widget.controller.reportPlace(widget.poi, _reason, comment: _comment.text, origin: origin);
+    final origin =
+        box == null ? null : box.localToGlobal(Offset.zero) & box.size;
+    final ok = await widget.controller.reportPlace(widget.poi, _reason,
+        comment: _comment.text, origin: origin);
     if (!mounted) return;
     if (ok) {
       Navigator.of(context).pop();
@@ -2461,7 +2667,8 @@ class _ReportSheetState extends State<_ReportSheet> {
   @override
   Widget build(BuildContext context) {
     return Padding(
-      padding: EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
+      padding:
+          EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
       child: Container(
         decoration: const BoxDecoration(
           color: Colors.white,
@@ -2477,17 +2684,19 @@ class _ReportSheetState extends State<_ReportSheet> {
               children: [
                 Row(
                   children: [
-                    const Icon(Icons.report_gmailerrorred_outlined, color: NmColors.wine),
+                    const Icon(Icons.report_gmailerrorred_outlined,
+                        color: NmColors.wine),
                     const SizedBox(width: 10),
                     Expanded(
-                      child: Text(L.t('Неточна інформація', 'Inaccurate information'),
+                      child: Text(
+                          L.t('Неточна інформація', 'Inaccurate information'),
                           style: NmText.title(22)),
                     ),
                   ],
                 ),
                 const SizedBox(height: 6),
                 Text(
-                  '«${widget.poi.name}»',
+                  '«${widget.poi.shownName}»',
                   style: const TextStyle(fontSize: 14, color: NmColors.muted),
                 ),
                 const SizedBox(height: 14),
@@ -2509,8 +2718,10 @@ class _ReportSheetState extends State<_ReportSheet> {
                   maxLength: 300,
                   maxLines: 3,
                   decoration: InputDecoration(
-                    hintText: L.t('Що саме не так? (необов\'язково)', 'What exactly is wrong? (optional)'),
-                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(14)),
+                    hintText: L.t('Що саме не так? (необов\'язково)',
+                        'What exactly is wrong? (optional)'),
+                    border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(14)),
                   ),
                 ),
                 const SizedBox(height: 6),
@@ -2519,7 +2730,8 @@ class _ReportSheetState extends State<_ReportSheet> {
                     'Відкриється меню «Поділитися»: оберіть пошту чи месенджер, щоб надіслати повідомлення розробникам. У ньому лише це місце та що застосунок розповів про нього.',
                     'The share menu opens: pick mail or a messenger to send the message to the developers. It contains only this place and what the app said about it.',
                   ),
-                  style: const TextStyle(fontSize: 12, color: NmColors.muted, height: 1.35),
+                  style: const TextStyle(
+                      fontSize: 12, color: NmColors.muted, height: 1.35),
                 ),
                 const SizedBox(height: 12),
                 ElevatedButton.icon(
@@ -2528,7 +2740,8 @@ class _ReportSheetState extends State<_ReportSheet> {
                   icon: const Icon(Icons.send_rounded, size: 18),
                   label: Text(
                     L.t('Надіслати', 'Send'),
-                    style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+                    style: const TextStyle(
+                        fontSize: 16, fontWeight: FontWeight.w600),
                   ),
                 ),
               ],

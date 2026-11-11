@@ -1,0 +1,4 @@
+"NSLocationWhenInUseUsageDescription" = "NotMiss needs your location to detect nearby points of interest and trigger audio narrations during your walk.";
+"NSLocationAlwaysAndWhenInUseUsageDescription" = "NotMiss needs your location in the background to continue detecting points of interest while your screen is off — so you never miss a place even with the phone in your pocket.";
+"NSLocationAlwaysUsageDescription" = "NotMiss needs your location in the background to continue detecting points of interest while your screen is off — so you never miss a place even with the phone in your pocket.";
+"NSMicrophoneUsageDescription" = "NotMiss needs access to audio session features for tour guide narration playback.";

@@ -1,4 +1,5 @@
 import '../l10n/app_lang.dart';
+import '../l10n/place_name.dart';
 import 'dart:async';
 import 'package:flutter/foundation.dart' show debugPrint;
 import '../models/poi.dart';
@@ -781,7 +782,7 @@ class ResearchService {
   /// is unavailable or when it could not write anything that passed verification.
   String _buildSourceOnlyNarration(EnrichedPoi enriched, String? shortDesc, List<KeyFact> facts) {
     final kind = poiKindOf(_asPoi(enriched));
-    final name = enriched.name.replaceAll(RegExp(r'[«»"“”]'), '').trim();
+    final name = PlaceNames.of(enriched.name, enriched.osmTags).replaceAll(RegExp(r'[«»"“”]'), '').trim();
     final label = kind.label.toLowerCase();
     final saysItsKind = [label, ...kindWordsOf(kind)]
         .any((w) => name.toLowerCase().contains(w.length > 5 ? w.substring(0, 5) : w));
