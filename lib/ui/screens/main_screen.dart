@@ -598,6 +598,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
   }
 
   void _showVisitedSheet(BuildContext context) {
+    widget.controller.trackUi('my_places_opened');
     var tab = 0; // 0 = listened, 1 = passed but not listened
     showModalBottomSheet(
       context: context,
@@ -1105,6 +1106,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
   }
 
   void _showAiChatSheet(BuildContext context, Poi poi) {
+    widget.controller.trackUi('chat_opened', poi);
     _showAiChatModal(context, widget.controller, poi);
   }
 
@@ -1189,6 +1191,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
   }
 
   void _showPoiDetails(BuildContext context, Poi poi) {
+    widget.controller.trackUi('details_opened', poi);
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
@@ -2608,6 +2611,23 @@ void _showLanguageSheet(BuildContext context, WalkController controller) {
                       },
                     ),
                   ),
+                const Divider(height: 24),
+                SwitchListTile(
+                  contentPadding: EdgeInsets.zero,
+                  value: controller.analyticsEnabled,
+                  onChanged: (v) => controller.setAnalyticsEnabled(v),
+                  title: Text(
+                    L.t('Анонімна статистика', 'Anonymous statistics'),
+                    style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+                  ),
+                  subtitle: Text(
+                    L.t(
+                      'Допомагає покращувати гід: які місця слухають, де трапляються збої. Без імені, пошти та координат.',
+                      'Helps improve the guide: which places are heard, where things fail. No name, e-mail or coordinates.',
+                    ),
+                    style: const TextStyle(fontSize: 12, color: NmColors.muted),
+                  ),
+                ),
               ],
             ),
           ),

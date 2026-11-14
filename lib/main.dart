@@ -6,6 +6,7 @@ import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'dart:ui' show PlatformDispatcher;
 import 'l10n/app_lang.dart';
 import 'models/destination.dart';
+import 'services/analytics_service.dart';
 import 'services/settings_store.dart';
 import 'services/background_service.dart';
 import 'ui/screens/main_screen.dart';
@@ -30,6 +31,21 @@ Future<void> main() async {
   await settings.init();
   L.lang = settings.lang ?? AppLang.fromDevice(PlatformDispatcher.instance.locale.languageCode);
 
+  await settings.ensureAnalyticsId();
+
+  // Usage statistics: the project key is write-only (safe to ship). No key → disabled.
+  final analytics = AnalyticsService(
+    apiKey: _setting('POSTHOG_KEY'),
+    host: _setting('POSTHOG_HOST'),
+  )..configure(
+      distinctId: settings.analyticsId,
+      enabled: settings.analyticsEnabled,
+      base: {
+        'lang': L.lang.code,
+        'device_lang': PlatformDispatcher.instance.locale.languageCode,
+      },
+    );
+
   Destination? destination;
   String? loadError;
 
@@ -51,8 +67,20 @@ Future<void> main() async {
     destination: destination,
     apiKey: apiKey,
     settings: settings,
+    analytics: analytics,
     loadError: loadError,
   ));
+}
+
+/// A value from .env, otherwise from --dart-define.
+String _setting(String name) {
+  final fromEnv = dotenv.maybeGet(name)?.trim();
+  if (fromEnv != null && fromEnv.isNotEmpty) return fromEnv;
+  return switch (name) {
+    'POSTHOG_KEY' => const String.fromEnvironment('POSTHOG_KEY'),
+    'POSTHOG_HOST' => const String.fromEnvironment('POSTHOG_HOST'),
+    _ => '',
+  };
 }
 
 /// Root widget. Uses StatefulWidget to ensure WalkController is created once
@@ -61,6 +89,7 @@ class NotMissApp extends StatefulWidget {
   final Destination? destination;
   final String apiKey;
   final SettingsStore settings;
+  final AnalyticsService? analytics;
   final String? loadError;
 
   const NotMissApp({
@@ -68,6 +97,7 @@ class NotMissApp extends StatefulWidget {
     required this.destination,
     required this.apiKey,
     required this.settings,
+    this.analytics,
     this.loadError,
   });
 
@@ -85,6 +115,8 @@ class _NotMissAppState extends State<NotMissApp> {
       _controller = WalkController(
         destination: widget.destination!,
         apiKey: widget.apiKey,
+        settingsStore: widget.settings,
+        analytics: widget.analytics,
       );
     }
   }

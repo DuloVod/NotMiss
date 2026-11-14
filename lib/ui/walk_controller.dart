@@ -8,6 +8,7 @@ import 'package:geolocator/geolocator.dart';
 import '../l10n/app_lang.dart';
 import '../l10n/place_name.dart';
 import '../models/destination.dart';
+import '../services/analytics_service.dart';
 import '../services/settings_store.dart';
 import '../services/report_service.dart';
 import '../models/poi.dart';
@@ -63,6 +64,9 @@ class WalkController extends ChangeNotifier {
   final VisitedStore _visitedStore;
   final LiveActivityService _liveActivity;
   final SettingsStore _settings;
+
+  /// Anonymous usage statistics (inactive without a key or when the user switched them off).
+  final AnalyticsService analytics;
   final ReportService _reports;
   final PlaceContextService _placeService;
 
@@ -130,7 +134,9 @@ class WalkController extends ChangeNotifier {
     LiveActivityService? liveActivity,
     SettingsStore? settingsStore,
     ReportService? reportService,
+    AnalyticsService? analytics,
   })  : _settings = settingsStore ?? SettingsStore(),
+        analytics = analytics ?? AnalyticsService(),
         _reports = reportService ?? ReportService(),
         _liveActivity = liveActivity ?? LiveActivityService(),
         _placeService = placeService ?? PlaceContextService(),
@@ -173,9 +179,60 @@ class WalkController extends ChangeNotifier {
     _nowPlaying.onToggle = () => unawaited(isPlaying ? pauseAudio() : resumeAudio());
     unawaited(_visitedStore.init().then((_) => notifyListeners()));
     _allPois = [];
+    this.analytics.foreground();
   }
 
   AppLang get lang => L.lang;
+
+  // ── Usage statistics ────────────────────────────────────────────────────────────────────
+  // Only ids, names of places, kinds, seconds and counts: never coordinates or the user's words.
+
+  Map<String, Object?> _poiProps(Poi poi) => {
+        'poi_id': poi.id,
+        'poi_name': poi.name,
+        'kind': poiKindOf(poi).name,
+      };
+
+  /// For the UI: opening a place's details, the list of visited places, etc.
+  void trackUi(String event, [Poi? poi, Map<String, Object?> extra = const {}]) {
+    analytics.track(event, {if (poi != null) ..._poiProps(poi), ...extra});
+  }
+
+  bool get analyticsEnabled => _settings.analyticsEnabled;
+
+  /// The user's switch for anonymous statistics (Settings). Off: nothing is sent or queued.
+  Future<void> setAnalyticsEnabled(bool value) async {
+    analytics.setEnabled(value);
+    await _settings.setAnalyticsEnabled(value);
+    notifyListeners();
+  }
+
+  DateTime? _walkStartedAt;
+  final Set<String> _walkListened = {};
+  final Set<String> _walkPassed = {};
+  String? _narrId;
+  DateTime? _narrAt;
+  Map<String, Object?> _narrProps = const {};
+
+  void _narrationBegan(Poi poi, String source) {
+    _narrationEnded('interrupted');
+    _narrId = poi.id;
+    _narrAt = DateTime.now();
+    _narrProps = _poiProps(poi);
+    analytics.track('narration_started', {..._narrProps, 'source': source, 'in_background': _appInBackground});
+  }
+
+  /// [how]: finished (heard to the end), skipped, stopped, interrupted (another one started).
+  void _narrationEnded(String how) {
+    final id = _narrId;
+    if (id == null) return;
+    final seconds = DateTime.now().difference(_narrAt ?? DateTime.now()).inSeconds;
+    final props = _narrProps;
+    _narrId = null;
+    _narrAt = null;
+    _narrProps = const {};
+    analytics.track('narration_$how', {...props, 'listened_seconds': seconds});
+  }
 
   /// Places the user has reported as inaccurate.
   Set<String> get reportedPoiIds => _settings.reported;
@@ -197,6 +254,7 @@ class WalkController extends ChangeNotifier {
       return false;
     }
     await _settings.markReported(poi.id);
+    analytics.track('place_reported', {..._poiProps(poi), 'reason': reason.name, 'has_comment': comment.trim().isNotEmpty});
     notifyListeners();
     return true;
   }
@@ -205,6 +263,8 @@ class WalkController extends ChangeNotifier {
   /// in the other language are researched again when the walker gets close.
   Future<void> setLang(AppLang lang) async {
     if (lang == L.lang) return;
+    analytics.track('language_changed', {'from': L.lang.code, 'to': lang.code});
+    analytics.setBase('lang', lang.code);
     L.lang = lang;
     await _settings.setLang(lang);
     AiService.placeContext = null; // "Львів, Україна" → "Lviv, Ukraine"
@@ -272,12 +332,14 @@ class WalkController extends ChangeNotifier {
   List<VisitedPlace> get passedOnlyPlaces => _visitedStore.passedOnlyPlaces;
 
   void _markPassed(Poi poi) {
+    _walkPassed.add(poi.id);
     unawaited(_visitedStore
         .markPassed(poi.id, name: poi.name, kind: poiKindOf(poi).name)
         .then((isNew) => isNew ? notifyListeners() : null));
   }
 
   void _markListened(Poi poi) {
+    _walkListened.add(poi.id);
     unawaited(_visitedStore
         .markListened(poi.id, name: poi.name, kind: poiKindOf(poi).name)
         .then((_) => notifyListeners()));
@@ -317,7 +379,12 @@ class WalkController extends ChangeNotifier {
         state == AppLifecycleState.detached;
     if (background == _appInBackground) return;
     _appInBackground = background;
-    if (background) _syncNowPlaying();
+    if (background) {
+      analytics.background();
+      _syncNowPlaying();
+    } else {
+      analytics.foreground();
+    }
   }
 
   /// Publishes the lock-screen card for [poi] right away (before audio actually starts).
@@ -663,6 +730,7 @@ class WalkController extends ChangeNotifier {
       }
 
       if (EnrichedPoi.hasNoVerifiedInfo(narration) || isSilentPoi(currentPoi.id)) {
+        analytics.track('poi_silent', _poiProps(currentPoi));
         _activePoi = currentPoi.copyWith(narrationText: narration);
         _statusMessage = L.t('📍 ${currentPoi.shownName} — не озвучується: немає перевірених джерел',
             '📍 ${currentPoi.shownName} — not narrated: no verified sources');
@@ -681,13 +749,17 @@ class WalkController extends ChangeNotifier {
         _statusMessage = '🎧 ${currentPoi.shownName}';
         notifyListeners();
         _publishNowPlaying(currentPoi, playing: true);
+        _narrationBegan(currentPoi, 'manual');
         await _playWithRetry(audioPath, () => gen != _manualPlayGen);
         if (gen != _manualPlayGen) return;
+        _narrationEnded('finished');
         _markListened(currentPoi);
       }
     } catch (e) {
       debugPrint('[WalkController] Play narration error: $e');
       if (gen == _manualPlayGen) {
+        _narrId = null;
+        analytics.track('narration_failed', {..._poiProps(updated), 'error': e.runtimeType.toString()});
         failed = true;
         _narrationFailed = true;
         _statusMessage = L.t('📍 ${updated.shownName} — озвучення недоступне, розповідь текстом', '📍 ${updated.shownName} — voice unavailable, story as text');
@@ -714,6 +786,7 @@ class WalkController extends ChangeNotifier {
 
   /// Pause current audio playback.
   Future<void> pauseAudio() async {
+    analytics.track('audio_paused');
     await _audioService.pause();
     _refreshLiveActivity();
     if (_activePoi != null) {
@@ -736,12 +809,13 @@ class WalkController extends ChangeNotifier {
   Future<void> replayAudio() async {
     final poi = _activePoi;
     if (poi == null) return;
+    analytics.track('audio_replayed', _poiProps(poi));
     await playNarrationForPoi(poi, restart: true);
   }
 
   /// Drop the current narration and move on: the next waiting place (if any) starts at once.
   Future<void> skipNarration() async {
-    await stopAudio();
+    await stopAudio(how: 'skipped');
     final pos = _currentPosition;
     if (pos != null && _status == WalkStatus.walking) {
       await _onPosition(pos);
@@ -749,7 +823,8 @@ class WalkController extends ChangeNotifier {
   }
 
   /// Stop current audio playback and cancel in-flight narration generation.
-  Future<void> stopAudio() async {
+  Future<void> stopAudio({String how = 'stopped'}) async {
+    _narrationEnded(how);
     _processGen++;
     _manualPlayGen++;
     await _audioService.stop();
@@ -773,7 +848,10 @@ class WalkController extends ChangeNotifier {
   Future<String> askAiAboutPoi(Poi poi, String question) async {
     // Rejected questions cost nothing: no research, no model request, no place in the limit.
     final local = ChatGuard.localAnswer(question, poi.name);
-    if (local != null) return local;
+    if (local != null) {
+      analytics.track('chat_question', {..._poiProps(poi), 'length': question.length, 'outcome': 'refused_locally'});
+      return local;
+    }
 
     final normalized = question.trim().toLowerCase();
     final poiQa = _qaCache.putIfAbsent(poi.id, () => {});
@@ -783,7 +861,10 @@ class WalkController extends ChangeNotifier {
     }
 
     final asked = _chatQuestions[poi.id] ?? 0;
-    if (asked >= maxQuestionsPerPlace) return ChatGuard.limitReached;
+    if (asked >= maxQuestionsPerPlace) {
+      analytics.track('chat_question', {..._poiProps(poi), 'length': question.length, 'outcome': 'limit_reached'});
+      return ChatGuard.limitReached;
+    }
     _chatQuestions[poi.id] = asked + 1;
 
     // The answer comes from the place's sources, so they must be collected first.
@@ -796,6 +877,7 @@ class WalkController extends ChangeNotifier {
       updated = updated.copyWith(facts: [...updated.facts, material]);
     }
     final answer = await _aiService.answerQuestionAboutPoi(updated, question);
+    analytics.track('chat_question', {..._poiProps(poi), 'length': question.length, 'outcome': answer.isEmpty ? 'empty' : 'answered'});
     if (answer.isNotEmpty) {
       poiQa[normalized] = answer;
     }
@@ -825,6 +907,7 @@ class WalkController extends ChangeNotifier {
     final granted = await _locationService.requestPermission();
     _permissionDenied = !granted;
     if (!granted) {
+      analytics.track('walk_denied', {'reason': 'permission'});
       _statusMessage = L.t('Для роботи аудіогіда потрібен доступ до геолокації.', 'The audio guide needs location access.');
       notifyListeners();
       return;
@@ -841,6 +924,10 @@ class WalkController extends ChangeNotifier {
     _osmFailures = 0;
     _osmLoaded = false;
     _status = WalkStatus.walking;
+    _walkStartedAt = DateTime.now();
+    _walkListened.clear();
+    _walkPassed.clear();
+    analytics.track('walk_started');
     _activePoi = null;
 
     _allPois = [];
@@ -952,9 +1039,11 @@ class WalkController extends ChangeNotifier {
         notifyListeners();
       }
 
+      analytics.track('places_loaded', {'total': _allPois.length, 'from_osm': deduped.length});
       debugPrint('[WalkController] Loaded POIs: ${_allPois.length} total (${deduped.length} new from OSM)');
     } catch (e) {
       debugPrint('[WalkController] OSM load failed: $e');
+      analytics.track('places_search_failed', {'timeout': e is TimeoutException});
       _osmLoaded = false;
       _waitingForGps = e is TimeoutException;
       if (e is! TimeoutException) _osmFailures++;
@@ -977,6 +1066,17 @@ class WalkController extends ChangeNotifier {
   }
 
   void stopWalk() {
+    final startedAt = _walkStartedAt;
+    if (startedAt != null) {
+      _narrationEnded('stopped');
+      analytics.track('walk_stopped', {
+        'duration_seconds': DateTime.now().difference(startedAt).inSeconds,
+        'places_heard': _walkListened.length,
+        'places_passed': _walkPassed.length,
+      });
+      _walkStartedAt = null;
+      unawaited(analytics.flush());
+    }
     _processGen++;
     _manualPlayGen++;
     _uiTimer?.cancel();
@@ -1161,6 +1261,7 @@ class WalkController extends ChangeNotifier {
 
     _poiEngine.markTriggered(poi.id);
     _markPassed(poi);
+    analytics.track('poi_triggered', {..._poiProps(poi), 'in_background': _appInBackground});
     _pendingPoiIds.remove(poi.id);
     _isProcessing = true;
     _narrationFailed = false;
@@ -1224,6 +1325,7 @@ class WalkController extends ChangeNotifier {
 
       // Nothing verified is known about the place: it stays on the map, but is not narrated.
       if (EnrichedPoi.hasNoVerifiedInfo(narration) || isSilentPoi(currentPoi.id)) {
+        analytics.track('poi_silent', _poiProps(currentPoi));
         _activePoi = currentPoi.copyWith(narrationText: narration);
         _statusMessage = L.t('📍 ${currentPoi.shownName} — не озвучується: немає перевірених джерел',
             '📍 ${currentPoi.shownName} — not narrated: no verified sources');
@@ -1256,8 +1358,10 @@ class WalkController extends ChangeNotifier {
         _audioService.armArrivalCue();
       }
       _publishNowPlaying(currentPoi, playing: true);
+      _narrationBegan(currentPoi, 'auto');
       await _playWithRetry(audioPath, () => gen != _processGen);
       if (gen != _processGen) return; // Відмінено
+      _narrationEnded('finished');
       _markListened(currentPoi);
 
       BackgroundService.updateNotification(
@@ -1271,6 +1375,8 @@ class WalkController extends ChangeNotifier {
         failed = true;
         _narrationFailed = true;
         debugPrint('[WalkController] Error processing POI ${currentPoi.name}: $e');
+        _narrId = null;
+        analytics.track('narration_failed', {..._poiProps(currentPoi), 'error': e.runtimeType.toString()});
         _statusMessage = '📍 ${currentPoi.shownName} — озвучення недоступне, розповідь текстом';
         notifyListeners();
         BackgroundService.updateNotification(
@@ -1397,6 +1503,7 @@ class WalkController extends ChangeNotifier {
   @override
   void dispose() {
     _disposed = true;
+    analytics.dispose();
     _uiTimer?.cancel();
     _osmRetryTimer?.cancel();
     _playerStateSub?.cancel();
