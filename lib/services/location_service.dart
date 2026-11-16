@@ -167,13 +167,30 @@ class LocationService {
     }
   }
 
+  bool _needsSettings = false;
+
+  /// After a refused [requestPermission]: the phone will not ask again (permission denied for
+  /// good, or location services are off), so only the system Settings can fix it.
+  bool get needsSettings => _needsSettings;
+
+  /// Opens this app's page in the system Settings.
+  Future<void> openSettings() async {
+    try {
+      await Geolocator.openAppSettings();
+    } catch (_) {}
+  }
+
   /// Request permission and return true if granted.
   Future<bool> requestPermission() async {
+    _needsSettings = false;
     try {
       if (!kIsWeb) {
         final serviceEnabled = await Geolocator.isLocationServiceEnabled()
             .timeout(const Duration(seconds: 3));
-        if (!serviceEnabled) return false;
+        if (!serviceEnabled) {
+          _needsSettings = true;
+          return false;
+        }
       }
 
       LocationPermission permission = await Geolocator.checkPermission()
@@ -184,8 +201,10 @@ class LocationService {
             .timeout(const Duration(seconds: 10));
       }
 
-      return permission == LocationPermission.always ||
+      final granted = permission == LocationPermission.always ||
           permission == LocationPermission.whileInUse;
+      _needsSettings = !granted && permission == LocationPermission.deniedForever;
+      return granted;
     } catch (e) {
       return false;
     }

@@ -384,6 +384,10 @@ class WalkController extends ChangeNotifier {
       _syncNowPlaying();
     } else {
       analytics.foreground();
+      // Back from Settings with the access allowed: the walk the user wanted starts.
+      if (_status == WalkStatus.idle && _permissionDenied && _needsSettings) {
+        unawaited(startWalk());
+      }
     }
   }
 
@@ -501,6 +505,8 @@ class WalkController extends ChangeNotifier {
 
   // ── Calm status (one indicator instead of a log of steps) ────────────────────
   bool _permissionDenied = false;
+  bool _needsSettings = false;
+  bool _placesReported = false;
   bool _narrationFailed = false;
   bool _waitingForGps = false;
   int _osmFailures = 0;
@@ -513,10 +519,16 @@ class WalkController extends ChangeNotifier {
   /// on come with a button.
   GuideStatus? get guideStatus {
     if (_status == WalkStatus.idle) {
-      return _permissionDenied
-          ? GuideStatus(L.t('Потрібен доступ до геолокації', 'Location access is needed'), GuideTone.attention,
-              actionLabel: L.t('Дозволити', 'Allow'))
-          : null;
+      if (!_permissionDenied) return null;
+      // The phone will not ask again: the only way is Settings, so the button goes there.
+      return _needsSettings
+          ? GuideStatus(
+              L.t('Геолокація вимкнена. Відкрийте Налаштування й дозвольте доступ',
+                  'Location is off. Open Settings and allow access'),
+              GuideTone.attention,
+              actionLabel: L.t('Налаштування', 'Settings'))
+          : GuideStatus(L.t('Потрібен доступ до геолокації', 'Location access is needed'), GuideTone.attention,
+              actionLabel: L.t('Дозволити', 'Allow'));
     }
     if (_status == WalkStatus.stopped) return null;
 
@@ -544,7 +556,12 @@ class WalkController extends ChangeNotifier {
   /// The button next to [guideStatus].
   Future<void> runStatusAction() async {
     if (_status == WalkStatus.idle && _permissionDenied) {
-      await startWalk();
+      if (_needsSettings) {
+        analytics.track('permission_settings_opened');
+        await _locationService.openSettings();
+      } else {
+        await startWalk();
+      }
     } else if (_narrationFailed && _activePoi != null) {
       await replayAudio();
     } else if (!_osmLoaded) {
@@ -906,8 +923,9 @@ class WalkController extends ChangeNotifier {
     if (_status == WalkStatus.walking) return;
     final granted = await _locationService.requestPermission();
     _permissionDenied = !granted;
+    _needsSettings = !granted && _locationService.needsSettings;
     if (!granted) {
-      analytics.track('walk_denied', {'reason': 'permission'});
+      analytics.track('walk_denied', {'reason': _needsSettings ? 'blocked_in_settings' : 'permission'});
       _statusMessage = L.t('Для роботи аудіогіда потрібен доступ до геолокації.', 'The audio guide needs location access.');
       notifyListeners();
       return;
@@ -925,6 +943,7 @@ class WalkController extends ChangeNotifier {
     _osmLoaded = false;
     _status = WalkStatus.walking;
     _walkStartedAt = DateTime.now();
+    _placesReported = false;
     _walkListened.clear();
     _walkPassed.clear();
     analytics.track('walk_started');
@@ -1039,7 +1058,11 @@ class WalkController extends ChangeNotifier {
         notifyListeners();
       }
 
-      analytics.track('places_loaded', {'total': _allPois.length, 'from_osm': deduped.length});
+      // Once per walk, then only when something new was found (the search repeats on every fix).
+      if (deduped.isNotEmpty || !_placesReported) {
+        _placesReported = true;
+        analytics.track('places_loaded', {'total': _allPois.length, 'from_osm': deduped.length});
+      }
       debugPrint('[WalkController] Loaded POIs: ${_allPois.length} total (${deduped.length} new from OSM)');
     } catch (e) {
       debugPrint('[WalkController] OSM load failed: $e');
