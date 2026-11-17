@@ -169,9 +169,11 @@ class WalkController extends ChangeNotifier {
     _researchService.init();
     _playerStateSub = _audioService.playerStateStream.listen((_) {
       _syncNowPlaying();
+      _syncAndroidNotification();
       _refreshLiveActivity();
       notifyListeners();
     });
+    BackgroundService.onAction = _onNotificationAction;
     _nowPlaying.onPlay = () => unawaited(resumeAudio());
     _nowPlaying.onPause = () => unawaited(pauseAudio());
     _nowPlaying.onReplay = () => unawaited(replayAudio());
@@ -482,6 +484,41 @@ class WalkController extends ChangeNotifier {
     final next = nearestUnvisited(excluding: current.id, maxMeters: 400);
     if (next != null) return L.t('Далі: ${next.poi.shownName} · ${formatDistance(next.meters)}', 'Next: ${next.poi.shownName} · ${formatDistance(next.meters)}');
     return poiKindOf(current).label;
+  }
+
+  /// A button of the Android notification was pressed.
+  void _onNotificationAction(String id) {
+    switch (id) {
+      case NotificationActions.pause:
+        unawaited(pauseAudio());
+      case NotificationActions.resume:
+        unawaited(resumeAudio());
+      case NotificationActions.skip:
+        unawaited(skipNarration());
+    }
+  }
+
+  bool _notificationHasButtons = false;
+
+  /// Android notification: the place being narrated with Pause/Resume and Next buttons while a
+  /// narration is audible or paused; plain walk text without buttons otherwise.
+  void _syncAndroidNotification() {
+    final poi = _activePoi;
+    if (poi != null && isAudioActive) {
+      final playing = isPlaying;
+      _notificationHasButtons = true;
+      BackgroundService.updateNotification(
+        'NotMiss — ${poi.shownName}',
+        playing ? 'Now playing audio narration 🎧' : 'Paused',
+        actions: [playing ? NotificationActions.pause : NotificationActions.resume, NotificationActions.skip],
+      );
+    } else if (_notificationHasButtons) {
+      _notificationHasButtons = false;
+      BackgroundService.updateNotification(
+        'NotMiss — Walk in progress',
+        'Voice guide is active. You\'ll be notified near each point.',
+      );
+    }
   }
 
   DateTime _lastLockScreenRefresh = DateTime.fromMillisecondsSinceEpoch(0);
@@ -805,6 +842,7 @@ class WalkController extends ChangeNotifier {
   Future<void> pauseAudio() async {
     analytics.track('audio_paused');
     await _audioService.pause();
+    _syncAndroidNotification();
     _refreshLiveActivity();
     if (_activePoi != null) {
       _statusMessage = L.t('⏸️ ${_activePoi!.shownName} — пауза', '⏸️ ${_activePoi!.shownName} — paused');
@@ -815,6 +853,7 @@ class WalkController extends ChangeNotifier {
   /// Resume current audio playback.
   Future<void> resumeAudio() async {
     await _audioService.resume();
+    _syncAndroidNotification();
     _refreshLiveActivity();
     if (_activePoi != null) {
       _statusMessage = '🎧 ${_activePoi!.shownName}';
@@ -1536,6 +1575,7 @@ class WalkController extends ChangeNotifier {
     _locationService.dispose();
     _audioService.dispose();
     _researchService.dispose();
+    BackgroundService.onAction = null;
     BackgroundService.stop();
     super.dispose();
   }
