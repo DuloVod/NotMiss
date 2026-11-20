@@ -14,7 +14,7 @@ import 'package:uuid/uuid.dart';
 /// Without a key, or when the user switched statistics off, every call does nothing.
 class AnalyticsService {
   /// Keep equal to `version:` in pubspec.yaml (a test checks it).
-  static const String appVersion = '1.1.3+18';
+  static const String appVersion = '1.1.4+19';
 
   static const String defaultHost = 'https://eu.i.posthog.com';
 

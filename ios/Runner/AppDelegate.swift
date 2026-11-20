@@ -4,6 +4,16 @@ import AVFoundation
 import MediaPlayer
 import ActivityKit
 
+/// Counts "end" requests so that a "show" still in flight cannot bring the indicator back after
+/// the walk was stopped or the app closed (start and end run as separate async tasks).
+private final class LiveActivityEpoch {
+  private let lock = NSLock()
+  private var value = 0
+  func bump() { lock.lock(); value += 1; lock.unlock() }
+  var current: Int { lock.lock(); defer { lock.unlock() }; return value }
+}
+private let liveActivityEpoch = LiveActivityEpoch()
+
 @main
 @objc class AppDelegate: FlutterAppDelegate, FlutterImplicitEngineDelegate {
   private var backgroundTaskId: UIBackgroundTaskIdentifier = .invalid
@@ -140,6 +150,7 @@ import ActivityKit
         // The app refreshes the activity regularly; if it stops (app closed), iOS marks it
         // stale and the card says the guide is not active instead of showing old data.
         let content = ActivityContent(state: state, staleDate: Date().addingTimeInterval(120))
+        let epoch = liveActivityEpoch.current
         Task {
           if let existing = Activity<GuideActivityAttributes>.activities.first {
             await existing.update(content)
@@ -151,12 +162,20 @@ import ActivityKit
             DispatchQueue.main.async { result(false) }
             return
           }
+          // The walk ended while this request was waiting: do not start an indicator now.
+          guard liveActivityEpoch.current == epoch else {
+            DispatchQueue.main.async { result(false) }
+            return
+          }
           do {
-            _ = try Activity.request(
+            let started = try Activity.request(
               attributes: GuideActivityAttributes(name: "NotMiss"),
               content: content,
               pushType: nil
             )
+            if liveActivityEpoch.current != epoch {
+              await started.end(nil, dismissalPolicy: .immediate)
+            }
             DispatchQueue.main.async { result(true) }
           } catch {
             NSLog("[NotMiss.LiveActivity] request failed: %@", error.localizedDescription)
@@ -164,6 +183,7 @@ import ActivityKit
           }
         }
       case "end":
+        liveActivityEpoch.bump()
         Task {
           for activity in Activity<GuideActivityAttributes>.activities {
             await activity.end(nil, dismissalPolicy: .immediate)
@@ -179,6 +199,7 @@ import ActivityKit
   /// A fresh process has no walk: remove an indicator left behind by a previous run.
   private func endStaleLiveActivities() {
     guard #available(iOS 16.2, *) else { return }
+    liveActivityEpoch.bump()
     Task {
       for activity in Activity<GuideActivityAttributes>.activities {
         await activity.end(nil, dismissalPolicy: .immediate)
@@ -189,14 +210,17 @@ import ActivityKit
   /// The user closed the app: take the indicator down with it.
   override func applicationWillTerminate(_ application: UIApplication) {
     if #available(iOS 16.2, *) {
+      // `Task.detached`, not `Task`: a plain Task inherits the main actor from this method and
+      // could never run while the main thread waits below (the activity would stay on screen).
+      liveActivityEpoch.bump()
       let done = DispatchSemaphore(value: 0)
-      Task {
+      Task.detached(priority: .userInitiated) {
         for activity in Activity<GuideActivityAttributes>.activities {
           await activity.end(nil, dismissalPolicy: .immediate)
         }
         done.signal()
       }
-      _ = done.wait(timeout: .now() + 2)
+      _ = done.wait(timeout: .now() + 3)
     }
     MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
     super.applicationWillTerminate(application)

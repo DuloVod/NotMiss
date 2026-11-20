@@ -37,6 +37,8 @@ class _Loc extends LocationService {
   bool granted;
   final bool blocked;
   int settingsOpened = 0;
+  int starts = 0;
+  Duration askDelay = Duration.zero;
   final StreamController<Position> ctrl = StreamController<Position>.broadcast();
   @override
   Stream<Position> get positionStream => ctrl.stream;
@@ -49,9 +51,13 @@ class _Loc extends LocationService {
   @override
   Future<void> openSettings() async => settingsOpened++;
   @override
-  Future<bool> requestPermission() async => granted;
+  Future<bool> requestPermission() async {
+    if (askDelay > Duration.zero) await Future.delayed(askDelay);
+    return granted;
+  }
+
   @override
-  void start() {}
+  void start() => starts++;
   @override
   void stop() {}
   @override
@@ -174,6 +180,21 @@ void main() {
       c.setAppLifecycle(AppLifecycleState.resumed);
       await Future.delayed(const Duration(milliseconds: 300));
       expect(c.status, WalkStatus.walking);
+      c.stopWalk();
+      c.dispose();
+    });
+  });
+
+  group('starting a walk', () {
+    test('tapping start twice while the permission question is open starts one walk', () async {
+      final loc = _Loc()..askDelay = const Duration(milliseconds: 80);
+      final c = _ctl(loc, _AlwaysReload(), _analytics(_Sink()));
+
+      final first = c.startWalk();
+      final second = c.startWalk();
+      await Future.wait([first, second]);
+
+      expect(loc.starts, 1);
       c.stopWalk();
       c.dispose();
     });

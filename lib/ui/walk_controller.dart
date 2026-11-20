@@ -379,6 +379,8 @@ class WalkController extends ChangeNotifier {
     final background = state == AppLifecycleState.paused ||
         state == AppLifecycleState.hidden ||
         state == AppLifecycleState.detached;
+    // The system is tearing the app down: take the lock-screen indicator with it.
+    if (state == AppLifecycleState.detached) unawaited(_liveActivity.end());
     if (background == _appInBackground) return;
     _appInBackground = background;
     if (background) {
@@ -958,8 +960,21 @@ class WalkController extends ChangeNotifier {
   /// Does NOT trigger AI or audio — just a hook for future use.
   void Function(ProximityEvent event)? onProximityEvent;
 
+  bool _starting = false;
+
   Future<void> startWalk() async {
-    if (_status == WalkStatus.walking) return;
+    // A second tap while the permission question or the service start is still pending must
+    // not start the walk twice (two position listeners, two timers).
+    if (_status == WalkStatus.walking || _starting) return;
+    _starting = true;
+    try {
+      await _startWalk();
+    } finally {
+      _starting = false;
+    }
+  }
+
+  Future<void> _startWalk() async {
     final granted = await _locationService.requestPermission();
     _permissionDenied = !granted;
     _needsSettings = !granted && _locationService.needsSettings;
@@ -998,6 +1013,12 @@ class WalkController extends ChangeNotifier {
 
     // Start Android foreground service (keeps GPS alive when screen is off)
     await BackgroundService.start();
+
+    // Stopped while the service was starting: do not bring the walk back to life.
+    if (_status != WalkStatus.walking) {
+      unawaited(BackgroundService.stop());
+      return;
+    }
 
     _locationService.start();
 
