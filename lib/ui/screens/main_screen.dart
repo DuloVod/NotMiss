@@ -111,6 +111,8 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
     final listenedIds = widget.controller.listenedPoiIds;
     final silentIds = widget.controller.silentPoiIds;
     final guideStatus = widget.controller.guideStatus;
+    final route = widget.controller.navTarget == null ? null : widget.controller.navRoute;
+    final navActive = widget.controller.navTarget != null || widget.controller.navArrived != null;
 
     return Scaffold(
       backgroundColor: NmColors.background,
@@ -137,6 +139,21 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
                 userAgentPackageName: 'com.dulo.notmiss',
                 tileProvider: NetworkTileProvider(),
               ),
+              if (route != null)
+                PolylineLayer(
+                  polylines: [
+                    Polyline(
+                      points: [for (final g in route.points) LatLng(g.lat, g.lng)],
+                      strokeWidth: 5,
+                      color: NmColors.userDot,
+                      borderStrokeWidth: 2,
+                      borderColor: Colors.white,
+                      pattern: route.straight
+                          ? StrokePattern.dashed(segments: const [10, 8])
+                          : const StrokePattern.solid(),
+                    ),
+                  ],
+                ),
               MarkerLayer(
                 markers: [
                   ...allPois.map((p) => _buildPoiMarker(
@@ -156,13 +173,22 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
           if (guideStatus != null &&
               widget.controller.status == WalkStatus.walking)
             Positioned(
-              top: MediaQuery.of(context).padding.top + 12,
+              top: MediaQuery.of(context).padding.top + (navActive ? 96 : 12),
               left: 16,
               right: 16,
               child: Align(
                 alignment: Alignment.topCenter,
                 child: _buildStatusPill(guideStatus),
               ),
+            ),
+
+          // ── Simple navigation card: where to, how far, which way ───────────────
+          if (navActive)
+            Positioned(
+              top: MediaQuery.of(context).padding.top + 12,
+              left: 16,
+              right: 16,
+              child: _buildNavCard(),
             ),
 
           // ── Map Controls & Walk HUD bottom panel ────────────────────────
@@ -1118,6 +1144,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
     Color color = NmColors.ink; // Unvisited place
     if (isActive) color = NmColors.ochre;
     if (isTriggered && !isActive) color = NmColors.stone;
+    final isNavTarget = widget.controller.navTarget?.id == poi.id;
 
     return Marker(
       point: LatLng(poi.latitude, poi.longitude),
@@ -1142,7 +1169,9 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
               decoration: BoxDecoration(
                 color: color,
                 shape: BoxShape.circle,
-                border: Border.all(color: Colors.white, width: 2),
+                border: Border.all(
+                    color: isNavTarget ? NmColors.userDot : Colors.white,
+                    width: isNavTarget ? 4 : 2),
                 boxShadow: [
                   BoxShadow(
                     color: Colors.black.withValues(alpha: 0.2),
@@ -1200,6 +1229,115 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
         controller: widget.controller,
         poi: poi,
       ),
+    );
+  }
+
+  /// "420 м" / "1,2 км".
+  static String formatDistance(double meters) {
+    if (meters < 1000) return L.t('${(meters / 10).round() * 10} м', '${(meters * 3.28084 / 10).round() * 10} ft');
+    return L.t('${(meters / 1000).toStringAsFixed(1).replaceAll('.', ',')} км',
+        '${(meters / 1609.34).toStringAsFixed(1)} mi');
+  }
+
+  Widget _buildNavCard() {
+    final c = widget.controller;
+    final arrived = c.navArrived;
+    final target = c.navTarget;
+    final remaining = c.navRemainingMeters;
+    final straight = c.navRoute?.straight ?? true;
+
+    Widget body;
+    if (arrived != null) {
+      body = Row(
+        children: [
+          Container(
+            width: 44,
+            height: 44,
+            decoration: const BoxDecoration(color: NmColors.ink, shape: BoxShape.circle),
+            child: const Icon(Icons.check_rounded, color: Colors.white, size: 26),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(L.t('Ви на місці', 'You have arrived'),
+                    style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: NmColors.muted)),
+                Text(arrived.shownName,
+                    maxLines: 2, overflow: TextOverflow.ellipsis, style: NmText.title(18)),
+              ],
+            ),
+          ),
+          IconButton(
+            tooltip: L.t('Закрити', 'Close'),
+            icon: const Icon(Icons.close_rounded, color: NmColors.muted),
+            onPressed: c.dismissNavArrival,
+          ),
+        ],
+      );
+    } else {
+      final bearing = c.navBearing;
+      body = Row(
+        children: [
+          // The arrow turns with the phone, so it always points where to walk.
+          StreamBuilder<CompassEvent>(
+            stream: FlutterCompass.events,
+            builder: (context, snap) {
+              final heading = snap.data?.heading ?? 0;
+              return Container(
+                width: 44,
+                height: 44,
+                decoration: const BoxDecoration(color: NmColors.ink, shape: BoxShape.circle),
+                child: c.navLoading && bearing == null
+                    ? const Padding(
+                        padding: EdgeInsets.all(12),
+                        child: CircularProgressIndicator(strokeWidth: 2.5, color: Colors.white),
+                      )
+                    : Transform.rotate(
+                        angle: ((bearing ?? 0) - heading) * math.pi / 180,
+                        child: const Icon(Icons.navigation, color: Colors.white, size: 26),
+                      ),
+              );
+            },
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  remaining == null
+                      ? L.t('Шукаємо дорогу…', 'Finding the way…')
+                      : '${formatDistance(remaining)} · ${L.t('~${c.navMinutes} хв', '~${c.navMinutes} min')}',
+                  style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: NmColors.muted),
+                ),
+                Text(target?.shownName ?? '',
+                    maxLines: 2, overflow: TextOverflow.ellipsis, style: NmText.title(18)),
+                if (remaining != null && straight && !c.navLoading)
+                  Text(L.t('Дороги не знайдено — напрямок по прямій', 'No path found — straight-line direction'),
+                      style: const TextStyle(fontSize: 11, color: NmColors.stone)),
+              ],
+            ),
+          ),
+          IconButton(
+            tooltip: L.t('Скасувати навігацію', 'Stop navigation'),
+            icon: const Icon(Icons.close_rounded, color: NmColors.muted),
+            onPressed: c.stopNavigation,
+          ),
+        ],
+      );
+    }
+
+    return Container(
+      padding: const EdgeInsets.fromLTRB(12, 10, 4, 10),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(20),
+        boxShadow: [
+          BoxShadow(color: Colors.black.withValues(alpha: 0.15), blurRadius: 16, offset: const Offset(0, 6)),
+        ],
+      ),
+      child: body,
     );
   }
 
@@ -1325,6 +1463,40 @@ class _PoiDetailsSheetState extends State<_PoiDetailsSheet> {
         }
       });
     }
+  }
+
+  /// "Go here": leads the user to this place with a simple route, distance and arrow.
+  Widget _navigateButton() {
+    final c = widget.controller;
+    final leading = c.navTarget?.id == widget.poi.id;
+    return SizedBox(
+      width: double.infinity,
+      child: leading
+          ? OutlinedButton.icon(
+              onPressed: () {
+                c.stopNavigation();
+                Navigator.of(context).pop();
+              },
+              icon: const Icon(Icons.close_rounded, size: 20),
+              label: Text(L.t('Скасувати навігацію', 'Stop navigation')),
+            )
+          : ElevatedButton.icon(
+              onPressed: () async {
+                final messenger = ScaffoldMessenger.of(context);
+                final nav = Navigator.of(context);
+                final started = await c.startNavigation(widget.poi);
+                if (started) {
+                  nav.pop();
+                } else {
+                  messenger.showSnackBar(SnackBar(
+                      content: Text(L.t('Ще визначаємо, де ви. Спробуйте за кілька секунд.',
+                          'Still finding where you are. Try again in a few seconds.'))));
+                }
+              },
+              icon: const Icon(Icons.directions_walk, size: 20),
+              label: Text(L.t('Піти сюди', 'Go here')),
+            ),
+    );
   }
 
   @override
@@ -1474,6 +1646,8 @@ class _PoiDetailsSheetState extends State<_PoiDetailsSheet> {
                             ],
                           ),
                         ),
+                        const SizedBox(height: 12),
+                        _navigateButton(),
                         const SizedBox(height: 14),
 
                         // Queue / Processing Banner

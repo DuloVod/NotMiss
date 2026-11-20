@@ -35,6 +35,7 @@ import '../services/chat_guard.dart';
 import '../services/now_playing_service.dart';
 import '../services/visited_store.dart';
 import '../services/live_activity_service.dart';
+import '../services/navigation_service.dart';
 import '../services/place_context_service.dart';
 import 'guide_status.dart';
 import 'poi_kind.dart';
@@ -64,6 +65,7 @@ class WalkController extends ChangeNotifier {
   final VisitedStore _visitedStore;
   final LiveActivityService _liveActivity;
   final SettingsStore _settings;
+  final NavigationService _navigation;
 
   /// Anonymous usage statistics (inactive without a key or when the user switched them off).
   final AnalyticsService analytics;
@@ -135,7 +137,9 @@ class WalkController extends ChangeNotifier {
     SettingsStore? settingsStore,
     ReportService? reportService,
     AnalyticsService? analytics,
+    NavigationService? navigation,
   })  : _settings = settingsStore ?? SettingsStore(),
+        _navigation = navigation ?? NavigationService(),
         analytics = analytics ?? AnalyticsService(),
         _reports = reportService ?? ReportService(),
         _liveActivity = liveActivity ?? LiveActivityService(),
@@ -1162,6 +1166,7 @@ class WalkController extends ChangeNotifier {
     }
     _processGen++;
     _manualPlayGen++;
+    _clearNavigation();
     _uiTimer?.cancel();
     _uiTimer = null;
     _osmRetryTimer?.cancel();
@@ -1236,8 +1241,167 @@ class WalkController extends ChangeNotifier {
     }
   }
 
+
+  // ── Simple navigation to a place the user picked ───────────────────────────────────────
+  /// Waiting times before another route is asked for (changed only by tests).
+  @visibleForTesting
+  static Duration navRerouteGap = const Duration(seconds: 20);
+  @visibleForTesting
+  static Duration navRetryGap = const Duration(seconds: 60);
+
+  Poi? _navTarget;
+  WalkRoute? _navRoute;
+  bool _navLoading = false;
+  int _navEpoch = 0;
+  DateTime _navRouteAt = DateTime.fromMillisecondsSinceEpoch(0);
+  GeoPoint? _navRouteFrom; // where the user stood when the route was asked for
+  double? _navRemaining;
+  double? _navBearing;
+  Poi? _navArrived;
+  DateTime? _navStartedAt;
+
+  /// The place the user is being led to (null: no navigation).
+  Poi? get navTarget => _navTarget;
+
+  /// The way to it (a straight line when no real route is known).
+  WalkRoute? get navRoute => _navRoute;
+
+  /// True while the walking route is being fetched.
+  bool get navLoading => _navLoading;
+
+  /// What is left to walk, metres (null until known).
+  double? get navRemainingMeters => _navRemaining;
+
+  /// Direction to head in, degrees clockwise from north (null until known).
+  double? get navBearing => _navBearing;
+
+  /// Walking time left, minutes.
+  int? get navMinutes => _navRemaining == null ? null : NavigationService.minutes(_navRemaining!);
+
+  /// The place the user has just reached (shown until dismissed).
+  Poi? get navArrived => _navArrived;
+
+  /// Starts leading the user to [poi]. False when the position is not known yet.
+  Future<bool> startNavigation(Poi poi) async {
+    final pos = _currentPosition;
+    if (pos == null) return false;
+    final epoch = ++_navEpoch;
+    _navTarget = poi;
+    _navArrived = null;
+    _navStartedAt = DateTime.now();
+    _navRoute = WalkRoute.direct(GeoPoint(pos.latitude, pos.longitude), GeoPoint(poi.latitude, poi.longitude));
+    _navLoading = true;
+    _updateNavigation(pos);
+    trackUi('nav_started', poi, {
+      'distance_m': (_navRemaining ?? 0).round(),
+    });
+    notifyListeners();
+    await _fetchNavRoute(epoch, pos);
+    return true;
+  }
+
+  Future<void> _fetchNavRoute(int epoch, Position from) async {
+    final target = _navTarget;
+    if (target == null) return;
+    _navRouteAt = DateTime.now();
+    _navRouteFrom = GeoPoint(from.latitude, from.longitude);
+    _navLoading = true;
+    WalkRoute? route;
+    try {
+      route = await _navigation.fetchRoute(
+          GeoPoint(from.latitude, from.longitude), GeoPoint(target.latitude, target.longitude));
+    } catch (_) {}
+    if (_disposed || epoch != _navEpoch) return; // stopped or changed while waiting
+    _navLoading = false;
+    if (route != null) {
+      _navRoute = route;
+      if (_currentPosition != null) _updateNavigation(_currentPosition!);
+    }
+    notifyListeners();
+  }
+
+  /// Stops leading the user (they cancelled, or the walk ended).
+  void stopNavigation() {
+    final target = _navTarget;
+    if (target == null && _navArrived == null) return;
+    if (target != null) {
+      trackUi('nav_stopped', target, {
+        'seconds': _navStartedAt == null ? 0 : DateTime.now().difference(_navStartedAt!).inSeconds,
+        'left_m': (_navRemaining ?? 0).round(),
+      });
+    }
+    _clearNavigation();
+    notifyListeners();
+  }
+
+  /// Hides the "you have arrived" card.
+  void dismissNavArrival() {
+    if (_navArrived == null) return;
+    _navArrived = null;
+    notifyListeners();
+  }
+
+  void _clearNavigation() {
+    _navEpoch++;
+    _navTarget = null;
+    _navRoute = null;
+    _navLoading = false;
+    _navRemaining = null;
+    _navBearing = null;
+    _navArrived = null;
+    _navStartedAt = null;
+  }
+
+  /// Keeps distance, direction and the line fresh as the user moves; notices arrival.
+  void _updateNavigation(Position pos) {
+    final target = _navTarget;
+    if (target == null) return;
+    final user = GeoPoint(pos.latitude, pos.longitude);
+    final goal = GeoPoint(target.latitude, target.longitude);
+    final direct = NavigationService.distance(user, goal);
+
+    if (direct <= NavigationService.arrivalRadius) {
+      unawaited(HapticFeedback.mediumImpact());
+      trackUi('nav_arrived', target, {
+        'seconds': _navStartedAt == null ? 0 : DateTime.now().difference(_navStartedAt!).inSeconds,
+      });
+      _clearNavigation();
+      _navArrived = target;
+      return;
+    }
+
+    var route = _navRoute;
+    if (route == null || route.straight) {
+      // No real way known: a straight line from where the user is now.
+      route = WalkRoute.direct(user, goal);
+      _navRoute = route;
+      _navRemaining = direct;
+      _navBearing = NavigationService.bearing(user, goal);
+      // Try again for a real route now and then (the connection may have come back).
+      if (!_navLoading && DateTime.now().difference(_navRouteAt) >= navRetryGap) {
+        unawaited(_fetchNavRoute(_navEpoch, pos));
+      }
+      return;
+    }
+
+    final progress = NavigationService.progress(route, user);
+    _navRemaining = progress.remaining;
+    _navBearing = NavigationService.bearing(user, progress.next);
+    // A new route only when the user has really left the path *and* moved since the last
+    // request: a path that starts a little way from where the user stands (a park, a yard)
+    // must not make the app ask again and again.
+    final from = _navRouteFrom;
+    if (progress.offRoute > NavigationService.offRouteDistance &&
+        !_navLoading &&
+        (from == null || NavigationService.distance(user, from) > 40) &&
+        DateTime.now().difference(_navRouteAt) >= navRerouteGap) {
+      unawaited(_fetchNavRoute(_navEpoch, pos)); // left the path: ask for a new one
+    }
+  }
+
   Future<void> _onPosition(Position pos) async {
     _currentPosition = pos;
+    _updateNavigation(pos);
     unawaited(_refreshPlaceContext(pos));
     _refreshLiveActivity();
     // The lock-screen card shows the nearest next place: keep it fresh while narrating.

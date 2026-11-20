@@ -13,6 +13,7 @@
 * Застосунок використовує GPS вашого пристрою лише під час прогулянки, щоб показувати вас на мапі, знаходити найближчі визначні місця й вчасно запускати розповідь.
 * **Ми не зберігаємо історію ваших переміщень і не пов'язуємо її з вами.** Точні координати не потрапляють у нашу статистику (розділ 3).
 * Щоб знайти місця поруч, застосунок надсилає координати вашого району до відкритих картографічних сервісів (OpenStreetMap: Overpass і Nominatim, Вікіпедія, Вікідані). Ці сервіси діють за власними політиками конфіденційності.
+* Якщо ви натиснули «Піти сюди», застосунок один раз надсилає координати вашого місця та обраної точки до відкритого сервісу маршрутів OpenStreetMap (routing.openstreetmap.de), щоб показати піший шлях. Нічого іншого й жодного ідентифікатора не надсилається; без відповіді застосунок показує пряму лінію. Під час ходьби за маршрутом застосунок може запитати новий маршрут, якщо ви зійшли зі шляху.
 
 #### Персональні дані
 * NotMiss **не вимагає реєстрації, акаунта чи особистих даних** (ім'я, телефон, email, пароль тощо).
@@ -73,6 +74,8 @@
 ### 1. Data we process
 
 **Location.** The app uses your device's GPS only during a walk, to show you on the map, find nearby places and start the story at the right moment. We do not store your movement history or link it to you. Exact coordinates are never part of our usage statistics (section 3). To find places nearby, the app sends the coordinates of your area to open map services (OpenStreetMap: Overpass and Nominatim, Wikipedia, Wikidata), which follow their own privacy policies.
+
+If you tap "Go here", the app sends the coordinates of your position and of the chosen place to the open OpenStreetMap routing service (routing.openstreetmap.de) to draw a walking route. Nothing else and no identifier is sent; with no answer the app shows a straight line. While you follow a route the app may ask for a new one if you leave the path.
 
 **Personal data.** NotMiss needs no registration, account or personal details. We do not collect your name, email, phone number, contacts, photos or advertising identifier (IDFA).
 
