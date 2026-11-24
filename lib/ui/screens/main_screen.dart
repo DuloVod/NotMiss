@@ -7,11 +7,25 @@ import '../../models/poi.dart';
 import '../../models/enriched_poi.dart';
 import '../../models/chat_message.dart';
 import '../../services/poi_category_service.dart';
+import '../../l10n/app_lang.dart';
+import '../../l10n/place_name.dart';
+import '../../services/report_service.dart';
+import '../../services/visited_store.dart';
+import '../../services/place_photo_service.dart';
 import '../walk_controller.dart';
+import '../spoken_text.dart';
+import '../guide_status.dart';
+import '../../services/text_quality.dart';
+import '../poi_kind.dart';
 import '../theme/app_theme.dart';
+import '../theme/nm_widgets.dart';
 import 'package:geolocator/geolocator.dart'; // For Position
 
-/// Main unified screen that immediately starts the walk and shows the HUD.
+/// The app's one screen.
+///
+/// Not walking: the start screen (first open) or the "walk finished" summary.
+/// Walking: the map with a card at the bottom that follows the guide —
+/// looking for places, preparing a story, playing it (or a mini-player when collapsed).
 class MainScreen extends StatefulWidget {
   final WalkController controller;
 
@@ -26,17 +40,20 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
   LatLng? _lastPos;
   bool _followUser = true; // auto-follow; turns off if user pans manually
 
+  /// The playing card is folded into a mini-player (map + one row).
+  bool _collapsed = false;
+
+  /// Which place the bottom card shows; a new place always opens unfolded.
+  String? _cardPoiId;
+
+  WalkController get _c => widget.controller;
+
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     widget.controller.addListener(_update);
-    // Start walk automatically on first load only (not after user stopped)
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (widget.controller.status == WalkStatus.idle) {
-        widget.controller.startWalk();
-      }
-    });
+    // The walk is not started here: the start screen asks first («Почати прогулянку»).
   }
 
   @override
@@ -49,8 +66,12 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    // When returning from iOS/Android Settings, auto-start if permission was granted
-    if (state == AppLifecycleState.resumed && widget.controller.status != WalkStatus.walking) {
+    widget.controller.setAppLifecycle(state);
+    // Back from the phone's Settings after the location was refused: try again.
+    // A finished walk is not restarted by itself — the user starts a new one.
+    if (state == AppLifecycleState.resumed &&
+        widget.controller.status == WalkStatus.idle &&
+        widget.controller.guideStatus != null) {
       widget.controller.startWalk();
     }
   }
@@ -58,7 +79,9 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
   void _update() {
     if (!mounted) return;
     final pos = widget.controller.currentPosition;
-    if (pos != null && _followUser) {
+    if (pos != null &&
+        _followUser &&
+        widget.controller.status == WalkStatus.walking) {
       final newLatLng = LatLng(pos.latitude, pos.longitude);
       if (_lastPos == null ||
           Geolocator.distanceBetween(
@@ -73,7 +96,11 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
         try {
           zoom = _mapController.camera.zoom;
         } catch (_) {}
-        _mapController.move(newLatLng, zoom);
+        try {
+          _mapController.move(newLatLng, zoom);
+        } catch (_) {
+          // The map is not laid out yet; the next position fix moves it.
+        }
       }
     }
     setState(() {});
@@ -83,30 +110,53 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
     final pos = widget.controller.currentPosition;
     if (pos != null) {
       _followUser = true;
-      _mapController.move(LatLng(pos.latitude, pos.longitude), 17);
+      // Centre on the user without touching the zoom the user has chosen.
+      double zoom = 17;
+      try {
+        zoom = _mapController.camera.zoom;
+      } catch (_) {}
+      try {
+        _mapController.move(LatLng(pos.latitude, pos.longitude), zoom);
+      } catch (_) {}
     }
     setState(() {});
   }
 
+  // ── Layout ────────────────────────────────────────────────────────────────────
+
   @override
   Widget build(BuildContext context) {
-    final pos = widget.controller.currentPosition;
-    final activePoi = widget.controller.activePoi;
-    final allPois = widget.controller.allPois;
+    final pos = _c.currentPosition;
+    final activePoi = _c.activePoi;
+    final allPois = _c.allPois;
+    final visitedIds = _c.visitedPoiIds;
+    final listenedIds = _c.listenedPoiIds;
+    final silentIds = _c.silentPoiIds;
+    final walking = _c.status == WalkStatus.walking;
+
+    if (activePoi?.id != _cardPoiId) {
+      _cardPoiId = activePoi?.id;
+      _collapsed = false;
+    }
+
+    final guideStatus = _c.guideStatus;
+    final topInset = MediaQuery.of(context).padding.top;
+    final route = _c.navTarget == null ? null : _c.navRoute;
+    final navActive = _c.navTarget != null || _c.navArrived != null;
 
     return Scaffold(
       backgroundColor: NmColors.background,
       body: Stack(
         children: [
-          // ── Map ────────────────────────────────────────────────────────────
+          // ── Map (the real OpenStreetMap; only what sits on top is restyled) ──────
           FlutterMap(
             mapController: _mapController,
             options: MapOptions(
               initialCenter: pos != null
                   ? LatLng(pos.latitude, pos.longitude)
-                  : LatLng(widget.controller.destination.centerLatitude,
-                      widget.controller.destination.centerLongitude),
-              initialZoom: widget.controller.destination.defaultZoom,
+                  : LatLng(_c.destination.centerLatitude,
+                      _c.destination.centerLongitude),
+              initialZoom: _c.destination.defaultZoom,
               onPositionChanged: (pos, hasGesture) {
                 if (hasGesture && _followUser) {
                   setState(() => _followUser = false);
@@ -119,13 +169,30 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
                 userAgentPackageName: 'com.dulo.notmiss',
                 tileProvider: NetworkTileProvider(),
               ),
+              // The way to the place the user chose with «Піти сюди».
+              if (route != null)
+                PolylineLayer(
+                  polylines: [
+                    Polyline(
+                      points: [for (final g in route.points) LatLng(g.lat, g.lng)],
+                      strokeWidth: 5,
+                      color: NmColors.userDot,
+                      borderStrokeWidth: 2,
+                      borderColor: Colors.white,
+                      pattern: route.straight
+                          ? StrokePattern.dashed(segments: const [10, 8])
+                          : const StrokePattern.solid(),
+                    ),
+                  ],
+                ),
               MarkerLayer(
                 markers: [
                   ...allPois.map((p) => _buildPoiMarker(
                         p,
                         isActive: p.id == activePoi?.id,
-                        isTriggered:
-                            widget.controller.triggeredPoiIds.contains(p.id),
+                        isTriggered: visitedIds.contains(p.id),
+                        isListened: listenedIds.contains(p.id),
+                        isSilent: silentIds.contains(p.id),
                       )),
                   if (pos != null) _buildUserMarker(pos),
                 ],
@@ -133,161 +200,137 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
             ],
           ),
 
-          // ── Status/Error Message Banner (idle/warning only) ─────
-          if (widget.controller.statusMessage != null && widget.controller.status == WalkStatus.idle)
+          if (walking) ...[
+            // Soft cream fade under the top bar so it reads over any map.
             Positioned(
-              top: MediaQuery.of(context).padding.top + 16,
+              top: 0,
+              left: 0,
+              right: 0,
+              height: topInset + 70,
+              child: IgnorePointer(
+                child: DecoratedBox(
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      begin: Alignment.topCenter,
+                      end: Alignment.bottomCenter,
+                      colors: [
+                        NmColors.background.withValues(alpha: 0.95),
+                        NmColors.background.withValues(alpha: 0.8),
+                        NmColors.background.withValues(alpha: 0),
+                      ],
+                      stops: const [0, 0.4, 1],
+                    ),
+                  ),
+                ),
+              ),
+            ),
+
+            // ── Top bar: "walk in progress" + language + my places ─────────────────
+            Positioned(
+              top: topInset + 12,
               left: 16,
               right: 16,
-              child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-                decoration: BoxDecoration(
-                  color: NmColors.cream,
-                  borderRadius: BorderRadius.circular(16),
-                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.black.withValues(alpha: 0.08),
-                      blurRadius: 10,
-                      offset: const Offset(0, 4),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Row(
+                    children: [
+                      Flexible(child: _walkPill()),
+                      const SizedBox(width: 10),
+                      const Spacer(),
+                      _languageButton(),
+                      const SizedBox(width: 10),
+                      _myPlacesButton(),
+                    ],
+                  ),
+                  // Where to, how far, which way («Піти сюди»).
+                  if (navActive) ...[
+                    const SizedBox(height: 10),
+                    _buildNavCard(),
+                  ],
+                  // Something the user can act on (no connection, voice failed…).
+                  if (guideStatus != null &&
+                      guideStatus.tone == GuideTone.attention) ...[
+                    const SizedBox(height: 10),
+                    Align(
+                      alignment: Alignment.topCenter,
+                      child: _buildStatusPill(guideStatus),
                     ),
                   ],
-                ),
-                child: Row(
+                ],
+              ),
+            ),
+
+            // ── Map buttons above the card + the card itself ───────────────────────
+            Positioned(
+              bottom: 0,
+              left: 0,
+              right: 0,
+              child: SafeArea(
+                top: false,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    Icon(Icons.location_off_outlined, color: NmColors.ink, size: 26),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: Text(
-                        widget.controller.statusMessage!,
-                        style: TextStyle(
-                          color: NmColors.ink,
-                          fontSize: 14,
-                          fontWeight: FontWeight.w600,
-                        ),
+                    Padding(
+                      padding: const EdgeInsets.only(right: 16, bottom: 12),
+                      child: Align(
+                        alignment: Alignment.centerRight,
+                        child: _mapButtons(),
+                      ),
+                    ),
+                    ConstrainedBox(
+                      constraints: BoxConstraints(
+                        maxHeight: MediaQuery.of(context).size.height * 0.74,
+                      ),
+                      child: AnimatedSize(
+                        duration: const Duration(milliseconds: 220),
+                        curve: Curves.easeOutCubic,
+                        alignment: Alignment.bottomCenter,
+                        child: _bottomCard(),
                       ),
                     ),
                   ],
                 ),
               ),
             ),
+          ] else
+            // ── Start screen / "walk finished" (covers the map) ─────────────────────
+            Positioned.fill(
+              child: _c.status == WalkStatus.stopped
+                  ? _walkFinishedView()
+                  : _startView(),
+            ),
+        ],
+      ),
+    );
+  }
 
-          // ── Map Controls & Walk HUD bottom panel ────────────────────────
-          Positioned(
-            bottom: 0,
-            left: 0,
-            right: 0,
-            child: SafeArea(
-              top: false,
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  // Floating controls anchored directly above the card
-                  Padding(
-                    padding: const EdgeInsets.only(right: 16, bottom: 12),
-                    child: Align(
-                      alignment: Alignment.centerRight,
-                      child: Column(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          // Compass reset & orientation indicator (always accessible)
-                          StreamBuilder<MapEvent>(
-                            stream: _mapController.mapEventStream,
-                            builder: (ctx, snap) {
-                              double rotation = 0.0;
-                              try {
-                                rotation = _mapController.camera.rotation;
-                              } catch (_) {}
-                              final isRotated = rotation.abs() > 0.5;
-                              return Padding(
-                                padding: const EdgeInsets.only(bottom: 12.0),
-                                child: SizedBox(
-                                  width: 48,
-                                  height: 48,
-                                  child: FloatingActionButton(
-                                    heroTag: 'walkResetNorth',
-                                    backgroundColor: Colors.white,
-                                    elevation: 4,
-                                    tooltip: 'Орієнтувати на північ',
-                                    onPressed: () => _mapController.rotate(0.0),
-                                    child: Transform.rotate(
-                                      angle: -rotation * (3.141592653589793 / 180),
-                                      child: Stack(
-                                        alignment: Alignment.center,
-                                        children: [
-                                          Icon(
-                                            Icons.navigation,
-                                            color: isRotated ? NmColors.compassRed : NmColors.muted,
-                                            size: 24,
-                                          ),
-                                          Positioned(
-                                            top: 2,
-                                            child: Text(
-                                              'N',
-                                              style: TextStyle(
-                                                fontSize: 9,
-                                                fontWeight: FontWeight.w600,
-                                                color: isRotated ? NmColors.compassRed : NmColors.muted,
-                                              ),
-                                            ),
-                                          ),
-                                        ],
-                                      ),
-                                    ),
-                                  ),
-                                ),
-                              );
-                            },
-                          ),
-                          // Locate User Button
-                          SizedBox(
-                            width: 48,
-                            height: 48,
-                            child: FloatingActionButton(
-                              heroTag: 'walkLocateMe',
-                              backgroundColor: Colors.white,
-                              elevation: 4,
-                              tooltip: 'Моє розташування',
-                              onPressed: _locateMe,
-                              child: Icon(
-                                pos != null && _followUser
-                                    ? Icons.my_location
-                                    : Icons.location_searching,
-                                color: _followUser ? NmColors.userDot : NmColors.muted,
-                                size: 26,
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
+  // ── Top bar pieces ────────────────────────────────────────────────────────────
 
-                  // Bottom card
-                  Container(
-                    margin: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-                    decoration: BoxDecoration(
-                      color: Colors.white,
-                      borderRadius: BorderRadius.circular(24),
-                      boxShadow: [
-                        BoxShadow(
-                          color: Colors.black.withValues(alpha: 0.15),
-                          blurRadius: 20,
-                          offset: const Offset(0, 8),
-                        ),
-                      ],
-                    ),
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        if (activePoi != null)
-                          _buildActivePoiCard(activePoi)
-                        else
-                          _buildIdleCard(),
-                      ],
-                    ),
-                  ),
-                ],
+  Widget _walkPill() {
+    return Container(
+      height: 44,
+      padding: const EdgeInsets.fromLTRB(14, 0, 18, 0),
+      decoration: BoxDecoration(
+        color: NmColors.surface,
+        borderRadius: BorderRadius.circular(999),
+        boxShadow: nmShadow,
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const NmPulse(size: 10),
+          const SizedBox(width: 10),
+          Flexible(
+            child: Text(
+              L.t('Прогулянка триває', 'Walk in progress'),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                fontSize: 13,
+                fontWeight: FontWeight.w700,
+                color: NmColors.ink,
               ),
             ),
           ),
@@ -296,520 +339,1471 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
     );
   }
 
-  Widget _buildActivePoiCard(Poi poi) {
-    final isPlaying = widget.controller.isPlaying;
-    final isPaused = widget.controller.isAudioPaused;
-    final isAudioActive = isPlaying || isPaused;
-    final displayText = (poi.narrationText.isNotEmpty)
-        ? poi.narrationText
-        : poi.shortDescription;
+  /// Language (the interface, the stories, the AI and the voice follow it).
+  Widget _languageButton() {
+    return NmCircleButton(
+      tooltip: L.t('Мова', 'Language'),
+      onPressed: () => _showLanguageSheet(context, _c),
+      child: Text(
+        L.lang.code.toUpperCase(),
+        style: const TextStyle(
+          fontSize: 13,
+          fontWeight: FontWeight.w800,
+          color: NmColors.ink,
+        ),
+      ),
+    );
+  }
 
-    return Padding(
-      padding: const EdgeInsets.all(24),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Row(
-            children: [
-              Container(
-                width: 56,
-                height: 56,
+  /// Places already visited (always reachable, also while a place card is open).
+  Widget _myPlacesButton() {
+    final count = _c.visitedPlaces.length;
+    return Stack(
+      clipBehavior: Clip.none,
+      children: [
+        NmCircleButton(
+          tooltip: L.t('Мої місця', 'My places'),
+          onPressed: () => _showVisitedSheet(context),
+          child: const NmIcon(NmIcons.places, size: 22),
+        ),
+        if (count > 0)
+          Positioned(
+            right: -4,
+            top: -4,
+            child: IgnorePointer(
+              child: Container(
+                constraints: const BoxConstraints(minWidth: 20),
+                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                 decoration: BoxDecoration(
+                  color: NmColors.ink,
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(color: Colors.white, width: 1.5),
+                ),
+                child: Text(
+                  '$count',
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 11,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ),
+            ),
+          ),
+      ],
+    );
+  }
+
+  /// Compass (turns the map north-up) and "show where I am".
+  Widget _mapButtons() {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        StreamBuilder<MapEvent>(
+          stream: _mapController.mapEventStream,
+          builder: (ctx, snap) {
+            double rotation = 0.0;
+            try {
+              rotation = _mapController.camera.rotation;
+            } catch (_) {}
+            return NmCircleButton(
+              size: 48,
+              tooltip: L.t('Повернути мапу північчю вгору', 'Turn the map north up'),
+              onPressed: () {
+                try {
+                  _mapController.rotate(0.0);
+                } catch (_) {}
+              },
+              child: NmCompass(mapRotation: rotation),
+            );
+          },
+        ),
+        const SizedBox(height: 12),
+        NmCircleButton(
+          size: 48,
+          tooltip: L.t('Показати, де я', 'Show where I am'),
+          onPressed: _locateMe,
+          child: NmIcon(
+            NmIcons.locate,
+            size: 22,
+            color: _followUser ? NmColors.ink : NmColors.muted,
+          ),
+        ),
+      ],
+    );
+  }
+
+  // ── Bottom card ───────────────────────────────────────────────────────────────
+
+  Widget _bottomCard() {
+    final poi = _c.activePoi;
+    final audio = _c.isAudioActive;
+
+    if (poi != null && audio && _collapsed) return _miniPlayer(poi);
+
+    final Widget content;
+    if (poi == null) {
+      content = audio ? _guideSpeakingContent() : _searchingContent();
+    } else if (_c.isProcessing && !audio) {
+      content = _preparingContent(poi);
+    } else if (_c.isSilentPoi(poi.id) && !audio) {
+      content = _silentContent(poi);
+    } else {
+      content = _placeContent(poi);
+    }
+
+    return Container(
+      key: const ValueKey('nm-card'),
+      margin: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+      decoration: BoxDecoration(
+        color: NmColors.surface,
+        borderRadius: BorderRadius.circular(32),
+        boxShadow: nmShadow,
+      ),
+      child: SingleChildScrollView(
+        padding: const EdgeInsets.all(24),
+        child: content,
+      ),
+    );
+  }
+
+  /// Screen 2 — walking, nothing nearby yet.
+  Widget _searchingContent() {
+    final status = _c.guideStatus;
+    final busyLine =
+        (status != null && status.tone == GuideTone.busy) ? status.text : null;
+
+    // The nearest place the user has not been to yet.
+    String? nearestLine;
+    final pos = _c.currentPosition;
+    if (pos != null && _c.allPois.isNotEmpty) {
+      Poi? nearest;
+      double? best;
+      for (final p in _c.allPois) {
+        if (_c.visitedPoiIds.contains(p.id)) continue;
+        final d = Geolocator.distanceBetween(
+            pos.latitude, pos.longitude, p.latitude, p.longitude);
+        if (best == null || d < best) {
+          best = d;
+          nearest = p;
+        }
+      }
+      if (nearest != null && best != null) {
+        nearestLine = L.t(
+            'Найближче: ${nearest.shownName} · ${L.distance(best)}',
+            'Nearest: ${nearest.shownName} · ${L.distance(best)}');
+      }
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Row(
+          children: [
+            NmPulse(
+              size: 52,
+              child: Container(
+                width: 52,
+                height: 52,
+                decoration: const BoxDecoration(
                   color: NmColors.cream,
                   shape: BoxShape.circle,
                 ),
-                child: Icon(
-                  isAudioActive
-                      ? (isPaused ? Icons.pause_circle_outline : Icons.volume_up)
-                      : Icons.headphones,
-                  color: NmColors.ink,
-                  size: 32,
-                ),
-              ),
-              const SizedBox(width: 16),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      poi.name,
-                      style: NmText.title(22),
-                    ),
-                    if (widget.controller.statusMessage != null && widget.controller.statusMessage!.isNotEmpty) ...[
-                      const SizedBox(height: 6),
-                      Text(
-                        widget.controller.statusMessage!,
-                        style: TextStyle(
-                          fontSize: 16,
-                          color: NmColors.ink,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                    ],
-                    if (widget.controller.backgroundActivity.isNotEmpty) ...[
-                      const SizedBox(height: 4),
-                      Row(
-                        children: [
-                          const SizedBox(
-                            width: 12,
-                            height: 12,
-                            child: CircularProgressIndicator(strokeWidth: 2),
-                          ),
-                          const SizedBox(width: 8),
-                          Expanded(
-                            child: Text(
-                              widget.controller.backgroundActivity,
-                              style: TextStyle(
-                                fontSize: 13,
-                                color: NmColors.muted,
-                                fontStyle: FontStyle.italic,
-                              ),
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ],
-                  ],
-                ),
-              ),
-            ],
-          ),
-          // Narration or Description Card (with quick open to full sheet)
-          if (displayText.isNotEmpty) ...[
-            const SizedBox(height: 14),
-            InkWell(
-              onTap: () => _showPoiDetails(context, poi),
-              borderRadius: BorderRadius.circular(14),
-              child: Container(
-                padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  color: NmColors.cream,
-                  borderRadius: BorderRadius.circular(14),
-                ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      children: [
-                        Icon(
-                          poi.narrationText.isNotEmpty ? Icons.auto_awesome : Icons.info_outline,
-                          size: 16,
-                          color: NmColors.ink,
-                        ),
-                        const SizedBox(width: 6),
-                        Text(
-                          poi.narrationText.isNotEmpty ? 'Текст розповіді гіда:' : 'Про об\'єкт:',
-                          style: const TextStyle(
-                            fontSize: 13,
-                            fontWeight: FontWeight.w600,
-                            color: NmColors.ink,
-                          ),
-                        ),
-                        const Spacer(),
-                        const Text(
-                          'Читати все ↗',
-                          style: TextStyle(
-                            fontSize: 12,
-                            fontWeight: FontWeight.w600,
-                            color: NmColors.ink,
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 6),
-                    Text(
-                      displayText,
-                      style: const TextStyle(
-                        fontSize: 14,
-                        color: NmColors.ink,
-                        height: 1.4,
-                      ),
-                      maxLines: 4,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                  ],
-                ),
+                child: const Center(child: NmIcon(NmIcons.walk, size: 26)),
               ),
             ),
-          ],
-          const SizedBox(height: 20),
-          // Audio Playback Controls (Pause / Resume / Stop / Play)
-          if (isAudioActive) ...[
-            Row(
-              children: [
-                Expanded(
-                  child: ElevatedButton.icon(
-                    onPressed: () {
-                      if (isPlaying) {
-                        widget.controller.pauseAudio();
-                      } else {
-                        widget.controller.resumeAudio();
-                      }
-                    },
-                    icon: Icon(
-                      isPlaying ? Icons.pause_circle_filled_rounded : Icons.play_circle_filled_rounded,
-                      size: 22,
-                    ),
-                    label: Text(
-                      isPlaying ? 'Пауза' : 'Продовжити',
-                      style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
-                    ),
-                    style: NmButtons.secondary(),
-                  ),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: ElevatedButton.icon(
-                    onPressed: () => widget.controller.stopAudio(),
-                    icon: const Icon(Icons.stop_circle_outlined, size: 22),
-                    label: const Text(
-                      'Зупинити',
-                      style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
-                    ),
-                    style: NmButtons.destructive(),
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 10),
-            OutlinedButton.icon(
-              onPressed: () => _showAiChatSheet(context, poi),
-              icon: const Icon(Icons.auto_awesome, size: 20),
-              label: const Text(
-                'Запитати ШІ про це місце',
-                style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+            const SizedBox(width: 16),
+            Expanded(
+              child: Text(
+                L.t('Шукаємо цікаві місця поруч',
+                    'Looking for interesting places nearby'),
+                style: NmText.title(22),
               ),
-              style: NmButtons.primary(),
             ),
-          ] else ...[
-            if (widget.controller.isProcessing && widget.controller.activePoi?.id == poi.id) ...[
-              ElevatedButton.icon(
-                onPressed: null,
-                icon: const SizedBox(
-                  width: 18,
-                  height: 18,
-                  child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
-                ),
-                label: const Text(
-                  'Готуємо розповідь…',
-                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
-                ),
-                style: NmButtons.primary(),
-              ),
-            ] else ...[
-              ElevatedButton.icon(
-                onPressed: () {
-                  widget.controller.playNarrationForPoi(poi);
-                },
-                icon: const Icon(Icons.volume_up_rounded, size: 22),
-                label: const Text(
-                  'Прослухати розповідь',
-                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
-                ),
-                style: NmButtons.primary(),
-              ),
-            ],
-            const SizedBox(height: 10),
-            OutlinedButton.icon(
-              onPressed: () => _showAiChatSheet(context, poi),
-              icon: const Icon(Icons.auto_awesome, size: 20),
-              label: const Text(
-                'Запитати ШІ про це місце',
-                style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
-              ),
-              style: NmButtons.secondary(),
-            ),
-          ],
-        ],
-      ),
-    );
-  }
-
-  Widget _buildIdleCard() {
-    final isPlaying = widget.controller.isPlaying;
-    final isPaused = widget.controller.isAudioPaused;
-    final isAudioActive = isPlaying || isPaused;
-    final isWalking = widget.controller.status == WalkStatus.walking;
-
-    if (!isWalking) {
-      final isStopped = widget.controller.status == WalkStatus.stopped;
-      return Padding(
-        padding: const EdgeInsets.all(24),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Row(
-              children: [
-                Container(
-                  width: 56,
-                  height: 56,
-                  decoration: BoxDecoration(
-                    color: NmColors.cream,
-                    shape: BoxShape.circle,
-                  ),
-                  child: Icon(
-                    isStopped ? Icons.flag_outlined : Icons.location_on_outlined,
-                    color: NmColors.ink,
-                    size: 30,
-                  ),
-                ),
-                const SizedBox(width: 16),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        isStopped ? 'Прогулянку завершено' : 'Потрібна геолокація',
-                        style: NmText.title(20),
-                      ),
-                      const SizedBox(height: 4),
-                      Text(
-                        widget.controller.statusMessage ??
-                            (isStopped
-                                ? 'Ви завжди можете розпочати новий маршрут!'
-                                : 'Для роботи аудіогіда надайте доступ до геопозиції.'),
-                        style: const TextStyle(
-                          fontSize: 14,
-                          color: NmColors.muted,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 18),
-            Row(
-              children: [
-                Expanded(
-                  child: ElevatedButton.icon(
-                    onPressed: () => widget.controller.startWalk(),
-                    icon: const Icon(Icons.play_arrow_rounded, size: 22),
-                    label: Text(
-                      isStopped ? 'Почати нову прогулянку' : 'Почати прогулянку',
-                      style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
-                    ),
-                    style: NmButtons.primary(),
-                  ),
-                ),
-                if (!isStopped) ...[
-                  const SizedBox(width: 10),
-                  OutlinedButton(
-                    onPressed: () => Geolocator.openAppSettings(),
-                    style: NmButtons.secondary(),
-                    child: const Icon(Icons.settings_outlined, size: 22),
-                  ),
-                ],
-              ],
+            IconButton(
+              tooltip: L.t('Оновити об\'єкти на карті', 'Refresh places on the map'),
+              icon: const NmIcon(NmIcons.refresh, size: 20, color: NmColors.muted),
+              onPressed: () => _c.reloadOsmPois(),
             ),
           ],
         ),
-      );
-    }
-
-    // Walking mode
-    final visitedPois = widget.controller.allPois
-        .where((p) =>
-            widget.controller.triggeredPoiIds.contains(p.id) &&
-            p.id != widget.controller.activePoi?.id)
-        .toList();
-
-    Poi? nearestPoi;
-    double? nearestDist;
-    final pos = widget.controller.currentPosition;
-    if (pos != null) {
-      for (final p in widget.controller.allPois) {
-        if (!widget.controller.triggeredPoiIds.contains(p.id)) {
-          final d = Geolocator.distanceBetween(
-            pos.latitude, pos.longitude, p.latitude, p.longitude,
-          );
-          if (nearestDist == null || d < nearestDist) {
-            nearestDist = d;
-            nearestPoi = p;
-          }
-        }
-      }
-    }
-
-    String idleTitle = 'Шукаємо цікаві місця...';
-    String? idleSubtitle = widget.controller.statusMessage;
-
-    if (!isAudioActive) {
-      if (widget.controller.allPois.isEmpty) {
-        idleTitle = 'Шукаємо цікаві місця...';
-        idleSubtitle = 'Завантажуємо пам\'ятки з карти поруч з вами…';
-      } else if (nearestPoi != null && nearestDist != null) {
-        idleTitle = 'Гід на зв\'язку';
-        idleSubtitle = 'Найближче: ${nearestPoi.name} (~${nearestDist.round()} м)';
-      } else {
-        idleTitle = 'Гід на зв\'язку';
-        idleSubtitle = 'Пам\'яток поруч: ${widget.controller.allPois.length} (підійдіть ближче)';
-      }
-    }
-
-    return Padding(
-      padding: const EdgeInsets.all(24),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
+        const SizedBox(height: 20),
+        Text(
+          L.t(
+              'Гуляйте у своєму темпі. Щойно підійдете до цікавого місця — гід сам почне розповідь.',
+              'Walk at your own pace. As soon as you get close to an interesting place, the guide starts the story.'),
+          style: NmText.body.copyWith(color: NmColors.muted),
+        ),
+        if (busyLine != null) ...[
+          const SizedBox(height: 14),
           Row(
             children: [
-              Container(
-                width: 56,
-                height: 56,
-                decoration: BoxDecoration(
-                  color: NmColors.cream,
-                  shape: BoxShape.circle,
-                ),
-                child: Icon(
-                  isAudioActive
-                      ? (isPaused ? Icons.pause_circle_outline : Icons.volume_up)
-                      : Icons.directions_walk,
-                  color: NmColors.ink,
-                  size: 32,
+              const SizedBox(
+                width: 14,
+                height: 14,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              ),
+              const SizedBox(width: 10),
+              Expanded(child: Text(busyLine, style: NmText.small)),
+            ],
+          ),
+        ] else if (nearestLine != null) ...[
+          const SizedBox(height: 14),
+          Row(
+            children: [
+              const NmIcon(NmIcons.pin, size: 16, color: NmColors.muted),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  nearestLine,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: NmText.small,
                 ),
               ),
-              const SizedBox(width: 16),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
+            ],
+          ),
+        ],
+        const SizedBox(height: 20),
+        _endWalkButton(),
+      ],
+    );
+  }
+
+  /// Screen 3 — near a place, the story is being prepared (three steps).
+  Widget _preparingContent(Poi poi) {
+    final kind = poiKindOf(poi);
+    final enriched = _c.getEnrichedPoi(poi.id);
+    final updated = _c.getUpdatedPoi(poi);
+    final hasStory = updated.narrationText.isNotEmpty ||
+        (enriched?.narrationText?.isNotEmpty ?? false);
+    final hasFacts = hasStory || (enriched?.isResearchComplete ?? false);
+    final step = !hasFacts ? 0 : (!hasStory ? 1 : 2);
+
+    final labels = <List<String>>[
+      // pending, in progress, done
+      [
+        L.t('Шукаємо факти про місце', 'Looking for facts about the place'),
+        L.t('Шукаємо факти про місце…', 'Looking for facts about the place…'),
+        L.t('Знайшли факти про місце', 'Found facts about the place'),
+      ],
+      [
+        L.t('ШІ пише розповідь', 'The AI writes the story'),
+        L.t('ШІ пише розповідь…', 'The AI is writing the story…'),
+        L.t('Розповідь готова', 'The story is ready'),
+      ],
+      [
+        L.t('Готуємо озвучення', 'Preparing the voice'),
+        L.t('Готуємо озвучення…', 'Preparing the voice…'),
+        L.t('Озвучення готове', 'The voice is ready'),
+      ],
+    ];
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Row(
+          children: [
+            Flexible(
+              child: Align(
+                alignment: Alignment.centerLeft,
+                child: NmBadge(
+                  L.t('Ви поруч із цікавим місцем',
+                      'You are near an interesting place'),
+                  icon: NmIcons.pin,
+                ),
+              ),
+            ),
+            _reportButton(context, _c, poi),
+          ],
+        ),
+        const SizedBox(height: 12),
+        Row(
+          children: [
+            _thumb(poi, kind, size: 64),
+            const SizedBox(width: 16),
+            Expanded(
+              child: Text(poi.shownName,
+                  maxLines: 3,
+                  overflow: TextOverflow.ellipsis,
+                  style: NmText.title(22)),
+            ),
+          ],
+        ),
+        const SizedBox(height: 20),
+        Semantics(
+          liveRegion: true,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              ExcludeSemantics(
+                child: Row(
                   children: [
-                    Text(
-                      isAudioActive
-                          ? (isPaused ? 'Озвучення на паузі' : 'Грає розповідь гіда')
-                          : idleTitle,
-                      style: NmText.title(20),
-                    ),
-                    if (idleSubtitle != null && idleSubtitle.isNotEmpty) ...[
-                      const SizedBox(height: 6),
-                      Text(
-                        idleSubtitle,
-                        style: TextStyle(
-                          fontSize: 15,
-                          color: isAudioActive ? NmColors.ink : NmColors.muted,
-                          fontWeight: isAudioActive ? FontWeight.w500 : FontWeight.normal,
-                        ),
-                      ),
-                    ],
-                    if (widget.controller.backgroundActivity.isNotEmpty) ...[
-                      const SizedBox(height: 4),
-                      Row(
-                        children: [
-                          const SizedBox(
-                            width: 12,
-                            height: 12,
-                            child: CircularProgressIndicator(strokeWidth: 2),
-                          ),
-                          const SizedBox(width: 8),
-                          Expanded(
-                            child: Text(
-                              widget.controller.backgroundActivity,
-                              style: TextStyle(
-                                fontSize: 13,
-                                color: NmColors.muted,
-                                fontStyle: FontStyle.italic,
-                              ),
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                          ),
-                        ],
-                      ),
+                    for (var i = 0; i < 3; i++) ...[
+                      if (i > 0) const SizedBox(width: 6),
+                      Expanded(child: _progressSegment(i < step ? 1 : (i == step ? 0.45 : 0))),
                     ],
                   ],
                 ),
               ),
-              if (!isAudioActive) ...[
-                IconButton(
-                  tooltip: 'Оновити об\'єкти на карті',
-                  icon: const Icon(Icons.refresh_rounded, color: NmColors.muted),
-                  onPressed: () => widget.controller.reloadOsmPois(),
+              const SizedBox(height: 14),
+              for (var i = 0; i < 3; i++) ...[
+                if (i > 0) const SizedBox(height: 10),
+                _stepRow(
+                  labels[i][i < step ? 2 : (i == step ? 1 : 0)],
+                  done: i < step,
+                  active: i == step,
                 ),
               ],
             ],
           ),
-          if (isAudioActive) ...[
-            const SizedBox(height: 16),
-            Row(
-              children: [
-                Expanded(
-                  child: ElevatedButton.icon(
-                    onPressed: () {
-                      if (isPlaying) {
-                        widget.controller.pauseAudio();
-                      } else {
-                        widget.controller.resumeAudio();
-                      }
-                    },
-                    icon: Icon(
-                      isPlaying ? Icons.pause_circle_filled_rounded : Icons.play_circle_filled_rounded,
-                      size: 20,
-                    ),
-                    label: Text(
-                      isPlaying ? 'Пауза' : 'Продовжити',
-                      style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
-                    ),
-                    style: NmButtons.secondary(),
-                  ),
-                ),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: ElevatedButton.icon(
-                    onPressed: () => widget.controller.stopAudio(),
-                    icon: const Icon(Icons.stop_circle_outlined, size: 20),
-                    label: const Text(
-                      'Зупинити',
-                      style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
-                    ),
-                    style: NmButtons.destructive(),
-                  ),
-                ),
-              ],
+        ),
+        const SizedBox(height: 20),
+        Text(
+          L.t(
+              'Це займе кілька секунд — розповідь почнеться сама. Телефон можна сховати в кишеню.',
+              'This takes a few seconds — the story starts by itself. You can put the phone in your pocket.'),
+          style: NmText.small.copyWith(height: 18 / 13),
+        ),
+        const SizedBox(height: 20),
+        _endWalkButton(),
+      ],
+    );
+  }
+
+  Widget _progressSegment(double filled) {
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(3),
+      child: SizedBox(
+        height: 6,
+        child: Stack(
+          children: [
+            const Positioned.fill(child: ColoredBox(color: NmColors.cream)),
+            FractionallySizedBox(
+              widthFactor: filled,
+              heightFactor: 1,
+              child: const ColoredBox(color: NmColors.ink),
             ),
           ],
+        ),
+      ),
+    );
+  }
 
-          // ── Visited POIs — horizontal scrollable list ────────────────────
-          if (visitedPois.isNotEmpty) ...[
-            const SizedBox(height: 16),
-            Row(
+  Widget _stepRow(String text, {required bool done, required bool active}) {
+    final Widget mark;
+    if (done) {
+      mark = Container(
+        width: 24,
+        height: 24,
+        decoration: const BoxDecoration(color: NmColors.ink, shape: BoxShape.circle),
+        child: const Center(child: NmIcon(NmIcons.check, size: 14, color: Colors.white)),
+      );
+    } else if (active) {
+      mark = const SizedBox(
+        width: 24,
+        height: 24,
+        child: Padding(
+          padding: EdgeInsets.all(1),
+          child: CircularProgressIndicator(
+            strokeWidth: 3,
+            color: NmColors.ink,
+            backgroundColor: NmColors.cream,
+          ),
+        ),
+      );
+    } else {
+      mark = SizedBox(
+        width: 24,
+        height: 24,
+        child: Center(
+          child: Container(
+            width: 12,
+            height: 12,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              border: Border.all(color: NmColors.stepIdle, width: 2),
+            ),
+          ),
+        ),
+      );
+    }
+    return ConstrainedBox(
+      constraints: const BoxConstraints(minHeight: 28),
+      child: Row(
+        children: [
+          mark,
+          const SizedBox(width: 12),
+          Expanded(
+            child: Text(
+              text,
+              style: TextStyle(
+                fontSize: 16,
+                fontWeight: active ? FontWeight.w600 : FontWeight.w400,
+                color: (done || active) ? NmColors.ink : NmColors.muted,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// A place shown on the map but with nothing verified to tell.
+  Widget _silentContent(Poi poi) {
+    final kind = poiKindOf(poi);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        _placeHeader(poi, kind, trailing: _reportButton(context, _c, poi)),
+        const SizedBox(height: 18),
+        _silentNote(),
+        const SizedBox(height: 18),
+        _askAiButton(poi, primary: false),
+        const SizedBox(height: 10),
+        _endWalkButton(),
+      ],
+    );
+  }
+
+  /// Screen 4 — the story is playing (or ready to play).
+  Widget _placeContent(Poi poi) {
+    final kind = poiKindOf(poi);
+    final playing = _c.isPlaying;
+    final active = _c.isAudioActive;
+    final displayText =
+        poi.narrationText.isNotEmpty ? poi.narrationText : poi.shortDescription;
+    final next = _c.nearestUnvisited(excluding: poi.id);
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        if (active)
+          Semantics(
+            button: true,
+            label: L.t('Згорнути картку', 'Collapse the card'),
+            child: GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onTap: () => setState(() => _collapsed = true),
+              onVerticalDragEnd: (d) {
+                if ((d.primaryVelocity ?? 0) > 0) setState(() => _collapsed = true);
+              },
+              child: Padding(
+                padding: const EdgeInsets.only(bottom: 12),
+                child: Center(child: _handle()),
+              ),
+            ),
+          ),
+        _placeHeader(
+          poi,
+          kind,
+          trailing: active
+              ? Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    NmCircleButton(
+                      tooltip: L.t('Ще раз', 'Play again'),
+                      background: NmColors.cream,
+                      shadow: false,
+                      onPressed: () => _c.replayAudio(),
+                      child: const NmIcon(NmIcons.replay, size: 20),
+                    ),
+                    const SizedBox(width: 8),
+                    NmCircleButton(
+                      tooltip: L.t('Згорнути картку', 'Collapse the card'),
+                      background: NmColors.background,
+                      shadow: false,
+                      onPressed: () => setState(() => _collapsed = true),
+                      child: const NmIcon(NmIcons.down, size: 22),
+                    ),
+                  ],
+                )
+              : _reportButton(context, _c, poi),
+        ),
+        const SizedBox(height: 18),
+        if (displayText.isNotEmpty)
+          Text(
+            displayText,
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+            style: NmText.body.copyWith(color: NmColors.muted),
+          ),
+        Row(
+          children: [
+            InkWell(
+              onTap: () => _showPoiDetails(context, poi),
+              borderRadius: BorderRadius.circular(8),
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(minHeight: 36),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      L.t('Читати повністю', 'Read all'),
+                      style: const TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w600,
+                        color: NmColors.ink,
+                      ),
+                    ),
+                    const SizedBox(width: 2),
+                    const NmIcon(NmIcons.right, size: 18),
+                  ],
+                ),
+              ),
+            ),
+            const Spacer(),
+            if (active) _reportButton(context, _c, poi),
+          ],
+        ),
+        if (active) ...[
+          const SizedBox(height: 6),
+          ExcludeSemantics(
+            child: StreamBuilder<Duration>(
+              stream: _c.audioPositionStream,
+              builder: (context, _) {
+                final total = _c.audioDuration;
+                final at = _c.audioPosition;
+                final progress = (total == null || total <= Duration.zero)
+                    ? 0.0
+                    : at.inMilliseconds / total.inMilliseconds;
+                return NmWave(playing: playing, progress: progress);
+              },
+            ),
+          ),
+          const SizedBox(height: 18),
+          Row(
+            children: [
+              Expanded(
+                child: ElevatedButton.icon(
+                  onPressed: () => playing ? _c.pauseAudio() : _c.resumeAudio(),
+                  icon: NmIcon(playing ? NmIcons.pause : NmIcons.play, size: 20),
+                  label: Text(playing ? L.t('Пауза', 'Pause') : L.t('Продовжити', 'Resume')),
+                  style: NmButtons.secondary(minHeight: 52),
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Semantics(
+                  label: L.t('Завершити розповідь про це місце',
+                      'Finish the story about this place'),
+                  child: ElevatedButton.icon(
+                    onPressed: () => _c.skipNarration(),
+                    icon: const NmIcon(NmIcons.stop, size: 20),
+                    label: Text(L.t('Завершити', 'Finish')),
+                    style: NmButtons.secondary(minHeight: 52),
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          _askAiButton(poi, primary: true),
+        ] else ...[
+          const SizedBox(height: 18),
+          Row(
+            children: [
+              Expanded(
+                flex: 10,
+                child: ElevatedButton.icon(
+                  onPressed: () => _c.playNarrationForPoi(poi),
+                  icon: const NmIcon(NmIcons.play, size: 20),
+                  label: Text(L.t('Прослухати', 'Listen')),
+                  style: NmButtons.secondary(minHeight: 52),
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(flex: 13, child: _askAiButton(poi, primary: true)),
+            ],
+          ),
+        ],
+        if (next != null) ...[
+          const SizedBox(height: 14),
+          Row(
+            children: [
+              const NmIcon(NmIcons.pin, size: 16, color: NmColors.muted),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  L.t('Далі: ${next.poi.shownName} · ${L.distance(next.meters)}',
+                      'Next: ${next.poi.shownName} · ${L.distance(next.meters)}'),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: NmText.small,
+                ),
+              ),
+            ],
+          ),
+        ],
+        const SizedBox(height: 10),
+        _endWalkButton(),
+      ],
+    );
+  }
+
+  /// Playing, but nothing on the map is selected (e.g. an AI answer read aloud).
+  Widget _guideSpeakingContent() {
+    final playing = _c.isPlaying;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Text(
+          playing
+              ? L.t('Гід розповідає', 'The guide is speaking')
+              : L.t('Розповідь на паузі', 'The story is paused'),
+          style: NmText.title(22),
+        ),
+        const SizedBox(height: 14),
+        ExcludeSemantics(child: NmWave(playing: playing)),
+        const SizedBox(height: 18),
+        Row(
+          children: [
+            Expanded(
+              child: ElevatedButton.icon(
+                onPressed: () => playing ? _c.pauseAudio() : _c.resumeAudio(),
+                icon: NmIcon(playing ? NmIcons.pause : NmIcons.play, size: 20),
+                label: Text(playing ? L.t('Пауза', 'Pause') : L.t('Продовжити', 'Resume')),
+                style: NmButtons.secondary(minHeight: 52),
+              ),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: ElevatedButton.icon(
+                onPressed: () => _c.stopAudio(),
+                icon: const NmIcon(NmIcons.stop, size: 20),
+                label: Text(L.t('Зупинити', 'Stop')),
+                style: NmButtons.secondary(minHeight: 52),
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 10),
+        _endWalkButton(),
+      ],
+    );
+  }
+
+  /// Screen 4б — the card folded into one row over the map.
+  Widget _miniPlayer(Poi poi) {
+    final kind = poiKindOf(poi);
+    final playing = _c.isPlaying;
+    void expand() => setState(() => _collapsed = false);
+
+    return Container(
+      key: const ValueKey('nm-mini'),
+      margin: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: NmColors.surface,
+        borderRadius: BorderRadius.circular(28),
+        boxShadow: nmShadow,
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onTap: expand,
+            onVerticalDragEnd: (d) {
+              if ((d.primaryVelocity ?? 0) < 0) expand();
+            },
+            child: Padding(
+              padding: const EdgeInsets.only(bottom: 8),
+              child: Center(child: _handle()),
+            ),
+          ),
+          Row(
+            children: [
+              _thumb(poi, kind, size: 52, radius: 16),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Semantics(
+                  button: true,
+                  label: L.t('Розгорнути картку', 'Expand the card'),
+                  child: GestureDetector(
+                    behavior: HitTestBehavior.opaque,
+                    onTap: expand,
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          poi.shownName,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: NmText.title(18),
+                        ),
+                        const SizedBox(height: 2),
+                        Row(
+                          children: [
+                            ExcludeSemantics(
+                              child: NmWave(
+                                playing: playing,
+                                bars: 3,
+                                height: 12,
+                                color: NmColors.ochre,
+                                restColor: NmColors.ochre,
+                                spread: false,
+                              ),
+                            ),
+                            const SizedBox(width: 6),
+                            Flexible(
+                              child: Text(
+                                playing
+                                    ? L.t('Гід розповідає', 'The guide is speaking')
+                                    : L.t('На паузі', 'Paused'),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: NmText.small,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 8),
+              NmCircleButton(
+                size: 48,
+                tooltip: playing ? L.t('Пауза', 'Pause') : L.t('Продовжити', 'Resume'),
+                background: NmColors.cream,
+                shadow: false,
+                onPressed: () => playing ? _c.pauseAudio() : _c.resumeAudio(),
+                child: NmIcon(playing ? NmIcons.pause : NmIcons.play, size: 20),
+              ),
+              const SizedBox(width: 8),
+              NmCircleButton(
+                tooltip: L.t('Розгорнути картку', 'Expand the card'),
+                background: NmColors.background,
+                shadow: false,
+                onPressed: expand,
+                child: const NmIcon(NmIcons.up, size: 22),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// The place's photo in a rounded tile (its kind icon until a photo is found).
+  Widget _thumb(Poi poi, PoiKind kind, {double size = 60, double radius = 20}) {
+    return FutureBuilder<PlacePhoto?>(
+      future: _c.findPhoto(poi),
+      initialData: _c.photoOf(poi.id),
+      builder: (context, snap) => NmPlaceThumb(
+        icon: kind.icon,
+        size: size,
+        radius: radius,
+        imageUrl: (snap.data ?? _c.photoOf(poi.id))?.url,
+      ),
+    );
+  }
+
+  Widget _handle() => Container(
+        width: 40,
+        height: 5,
+        decoration: BoxDecoration(
+          color: NmColors.sand,
+          borderRadius: BorderRadius.circular(3),
+        ),
+      );
+
+  /// Photo tile · kind badge · name · (buttons on the right).
+  Widget _placeHeader(Poi poi, PoiKind kind, {Widget? trailing}) {
+    return Row(
+      children: [
+        _thumb(poi, kind),
+        const SizedBox(width: 14),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              NmBadge(kind.label, materialIcon: kind.icon),
+              const SizedBox(height: 6),
+              Text(
+                poi.shownName,
+                maxLines: 3,
+                overflow: TextOverflow.ellipsis,
+                style: NmText.title(22),
+              ),
+            ],
+          ),
+        ),
+        if (trailing != null) ...[const SizedBox(width: 8), trailing],
+      ],
+    );
+  }
+
+  Widget _askAiButton(Poi poi, {required bool primary}) {
+    return ElevatedButton.icon(
+      onPressed: () => _showAiChatSheet(context, poi),
+      icon: NmIcon(NmIcons.ai,
+          size: 20, color: primary ? Colors.white : NmColors.ink),
+      label: Text(L.t('Запитати ШІ', 'Ask the AI')),
+      style: primary
+          ? NmButtons.primary(minHeight: 52)
+          : NmButtons.secondary(minHeight: 52),
+    );
+  }
+
+  Widget _endWalkButton() => NmEndWalkButton(
+        label: L.t('Завершити прогулянку', 'End the walk'),
+        onPressed: _confirmEndWalk,
+      );
+
+  /// Screen 7 — "Завершити прогулянку?" before the walk is really stopped.
+  Future<void> _confirmEndWalk() async {
+    _c.trackUi('end_walk_asked');
+    final ok = await showModalBottomSheet<bool>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      barrierColor: NmColors.ink.withValues(alpha: 0.45),
+      builder: (ctx) => SafeArea(
+        top: false,
+        child: Container(
+          margin: const EdgeInsets.fromLTRB(12, 0, 12, 24),
+          padding: const EdgeInsets.fromLTRB(24, 28, 24, 24),
+          decoration: BoxDecoration(
+            color: NmColors.surface,
+            borderRadius: BorderRadius.circular(32),
+            boxShadow: nmShadow,
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Center(
+                child: Container(
+                  width: 56,
+                  height: 56,
+                  decoration: const BoxDecoration(
+                    color: NmColors.wineSoft,
+                    shape: BoxShape.circle,
+                  ),
+                  child: const Center(
+                    child: NmIcon(NmIcons.flag, size: 26, color: NmColors.wine),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 20),
+              Text(
+                L.t('Завершити прогулянку?', 'End the walk?'),
+                textAlign: TextAlign.center,
+                style: NmText.title(24),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                L.t(
+                    'Ми перестанемо відстежувати вашу геолокацію, а аудіогід вимкнеться. Нову прогулянку можна почати будь-коли.',
+                    'We will stop tracking your location and the audio guide will switch off. You can start a new walk any time.'),
+                textAlign: TextAlign.center,
+                style: NmText.body.copyWith(color: NmColors.muted),
+              ),
+              const SizedBox(height: 20),
+              ElevatedButton(
+                onPressed: () => Navigator.of(ctx).pop(true),
+                style: NmButtons.destructive(),
+                child: Text(L.t('Так, завершити', 'Yes, end it')),
+              ),
+              const SizedBox(height: 10),
+              OutlinedButton(
+                onPressed: () => Navigator.of(ctx).pop(false),
+                style: NmButtons.secondary().copyWith(
+                  backgroundColor: const WidgetStatePropertyAll(NmColors.surface),
+                  side: const WidgetStatePropertyAll(
+                      BorderSide(color: NmColors.line, width: 1.5)),
+                ),
+                child: Text(L.t('Гуляти далі', 'Keep walking')),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+    if (ok == true && mounted) {
+      _c.stopWalk();
+      setState(() => _collapsed = false);
+    }
+  }
+
+  // ── Start screen (first open) ─────────────────────────────────────────────────
+
+  Widget _startView() {
+    // Location was refused: the main button becomes the way out (Allow / Settings).
+    final status = _c.guideStatus;
+    final denied = status != null && status.hasAction;
+    final height = MediaQuery.of(context).size.height;
+    final heroHeight = math.min(500.0, height * 0.56);
+
+    return ColoredBox(
+      color: NmColors.background,
+      child: LayoutBuilder(
+        builder: (context, box) => SingleChildScrollView(
+          child: ConstrainedBox(
+            constraints: BoxConstraints(minHeight: box.maxHeight),
+            child: IntrinsicHeight(
+              child: Stack(
+                children: [
+                  Positioned(
+                    top: 0,
+                    left: 0,
+                    right: 0,
+                    height: heroHeight,
+                    child: Image.asset(
+                      'assets/images/hero_start.png',
+                      fit: BoxFit.cover,
+                      alignment: Alignment.bottomCenter,
+                      excludeFromSemantics: true,
+                    ),
+                  ),
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      SafeArea(
+                        bottom: false,
+                        child: Padding(
+                          padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+                          child: Row(
+                            children: [
+                              const SizedBox(width: 44),
+                              const Spacer(),
+                              _logoPill(),
+                              const Spacer(),
+                              _languageButton(),
+                            ],
+                          ),
+                        ),
+                      ),
+                      SizedBox(height: math.max(0.0, heroHeight - 30 - 56 - MediaQuery.of(context).padding.top)),
+                      Expanded(
+                        child: Padding(
+                          padding: EdgeInsets.fromLTRB(
+                              24, 0, 24, 24 + MediaQuery.of(context).padding.bottom),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            children: [
+                              Text(
+                                L.t('Гуляйте — історії місць знайдуть вас самі',
+                                    'Walk — the stories of places will find you'),
+                                textAlign: TextAlign.center,
+                                style: NmText.title(30).copyWith(height: 38 / 30),
+                              ),
+                              const SizedBox(height: 14),
+                              Text(
+                                L.t(
+                                    'Аудіогід сам почне розповідь, щойно ви підійдете до цікавого місця. Нічого не треба шукати.',
+                                    'The audio guide starts a story as soon as you come close to an interesting place. Nothing to look for.'),
+                                textAlign: TextAlign.center,
+                                style: NmText.body.copyWith(color: NmColors.muted),
+                              ),
+                              const SizedBox(height: 16),
+                              _stepsLine(),
+                              const Spacer(),
+                              const SizedBox(height: 24),
+                              SizedBox(
+                                height: 60,
+                                child: ElevatedButton(
+                                  onPressed: denied
+                                      ? () => _c.runStatusAction()
+                                      : () => _c.startWalk(),
+                                  style: NmButtons.primary(minHeight: 60),
+                                  child: Text(denied
+                                      ? (status.actionLabel ?? '')
+                                      : L.t('Почати прогулянку', 'Start the walk')),
+                                ),
+                              ),
+                              const SizedBox(height: 12),
+                              Text(
+                                denied
+                                    ? status.text
+                                    : L.t('Потрібна геолокація · краще в навушниках',
+                                        'Location is needed · best with headphones'),
+                                textAlign: TextAlign.center,
+                                style: NmText.small,
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _logoPill() {
+    return Container(
+      height: 44,
+      padding: const EdgeInsets.symmetric(horizontal: 22),
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: 0.85),
+        borderRadius: BorderRadius.circular(999),
+        boxShadow: nmShadow,
+      ),
+      alignment: Alignment.center,
+      child: Text('NotMiss', style: NmText.title(20)),
+    );
+  }
+
+  /// «Гуляйте · Підходьте · Слухайте»
+  Widget _stepsLine() {
+    Widget item(NmIcons icon, String text) => Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            NmIcon(icon, size: 16),
+            const SizedBox(width: 6),
+            Text(text, style: NmText.small),
+          ],
+        );
+    Widget dot() => Container(
+          width: 3,
+          height: 3,
+          margin: const EdgeInsets.symmetric(horizontal: 10),
+          decoration: const BoxDecoration(
+            color: NmColors.stone,
+            shape: BoxShape.circle,
+          ),
+        );
+    return Wrap(
+      alignment: WrapAlignment.center,
+      crossAxisAlignment: WrapCrossAlignment.center,
+      runSpacing: 6,
+      children: [
+        item(NmIcons.walk, L.t('Гуляйте', 'Walk')),
+        dot(),
+        item(NmIcons.pin, L.t('Підходьте', 'Come close')),
+        dot(),
+        item(NmIcons.headphones, L.t('Слухайте', 'Listen')),
+      ],
+    );
+  }
+
+  // ── Walk finished (screen 8) ──────────────────────────────────────────────────
+
+  Widget _walkFinishedView() {
+    final heard = _c.walkListenedPlaces;
+    final n = heard.length;
+    final height = MediaQuery.of(context).size.height;
+    final heroHeight = math.min(330.0, height * 0.36);
+    const rowHeight = 44.0;
+    const visibleRows = 5;
+    final more = n - visibleRows;
+
+    final caption = L.en
+        ? (n == 1 ? '1 story' : '$n stories')
+        : '$n ${ukPlural(n, 'історія', 'історії', 'історій')}';
+
+    return ColoredBox(
+      color: NmColors.background,
+      child: Stack(
+        children: [
+          Positioned(
+            top: 0,
+            left: 0,
+            right: 0,
+            height: heroHeight,
+            child: Image.asset(
+              'assets/images/hero_after.png',
+              fit: BoxFit.cover,
+              alignment: Alignment.bottomCenter,
+              excludeFromSemantics: true,
+            ),
+          ),
+          SafeArea(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                Icon(Icons.check_circle_outline, size: 16, color: NmColors.muted),
-                const SizedBox(width: 6),
-                Text(
-                  'Відвідані місця (${visitedPois.length}):',
-                  style: TextStyle(
-                    fontSize: 13,
-                    fontWeight: FontWeight.w600,
-                    color: NmColors.muted,
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+                  child: Align(
+                    alignment: Alignment.centerRight,
+                    child: _languageButton(),
+                  ),
+                ),
+                Expanded(
+                  child: SingleChildScrollView(
+                    padding: EdgeInsets.fromLTRB(
+                        12, math.max(0.0, heroHeight - 68 - 56 - MediaQuery.of(context).padding.top), 12, 12),
+                    child: Container(
+                      padding: const EdgeInsets.fromLTRB(24, 24, 24, 16),
+                      decoration: BoxDecoration(
+                        color: NmColors.surface,
+                        borderRadius: BorderRadius.circular(32),
+                        boxShadow: nmShadow,
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          Text(
+                            caption,
+                            style: const TextStyle(
+                              fontSize: 13,
+                              fontWeight: FontWeight.w600,
+                              color: NmColors.muted,
+                            ),
+                          ),
+                          const SizedBox(height: 4),
+                          Text(L.t('Прогулянку завершено', 'Walk finished'),
+                              style: NmText.title(26)),
+                          const SizedBox(height: 14),
+                          if (n == 0)
+                            Text(
+                              L.t(
+                                  'Цього разу історій не було. Наступного разу підходьте ближче до цікавих місць на мапі.',
+                                  'No stories this time. Next time, walk closer to the interesting places on the map.'),
+                              style: NmText.body.copyWith(color: NmColors.muted),
+                            )
+                          else
+                            SizedBox(
+                              height: math.min(n, visibleRows) * rowHeight + 8,
+                              child: Stack(
+                                children: [
+                                  Semantics(
+                                    label: L.t('Почуті місця, від останнього',
+                                        'Places heard, most recent first'),
+                                    child: ListView.builder(
+                                      padding: const EdgeInsets.only(bottom: 8),
+                                      itemCount: n,
+                                      itemExtent: rowHeight,
+                                      itemBuilder: (ctx, i) => _heardRow(heard[i]),
+                                    ),
+                                  ),
+                                  if (more > 0)
+                                    const Positioned(
+                                      left: 0,
+                                      right: 0,
+                                      bottom: 0,
+                                      height: 44,
+                                      child: IgnorePointer(
+                                        child: DecoratedBox(
+                                          decoration: BoxDecoration(
+                                            gradient: LinearGradient(
+                                              begin: Alignment.topCenter,
+                                              end: Alignment.bottomCenter,
+                                              colors: [Color(0x00FFFFFF), Colors.white],
+                                            ),
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                ],
+                              ),
+                            ),
+                          if (more > 0) ...[
+                            const SizedBox(height: 4),
+                            Row(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                const NmIcon(NmIcons.down, size: 16, color: NmColors.muted),
+                                const SizedBox(width: 6),
+                                Flexible(
+                                  child: Text(
+                                    L.en
+                                        ? '$more more ${more == 1 ? 'place' : 'places'} — scroll the list'
+                                        : 'Ще $more ${ukPlural(more, 'місце', 'місця', 'місць')} — прогорніть список',
+                                    style: NmText.small,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ],
+                          if (_c.visitedPlaces.isNotEmpty) ...[
+                            const SizedBox(height: 8),
+                            Center(
+                              child: TextButton(
+                                onPressed: () => _showVisitedSheet(context),
+                                child: Text(L.t('Усі мої місця · ${_c.visitedPlaces.length}',
+                                    'All my places · ${_c.visitedPlaces.length}')),
+                              ),
+                            ),
+                          ],
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(24, 0, 24, 24),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      Text(
+                        L.t('Геолокацію вимкнено, гід мовчить',
+                            'Location is off, the guide is quiet'),
+                        textAlign: TextAlign.center,
+                        style: NmText.small,
+                      ),
+                      const SizedBox(height: 12),
+                      SizedBox(
+                        height: 60,
+                        child: ElevatedButton(
+                          onPressed: () => _c.startWalk(),
+                          style: NmButtons.primary(minHeight: 60),
+                          child: Text(L.t('Почати прогулянку', 'Start the walk')),
+                        ),
+                      ),
+                    ],
                   ),
                 ),
               ],
             ),
-            const SizedBox(height: 8),
-            SizedBox(
-              height: 42,
-              child: ListView.separated(
-                scrollDirection: Axis.horizontal,
-                itemCount: visitedPois.length,
-                separatorBuilder: (_, __) => const SizedBox(width: 8),
-                itemBuilder: (context, index) {
-                  final poi = visitedPois[index];
-                  return ActionChip(
-                    avatar: const Icon(Icons.place, size: 16),
-                    label: Text(
-                      poi.name,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                    onPressed: () => _showPoiDetails(context, poi),
-                    backgroundColor: NmColors.background,
-                    side: BorderSide(color: NmColors.sand),
-                    labelStyle: const TextStyle(fontSize: 13),
-                    padding: const EdgeInsets.symmetric(horizontal: 4),
-                  );
-                },
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _heardRow(VisitedPlace place) {
+    Poi? poi;
+    for (final p in _c.allPois) {
+      if (p.id == place.id) {
+        poi = p;
+        break;
+      }
+    }
+    final name = place.name.isEmpty ? L.t('Місце', 'Place') : PlaceNames.of(place.name, null);
+    return InkWell(
+      onTap: poi == null ? null : () => _showPoiDetails(context, poi!),
+      child: Row(
+        children: [
+          Container(
+            width: 24,
+            height: 24,
+            decoration: const BoxDecoration(color: NmColors.cream, shape: BoxShape.circle),
+            child: const Center(child: NmIcon(NmIcons.check, size: 14)),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Text(
+              name,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(fontSize: 16, height: 20 / 16, color: NmColors.ink),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ── Sheets and screens opened from the map ────────────────────────────────────
+
+  void _showVisitedSheet(BuildContext context) {
+    widget.controller.trackUi('my_places_opened');
+    var tab = 0; // 0 = listened, 1 = passed but not listened
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setSheet) => ListenableBuilder(
+          listenable: widget.controller,
+          builder: (ctx, _) {
+            final listened = widget.controller.listenedPlaces;
+            final passed = widget.controller.passedOnlyPlaces;
+            final places = tab == 0 ? listened : passed;
+            return Material(
+              color: Colors.white,
+              borderRadius:
+                  const BorderRadius.vertical(top: Radius.circular(24)),
+              clipBehavior: Clip.antiAlias,
+              child: ConstrainedBox(
+                constraints: BoxConstraints(
+                    maxHeight: MediaQuery.of(ctx).size.height * 0.75),
+                child: SafeArea(
+                  top: false,
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      const SizedBox(height: 12),
+                      Center(
+                        child: Container(
+                          width: 44,
+                          height: 4,
+                          decoration: BoxDecoration(
+                            color: NmColors.sand,
+                            borderRadius: BorderRadius.circular(2),
+                          ),
+                        ),
+                      ),
+                      Padding(
+                        padding: const EdgeInsets.fromLTRB(24, 16, 24, 8),
+                        child: Text(L.t('Мої місця', 'My places'),
+                            style: NmText.title(22)),
+                      ),
+                      Padding(
+                        padding: const EdgeInsets.fromLTRB(20, 0, 20, 8),
+                        child: Wrap(
+                          spacing: 8,
+                          runSpacing: 4,
+                          children: [
+                            ChoiceChip(
+                              avatar: const Icon(Icons.headphones, size: 16),
+                              label: Text(L.t('Прослухані · ${listened.length}',
+                                  'Listened · ${listened.length}')),
+                              selected: tab == 0,
+                              onSelected: (_) => setSheet(() => tab = 0),
+                            ),
+                            ChoiceChip(
+                              avatar:
+                                  const Icon(Icons.directions_walk, size: 16),
+                              label: Text(L.t('Пройдені · ${passed.length}',
+                                  'Passed · ${passed.length}')),
+                              selected: tab == 1,
+                              onSelected: (_) => setSheet(() => tab = 1),
+                            ),
+                          ],
+                        ),
+                      ),
+                      Padding(
+                        padding: const EdgeInsets.fromLTRB(24, 0, 24, 8),
+                        child: Text(
+                          tab == 0
+                              ? L.t('Розповідь прослухано до кінця.',
+                                  'The story was heard to the end.')
+                              : L.t(
+                                  'Ви були поруч, але розповідь не прослухали — натисніть, щоб послухати.',
+                                  'You were nearby but did not hear the story — tap to listen.'),
+                          style: const TextStyle(
+                              fontSize: 12, color: NmColors.muted),
+                        ),
+                      ),
+                      if (places.isEmpty)
+                        Padding(
+                          padding: const EdgeInsets.fromLTRB(24, 8, 24, 32),
+                          child: Text(
+                            tab == 0
+                                ? L.t(
+                                    'Поки що порожньо — місця з\'являться тут, коли ви дослухаєте розповідь.',
+                                    'Nothing yet — places appear here once you hear a story to the end.')
+                                : L.t('Поки що порожньо.', 'Nothing yet.'),
+                            style: const TextStyle(
+                                fontSize: 15, color: NmColors.muted),
+                          ),
+                        )
+                      else
+                        Flexible(
+                          child: ListView.separated(
+                            shrinkWrap: true,
+                            padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+                            itemCount: places.length,
+                            separatorBuilder: (_, __) =>
+                                const SizedBox(height: 4),
+                            itemBuilder: (ctx, i) {
+                              final place = places[i];
+                              final kind =
+                                  PoiKind.values.asNameMap()[place.kind] ??
+                                      PoiKind.other;
+                              Poi? poi;
+                              for (final p in widget.controller.allPois) {
+                                if (p.id == place.id) {
+                                  poi = p;
+                                  break;
+                                }
+                              }
+                              return ListTile(
+                                leading: Container(
+                                  width: 40,
+                                  height: 40,
+                                  decoration: const BoxDecoration(
+                                    color: NmColors.cream,
+                                    shape: BoxShape.circle,
+                                  ),
+                                  child: Icon(kind.icon,
+                                      size: 22, color: NmColors.ink),
+                                ),
+                                title: Text(
+                                  place.name.isEmpty
+                                      ? L.t('Місце', 'Place')
+                                      : PlaceNames.of(place.name, null),
+                                  style: const TextStyle(
+                                      fontSize: 15,
+                                      fontWeight: FontWeight.w600),
+                                ),
+                                subtitle: Text(kind.label,
+                                    style: const TextStyle(
+                                        fontSize: 12, color: NmColors.muted)),
+                                trailing: Icon(
+                                  place.listened
+                                      ? Icons.headphones
+                                      : Icons.directions_walk,
+                                  size: 18,
+                                  color: NmColors.stone,
+                                ),
+                                onTap: poi == null
+                                    ? null
+                                    : () {
+                                        Navigator.of(ctx).pop();
+                                        _showPoiDetails(context, poi!);
+                                      },
+                              );
+                            },
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+              ),
+            );
+          },
+        ),
+      ),
+    );
+  }
+
+  Widget _buildStatusPill(GuideStatus status) {
+    return Container(
+      padding: EdgeInsets.fromLTRB(16, 6, status.hasAction ? 6 : 16, 6),
+      decoration: BoxDecoration(
+        color: NmColors.surface,
+        borderRadius: BorderRadius.circular(999),
+        boxShadow: nmShadow,
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (status.tone == GuideTone.busy)
+            const SizedBox(
+              width: 14,
+              height: 14,
+              child: CircularProgressIndicator(
+                  strokeWidth: 2, color: NmColors.ink),
+            )
+          else
+            const Icon(Icons.info_outline, size: 18, color: NmColors.ink),
+          const SizedBox(width: 10),
+          Flexible(
+            child: Text(
+              status.text,
+              style: const TextStyle(
+                fontSize: 14,
+                fontWeight: FontWeight.w600,
+                color: NmColors.ink,
+              ),
+            ),
+          ),
+          if (status.hasAction) ...[
+            const SizedBox(width: 6),
+            TextButton(
+              onPressed: () => widget.controller.runStatusAction(),
+              child: Text(
+                status.actionLabel!,
+                style: const TextStyle(fontWeight: FontWeight.w700),
               ),
             ),
           ],
@@ -819,14 +1813,19 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
   }
 
   void _showAiChatSheet(BuildContext context, Poi poi) {
+    widget.controller.trackUi('chat_opened', poi);
     _showAiChatModal(context, widget.controller, poi);
   }
 
   Marker _buildPoiMarker(Poi poi,
-      {required bool isActive, required bool isTriggered}) {
+      {required bool isActive,
+      required bool isTriggered,
+      required bool isListened,
+      required bool isSilent}) {
     Color color = NmColors.ink; // Unvisited place
     if (isActive) color = NmColors.ochre;
     if (isTriggered && !isActive) color = NmColors.stone;
+    final isNavTarget = _c.navTarget?.id == poi.id;
 
     return Marker(
       point: LatLng(poi.latitude, poi.longitude),
@@ -836,20 +1835,24 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
         behavior: HitTestBehavior.opaque,
         onTap: () {
           try {
-            _mapController.move(LatLng(poi.latitude, poi.longitude), _mapController.camera.zoom);
+            _mapController.move(LatLng(poi.latitude, poi.longitude),
+                _mapController.camera.zoom);
           } catch (_) {}
           _showPoiDetails(context, poi);
         },
         child: Center(
           child: Tooltip(
-            message: poi.name,
+            message:
+                '${poiKindOf(poi).label}: ${poi.shownName}${isSilent ? L.t(' — не озвучується (немає джерел)', ' — not narrated (no sources)') : ''}${isTriggered ? (isListened ? L.t(' — прослухано', ' — listened') : L.t(' — пройдено', ' — passed')) : ''}',
             child: Container(
               width: 36,
               height: 36,
               decoration: BoxDecoration(
                 color: color,
                 shape: BoxShape.circle,
-                border: Border.all(color: Colors.white, width: 2),
+                border: Border.all(
+                    color: isNavTarget ? NmColors.userDot : Colors.white,
+                    width: isNavTarget ? 4 : 2),
                 boxShadow: [
                   BoxShadow(
                     color: Colors.black.withValues(alpha: 0.2),
@@ -858,10 +1861,37 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
                   ),
                 ],
               ),
-              child: Icon(
-                (isTriggered && !isActive) ? Icons.check : Icons.place,
-                color: Colors.white,
-                size: 18,
+              child: Stack(
+                alignment: Alignment.center,
+                clipBehavior: Clip.none,
+                children: [
+                  Icon(poiKindOf(poi).icon, color: Colors.white, size: 19),
+                  if ((isTriggered || isSilent) && !isActive)
+                    Positioned(
+                      right: -5,
+                      bottom: -5,
+                      child: Container(
+                        width: 15,
+                        height: 15,
+                        decoration: BoxDecoration(
+                          // Headphones: the story was heard. Walking figure: passed, not heard.
+                          color: isSilent
+                              ? NmColors.wine
+                              : (isListened ? NmColors.ink : NmColors.muted),
+                          shape: BoxShape.circle,
+                          border: Border.all(color: Colors.white, width: 1.5),
+                        ),
+                        child: Icon(
+                            isSilent
+                                ? Icons.volume_off
+                                : (isListened
+                                    ? Icons.headphones
+                                    : Icons.directions_walk),
+                            color: Colors.white,
+                            size: 10),
+                      ),
+                    ),
+                ],
               ),
             ),
           ),
@@ -871,13 +1901,118 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
   }
 
   void _showPoiDetails(BuildContext context, Poi poi) {
-    showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: Colors.transparent,
+    widget.controller.trackUi('details_opened', poi);
+    Navigator.of(context).push(MaterialPageRoute(
       builder: (context) => _PoiDetailsSheet(
         controller: widget.controller,
         poi: poi,
+      ),
+    ));
+  }
+
+  /// "420 м" / "1,2 км".
+  static String formatDistance(double meters) {
+    if (meters < 1000) return L.t('${(meters / 10).round() * 10} м', '${(meters * 3.28084 / 10).round() * 10} ft');
+    return L.t('${(meters / 1000).toStringAsFixed(1).replaceAll('.', ',')} км',
+        '${(meters / 1609.34).toStringAsFixed(1)} mi');
+  }
+
+  /// Simple navigation card: where to, how far, which way (or "you have arrived").
+  Widget _buildNavCard() {
+    final c = _c;
+    final arrived = c.navArrived;
+    final target = c.navTarget;
+    final remaining = c.navRemainingMeters;
+    final straight = c.navRoute?.straight ?? true;
+
+    final Widget lead;
+    final String caption;
+    final String name;
+    final String? note;
+    final Widget close;
+
+    if (arrived != null) {
+      lead = Container(
+        width: 44,
+        height: 44,
+        decoration: const BoxDecoration(color: NmColors.ink, shape: BoxShape.circle),
+        child: const Center(child: NmIcon(NmIcons.check, size: 22, color: Colors.white)),
+      );
+      caption = L.t('Ви на місці', 'You have arrived');
+      name = arrived.shownName;
+      note = null;
+      close = NmCircleButton(
+        tooltip: L.t('Закрити', 'Close'),
+        background: NmColors.background,
+        shadow: false,
+        onPressed: c.dismissNavArrival,
+        child: const Icon(Icons.close_rounded, size: 20, color: NmColors.muted),
+      );
+    } else {
+      final bearing = c.navBearing;
+      // The arrow turns with the phone, so it always points where to walk.
+      lead = StreamBuilder<CompassEvent>(
+        stream: FlutterCompass.events,
+        builder: (context, snap) {
+          final heading = snap.data?.heading ?? 0;
+          return Container(
+            width: 44,
+            height: 44,
+            decoration: const BoxDecoration(color: NmColors.ink, shape: BoxShape.circle),
+            child: c.navLoading && bearing == null
+                ? const Padding(
+                    padding: EdgeInsets.all(12),
+                    child: CircularProgressIndicator(strokeWidth: 2.5, color: Colors.white),
+                  )
+                : Transform.rotate(
+                    angle: ((bearing ?? 0) - heading) * math.pi / 180,
+                    child: const Icon(Icons.navigation, color: Colors.white, size: 24),
+                  ),
+          );
+        },
+      );
+      caption = remaining == null
+          ? L.t('Шукаємо дорогу…', 'Finding the way…')
+          : '${formatDistance(remaining)} · ${L.t('~${c.navMinutes} хв', '~${c.navMinutes} min')}';
+      name = target?.shownName ?? '';
+      note = (remaining != null && straight && !c.navLoading)
+          ? L.t('Дороги не знайдено — напрямок по прямій', 'No path found — straight-line direction')
+          : null;
+      close = NmCircleButton(
+        tooltip: L.t('Скасувати навігацію', 'Stop navigation'),
+        background: NmColors.background,
+        shadow: false,
+        onPressed: c.stopNavigation,
+        child: const Icon(Icons.close_rounded, size: 20, color: NmColors.muted),
+      );
+    }
+
+    return Container(
+      padding: const EdgeInsets.fromLTRB(10, 10, 10, 10),
+      decoration: BoxDecoration(
+        color: NmColors.surface,
+        borderRadius: BorderRadius.circular(28),
+        boxShadow: nmShadow,
+      ),
+      child: Row(
+        children: [
+          lead,
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(caption,
+                    style: const TextStyle(
+                        fontSize: 13, fontWeight: FontWeight.w600, color: NmColors.muted)),
+                Text(name, maxLines: 2, overflow: TextOverflow.ellipsis, style: NmText.title(18)),
+                if (note != null) Text(note, style: NmText.small.copyWith(fontSize: 12)),
+              ],
+            ),
+          ),
+          const SizedBox(width: 8),
+          close,
+        ],
       ),
     );
   }
@@ -954,8 +2089,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
   }
 }
 
-/// Dynamic bottom sheet that displays POI details, the AI narration script,
-/// facts, queue progress, and an instant audio playback button.
+/// Screen 5 — everything about one place: photo, story, facts, sources.
 class _PoiDetailsSheet extends StatefulWidget {
   final WalkController controller;
   final Poi poi;
@@ -969,6 +2103,46 @@ class _PoiDetailsSheet extends StatefulWidget {
 class _PoiDetailsSheetState extends State<_PoiDetailsSheet> {
   bool _isRequesting = false;
 
+  /// «Піти сюди»: leads the user to this place with a simple route, distance and arrow.
+  Widget _navigateButton() {
+    final c = widget.controller;
+    final leading = c.navTarget?.id == widget.poi.id;
+    if (leading) {
+      return OutlinedButton.icon(
+        onPressed: () {
+          c.stopNavigation();
+          Navigator.of(context).pop();
+        },
+        icon: const Icon(Icons.close_rounded, size: 18),
+        label: Text(L.t('Скасувати навігацію', 'Stop navigation')),
+        style: NmButtons.secondary(minHeight: 44).copyWith(
+          backgroundColor: const WidgetStatePropertyAll(NmColors.surface),
+          side: const WidgetStatePropertyAll(BorderSide(color: NmColors.line, width: 1.5)),
+          padding: const WidgetStatePropertyAll(EdgeInsets.symmetric(horizontal: 18)),
+        ),
+      );
+    }
+    return ElevatedButton.icon(
+      onPressed: () async {
+        final messenger = ScaffoldMessenger.of(context);
+        final nav = Navigator.of(context);
+        final started = await c.startNavigation(widget.poi);
+        if (started) {
+          nav.pop();
+        } else {
+          messenger.showSnackBar(SnackBar(
+              content: Text(L.t('Ще визначаємо, де ви. Спробуйте за кілька секунд.',
+                  'Still finding where you are. Try again in a few seconds.'))));
+        }
+      },
+      icon: const NmIcon(NmIcons.walk, size: 18),
+      label: Text(L.t('Піти сюди', 'Go here')),
+      style: NmButtons.secondary(minHeight: 44).copyWith(
+        padding: const WidgetStatePropertyAll(EdgeInsets.symmetric(horizontal: 18)),
+      ),
+    );
+  }
+
   @override
   void initState() {
     super.initState();
@@ -979,20 +2153,24 @@ class _PoiDetailsSheetState extends State<_PoiDetailsSheet> {
     final updatedPoi = widget.controller.getUpdatedPoi(widget.poi);
     final enriched = widget.controller.getEnrichedPoi(widget.poi.id);
 
-    final hasNarration = (enriched?.narrationText?.isNotEmpty == true || updatedPoi.narrationText.isNotEmpty);
+    final hasNarration = (enriched?.narrationText?.isNotEmpty == true ||
+        updatedPoi.narrationText.isNotEmpty);
     final rawDesc = (enriched?.shortDescription?.isNotEmpty == true)
         ? enriched!.shortDescription!
         : updatedPoi.shortDescription;
     final hasRichDesc = !PoiCategoryService.isTrivialDescription(rawDesc);
-    final hasFacts = (enriched?.keyFacts.isNotEmpty == true || updatedPoi.facts.isNotEmpty);
+    final hasFacts =
+        (enriched?.keyFacts.isNotEmpty == true || updatedPoi.facts.isNotEmpty);
 
     final hasFallback = enriched?.hasFallbackContent ?? false;
-    final hasCompleteData = hasNarration && hasRichDesc && hasFacts && !hasFallback;
-    final isAlreadyResearched = (enriched?.isResearchComplete == true) && !hasFallback;
+    final hasCompleteData =
+        hasNarration && hasRichDesc && hasFacts && !hasFallback;
 
     if ((!hasCompleteData || hasFallback) && !_isRequesting) {
       _isRequesting = true;
-      widget.controller.researchPoiNow(widget.poi, force: hasFallback).whenComplete(() {
+      widget.controller
+          .researchPoiNow(widget.poi, force: hasFallback)
+          .whenComplete(() {
         if (mounted) {
           setState(() => _isRequesting = false);
         }
@@ -1005,519 +2183,380 @@ class _PoiDetailsSheetState extends State<_PoiDetailsSheet> {
     return ListenableBuilder(
       listenable: widget.controller,
       builder: (context, child) {
-        final enriched = widget.controller.getEnrichedPoi(widget.poi.id);
-        final updatedPoi = widget.controller.getUpdatedPoi(widget.poi);
-        final queuePos = widget.controller.getQueuePosition(widget.poi.id);
+        final c = widget.controller;
+        final enriched = c.getEnrichedPoi(widget.poi.id);
+        final updatedPoi = c.getUpdatedPoi(widget.poi);
+        final queuePos = c.getQueuePosition(widget.poi.id);
 
-        final narration = (enriched?.narrationText?.isNotEmpty == true)
-            ? enriched!.narrationText!
-            : updatedPoi.narrationText;
+        // Stored texts from older versions may still carry a greeting or be too long.
+        final narration = TextQuality.finalizeNarration(
+            (enriched?.narrationText?.isNotEmpty == true)
+                ? enriched!.narrationText!
+                : updatedPoi.narrationText);
 
         final rawDesc = (enriched?.shortDescription?.isNotEmpty == true)
             ? enriched!.shortDescription!
             : updatedPoi.shortDescription;
-        final description = PoiCategoryService.isTrivialDescription(rawDesc) ? '' : rawDesc;
+        final description =
+            PoiCategoryService.isTrivialDescription(rawDesc) ? '' : rawDesc;
 
         final facts = (enriched?.keyFacts.isNotEmpty == true)
             ? enriched!.keyFacts.map((f) => f.fact).toList()
             : updatedPoi.facts;
 
-        final isPlayingThisPoi = widget.controller.isPlaying &&
-            widget.controller.activePoi?.id == widget.poi.id;
-        final isPausedThisPoi = widget.controller.isAudioPaused &&
-            widget.controller.activePoi?.id == widget.poi.id;
-        final isAudioActiveThisPoi = isPlayingThisPoi || isPausedThisPoi;
-        final isAlreadyTriggered =
-            widget.controller.triggeredPoiIds.contains(widget.poi.id);
+        final isThis = c.activePoi?.id == widget.poi.id;
+        final isPlayingThisPoi = c.isPlaying && isThis;
+        final isAudioActiveThisPoi = c.isAudioActive && isThis;
+        final preparingThis = c.isProcessing && isThis;
+        final silent = c.isSilentPoi(widget.poi.id);
 
         final isProcessing = _isRequesting ||
             queuePos == 0 ||
-            (enriched != null && enriched.researchStatus == ResearchStatus.inProgress);
+            (enriched != null &&
+                enriched.researchStatus == ResearchStatus.inProgress);
 
-        // Determine badge label
-        String? badgeLabel;
-        if (enriched != null && enriched.sources.isNotEmpty) {
-          final firstSource = enriched.sources.first.type;
-          badgeLabel = firstSource == 'ai' ? 'ШІ-гід' : 'Вікіпедія';
-        } else if (updatedPoi.narrationText.isNotEmpty) {
-          badgeLabel = 'Аудіогід';
+        final kind = poiKindOf(widget.poi);
+        // What the text rests on: the user can see where it comes from.
+        final sourceTitles = (enriched?.sources ?? const <ResearchSource>[])
+            .where((s) => s.type != 'ai')
+            .map((s) => s.title)
+            .toSet()
+            .toList();
+
+        // Under the name: what it is, and how far away.
+        String subtitle = kind.label;
+        final pos = c.currentPosition;
+        if (pos != null && c.status == WalkStatus.walking) {
+          final d = Geolocator.distanceBetween(pos.latitude, pos.longitude,
+              widget.poi.latitude, widget.poi.longitude);
+          subtitle = '$subtitle · ${L.distance(d)}';
         }
 
-        final category = enriched?.category ?? PoiCategoryService().categorize(widget.poi.osmTags ?? {});
-        final catLabel = PoiCategoryService.categoryLabelUk(category);
-        final catEmoji = PoiCategoryService.categoryEmoji(category);
+        // The story leads; the description follows only when it says something else.
+        final lead = narration.isNotEmpty ? narration : description;
+        final showDescription =
+            narration.isNotEmpty && description.isNotEmpty && description != narration;
 
-        return Container(
-          constraints: BoxConstraints(
-            maxHeight: MediaQuery.of(context).size.height * 0.82,
-          ),
-          decoration: const BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
-          ),
-          child: SafeArea(
-            top: false,
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                // Drag handle
-                Container(
-                  margin: const EdgeInsets.only(top: 12, bottom: 8),
-                  width: 44,
-                  height: 4,
-                  decoration: BoxDecoration(
-                    color: NmColors.sand,
-                    borderRadius: BorderRadius.circular(2),
-                  ),
+        final textStyle = NmText.body;
+
+        final topInset = MediaQuery.of(context).padding.top;
+        final screenH = MediaQuery.of(context).size.height;
+        final photoH = math.min(330.0, screenH * 0.36);
+
+        return Scaffold(
+          backgroundColor: NmColors.background,
+          body: Stack(
+            children: [
+              // A real photo of the place (Wikimedia Commons), with its author and licence.
+              Positioned(
+                top: 0,
+                left: 0,
+                right: 0,
+                height: photoH,
+                child: FutureBuilder<PlacePhoto?>(
+                  future: c.findPhoto(widget.poi),
+                  initialData: c.photoOf(widget.poi.id),
+                  builder: (context, snap) {
+                    final photo = snap.data ?? c.photoOf(widget.poi.id);
+                    return NmPlaceHero(
+                      icon: kind.icon,
+                      photo: photo,
+                      caption: photo == null ? null : _photoCaption(photo),
+                    );
+                  },
                 ),
-
-                // Scrollable content
-                Flexible(
-                  child: SingleChildScrollView(
-                    padding: const EdgeInsets.fromLTRB(24, 8, 24, 16),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        // Title + Badge Row
-                        Row(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Expanded(
-                              child: Text(
-                                widget.poi.name,
-                                style: NmText.title(28),
+              ),
+              Positioned(
+                top: topInset + 12,
+                left: 16,
+                child: NmCircleButton(
+                  tooltip: L.t('Назад до мапи', 'Back to the map'),
+                  onPressed: () => Navigator.of(context).maybePop(),
+                  child: const NmIcon(NmIcons.back, size: 22),
+                ),
+              ),
+              // The white sheet with the text.
+              Positioned.fill(
+                top: photoH - 34,
+                child: Container(
+                  decoration: const BoxDecoration(
+                    color: NmColors.surface,
+                    borderRadius: BorderRadius.vertical(top: Radius.circular(32)),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      Expanded(
+                        child: SingleChildScrollView(
+                          padding: const EdgeInsets.fromLTRB(24, 28, 24, 16),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(widget.poi.shownName,
+                                  style: NmText.title(28).copyWith(height: 35 / 28)),
+                              const SizedBox(height: 6),
+                              Row(
+                                children: [
+                                  const NmIcon(NmIcons.pin, size: 15, color: NmColors.muted),
+                                  const SizedBox(width: 6),
+                                  Expanded(child: Text(subtitle, style: NmText.small)),
+                                ],
                               ),
-                            ),
-                            if (badgeLabel != null) ...[
-                              const SizedBox(width: 10),
-                              Container(
-                                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                                decoration: BoxDecoration(
-                                  color: NmColors.cream,
-                                  borderRadius: BorderRadius.circular(12),
-                                ),
-                                child: Text(
-                                  badgeLabel,
-                                  style: TextStyle(
-                                    fontSize: 12,
-                                    fontWeight: FontWeight.w600,
-                                    color: NmColors.ink,
+                              if (c.status == WalkStatus.walking) ...[
+                                const SizedBox(height: 14),
+                                _navigateButton(),
+                              ],
+                              const SizedBox(height: 18),
+
+                              // Still gathering information
+                              if (isProcessing &&
+                                  (narration.isEmpty || description.isEmpty)) ...[
+                                Container(
+                                  padding: const EdgeInsets.all(16),
+                                  decoration: BoxDecoration(
+                                    color: NmColors.background,
+                                    borderRadius: BorderRadius.circular(20),
                                   ),
-                                ),
-                              ),
-                            ],
-                          ],
-                        ),
-                        const SizedBox(height: 8),
-                        Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                          decoration: BoxDecoration(
-                            color: NmColors.cream,
-                            borderRadius: BorderRadius.circular(12),
-                          ),
-                          child: Text(
-                            '$catEmoji $catLabel',
-                            style: const TextStyle(
-                              fontSize: 12,
-                              fontWeight: FontWeight.w600,
-                              color: NmColors.ink,
-                            ),
-                          ),
-                        ),
-                        const SizedBox(height: 14),
-
-                        // Queue / Processing Banner
-                        if (isProcessing && (narration.isEmpty || description.isEmpty)) ...[
-                          Container(
-                            margin: const EdgeInsets.only(bottom: 16),
-                            padding: const EdgeInsets.all(16),
-                            decoration: BoxDecoration(
-                              color: NmColors.cream,
-                              borderRadius: BorderRadius.circular(16),
-                            ),
-                            child: Row(
-                              children: [
-                                const SizedBox(
-                                  width: 22,
-                                  height: 22,
-                                  child: CircularProgressIndicator(strokeWidth: 2.5),
-                                ),
-                                const SizedBox(width: 14),
-                                Expanded(
-                                  child: Column(
-                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                  child: Row(
                                     children: [
-                                      Text(
-                                        queuePos > 0
-                                            ? 'Об\'єкт у черзі на дослідження (позиція: $queuePos)...'
-                                            : 'Шишка шукає інформацію про це місце (Вікіпедія, ШІ)...',
-                                        style: TextStyle(
-                                          fontSize: 15,
-                                          color: NmColors.ink,
-                                          fontWeight: FontWeight.w600,
+                                      const SizedBox(
+                                        width: 22,
+                                        height: 22,
+                                        child: CircularProgressIndicator(
+                                          strokeWidth: 3,
+                                          backgroundColor: NmColors.cream,
                                         ),
                                       ),
-                                      const SizedBox(height: 4),
-                                      Text(
-                                        'Зачекайте 1-2 секунди, інформація завантажується автоматично.',
-                                        style: TextStyle(fontSize: 13, color: NmColors.muted),
+                                      const SizedBox(width: 14),
+                                      Expanded(
+                                        child: Column(
+                                          crossAxisAlignment: CrossAxisAlignment.start,
+                                          children: [
+                                            Text(
+                                              queuePos > 0
+                                                  ? L.t(
+                                                      'Об\'єкт у черзі на дослідження (позиція: $queuePos)…',
+                                                      'The place is queued for research (position: $queuePos)…')
+                                                  : L.t(
+                                                      'Шукаємо інформацію про це місце (Вікіпедія, Вікідані)…',
+                                                      'Looking for information about this place (Wikipedia, Wikidata)…'),
+                                              style: const TextStyle(
+                                                fontSize: 15,
+                                                color: NmColors.ink,
+                                                fontWeight: FontWeight.w600,
+                                              ),
+                                            ),
+                                            const SizedBox(height: 4),
+                                            Text(
+                                              L.t('Зачекайте 1-2 секунди, інформація завантажується автоматично.',
+                                                  'Wait a second or two, the information is loading automatically.'),
+                                              style: NmText.small,
+                                            ),
+                                          ],
+                                        ),
                                       ),
                                     ],
                                   ),
                                 ),
+                                const SizedBox(height: 16),
                               ],
-                            ),
-                          ),
-                        ],
 
-                        // 🎧 AI Narration Card
-                        if (narration.isNotEmpty) ...[
-                          Container(
-                            margin: const EdgeInsets.only(bottom: 18),
-                            padding: const EdgeInsets.all(16),
-                            decoration: BoxDecoration(
-                              color: NmColors.cream, // Soft cream panel
-                              borderRadius: BorderRadius.circular(16),
-                              boxShadow: [
-                                BoxShadow(
-                                  color: Colors.black.withValues(alpha: 0.03),
-                                  blurRadius: 6,
-                                  offset: const Offset(0, 2),
-                                ),
+                              if (silent) ...[
+                                _silentNote(),
+                                const SizedBox(height: 16),
                               ],
-                            ),
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Row(
-                                  children: [
-                                    const Icon(Icons.headphones, color: NmColors.ink, size: 22),
-                                    const SizedBox(width: 8),
-                                    const Expanded(
-                                      child: Text(
-                                        'Розповідь аудіогіда:',
-                                        style: TextStyle(
+
+                              // The story itself (the spoken word lights up while it plays).
+                              if (lead.isNotEmpty) ...[
+                                if (lead == narration)
+                                  SpokenText(
+                                    text: narration,
+                                    // Only while this place's story (not the chime) is playing.
+                                    active: isAudioActiveThisPoi && c.isNarrationLoaded,
+                                    position: c.audioPositionStream,
+                                    currentPosition: () => c.audioPosition,
+                                    duration: () => c.audioDuration,
+                                    style: textStyle,
+                                  )
+                                else
+                                  Text(lead, style: textStyle),
+                                const SizedBox(height: 16),
+                              ],
+
+                              if (showDescription) ...[
+                                Text(L.t('Про місце', 'About the place'),
+                                    style: NmText.title(18)),
+                                const SizedBox(height: 10),
+                                Text(description, style: textStyle),
+                                const SizedBox(height: 16),
+                              ],
+
+                              if (facts.isNotEmpty) ...[
+                                Text(L.t('Цікаві факти', 'Interesting facts'),
+                                    style: NmText.title(18)),
+                                const SizedBox(height: 10),
+                                for (final f in facts)
+                                  Padding(
+                                    padding: const EdgeInsets.only(bottom: 8),
+                                    child: Row(
+                                      crossAxisAlignment: CrossAxisAlignment.start,
+                                      children: [
+                                        Container(
+                                          width: 6,
+                                          height: 6,
+                                          margin: const EdgeInsets.only(top: 9),
+                                          decoration: const BoxDecoration(
+                                            color: NmColors.ochre,
+                                            shape: BoxShape.circle,
+                                          ),
+                                        ),
+                                        const SizedBox(width: 12),
+                                        Expanded(child: Text(f, style: textStyle)),
+                                      ],
+                                    ),
+                                  ),
+                                const SizedBox(height: 8),
+                              ],
+
+                              if (sourceTitles.isNotEmpty) ...[
+                                Text(
+                                  L.t('Джерела: ${sourceTitles.join(' · ')}',
+                                      'Sources: ${sourceTitles.join(' · ')}'),
+                                  style: NmText.small,
+                                ),
+                                const SizedBox(height: 12),
+                              ],
+
+                              // Nothing at all yet: offer to prepare it.
+                              if (!isProcessing &&
+                                  !silent &&
+                                  narration.isEmpty &&
+                                  description.isEmpty &&
+                                  facts.isEmpty) ...[
+                                Container(
+                                  padding: const EdgeInsets.all(16),
+                                  decoration: BoxDecoration(
+                                    color: NmColors.background,
+                                    borderRadius: BorderRadius.circular(20),
+                                  ),
+                                  child: Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
+                                      Text(
+                                        L.t('Цей об\'єкт знайдено на карті',
+                                            'This place was found on the map'),
+                                        style: const TextStyle(
                                           fontSize: 16,
                                           fontWeight: FontWeight.w600,
                                           color: NmColors.ink,
                                         ),
                                       ),
-                                    ),
-                                  ],
-                                ),
-                                const SizedBox(height: 10),
-                                Text(
-                                  narration,
-                                  style: const TextStyle(
-                                    fontSize: 15,
-                                    color: NmColors.ink,
-                                    height: 1.45,
-                                  ),
-                                ),
-                                const SizedBox(height: 14),
-                                if (isAudioActiveThisPoi) ...[
-                                  Row(
-                                    children: [
-                                      Expanded(
-                                        child: ElevatedButton.icon(
-                                          onPressed: () {
-                                            if (isPlayingThisPoi) {
-                                              widget.controller.pauseAudio();
-                                            } else {
-                                              widget.controller.resumeAudio();
-                                            }
-                                          },
-                                          icon: Icon(
-                                            isPlayingThisPoi
-                                                ? Icons.pause_circle_filled_rounded
-                                                : Icons.play_circle_filled_rounded,
-                                            size: 20,
-                                          ),
-                                          label: Text(
-                                            isPlayingThisPoi ? 'Пауза' : 'Продовжити',
-                                            style: const TextStyle(
-                                              fontWeight: FontWeight.w600,
-                                              fontSize: 15,
-                                            ),
-                                          ),
-                                          style: NmButtons.secondary(),
-                                        ),
+                                      const SizedBox(height: 6),
+                                      Text(
+                                        L.t('У відкритих реєстрах стаття відсутня, проте ШІ може підготувати опис та розповідь прямо зараз.',
+                                            'There is no article in open registers, but the AI can prepare a description and story right now.'),
+                                        style: NmText.small,
                                       ),
-                                      const SizedBox(width: 10),
-                                      Expanded(
-                                        child: ElevatedButton.icon(
-                                          onPressed: () => widget.controller.stopAudio(),
-                                          icon: const Icon(Icons.stop_circle_outlined, size: 20),
-                                          label: const Text(
-                                            'Зупинити',
-                                            style: TextStyle(
-                                              fontWeight: FontWeight.w600,
-                                              fontSize: 15,
-                                            ),
-                                          ),
-                                          style: NmButtons.destructive(),
-                                        ),
+                                      const SizedBox(height: 12),
+                                      OutlinedButton(
+                                        onPressed: () {
+                                          setState(() => _isRequesting = true);
+                                          c
+                                              .researchPoiNow(widget.poi, force: true)
+                                              .whenComplete(() {
+                                            if (mounted) {
+                                              setState(() => _isRequesting = false);
+                                            }
+                                          });
+                                        },
+                                        style: NmButtons.secondary(minHeight: 48),
+                                        child: Text(L.t('Згенерувати опис ШІ зараз',
+                                            'Generate the AI description now')),
                                       ),
                                     ],
                                   ),
-                                ] else ...[
-                                  if (widget.controller.isProcessing && widget.controller.activePoi?.id == widget.poi.id) ...[
-                                    SizedBox(
-                                      width: double.infinity,
-                                      child: ElevatedButton.icon(
-                                        onPressed: null,
-                                        icon: const SizedBox(
-                                          width: 18,
-                                          height: 18,
-                                          child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
-                                        ),
-                                        label: const Text(
-                                          'Готуємо розповідь…',
-                                          style: TextStyle(
-                                            fontWeight: FontWeight.w600,
-                                            fontSize: 15,
-                                          ),
-                                        ),
-                                        style: NmButtons.primary(),
-                                      ),
-                                    ),
-                                  ] else ...[
-                                    SizedBox(
-                                      width: double.infinity,
-                                      child: ElevatedButton.icon(
-                                        onPressed: () {
-                                          widget.controller.playNarrationForPoi(widget.poi);
-                                        },
-                                        icon: Icon(
-                                          isAlreadyTriggered
-                                              ? Icons.replay_rounded
-                                              : Icons.volume_up,
-                                          size: 20,
-                                        ),
-                                        label: Text(
-                                          isAlreadyTriggered
-                                              ? 'Прослухати знову'
-                                              : 'Прослухати зараз',
-                                          style: const TextStyle(
-                                            fontWeight: FontWeight.w600,
-                                            fontSize: 15,
-                                          ),
-                                        ),
-                                        style: NmButtons.primary(),
-                                      ),
-                                    ),
-                                  ],
-                                ],
-                              ],
-                            ),
-                          ),
-                        ] else if (!isProcessing) ...[
-                          Container(
-                            margin: const EdgeInsets.only(bottom: 18),
-                            padding: const EdgeInsets.all(16),
-                            decoration: BoxDecoration(
-                              color: NmColors.cream,
-                              borderRadius: BorderRadius.circular(16),
-                            ),
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                const Row(
-                                  children: [
-                                    Icon(Icons.headphones, color: NmColors.ink, size: 22),
-                                    SizedBox(width: 8),
-                                    Text(
-                                      'Аудіогід від ШІ:',
-                                      style: TextStyle(
-                                        fontSize: 16,
-                                        fontWeight: FontWeight.w600,
-                                        color: NmColors.ink,
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                                const SizedBox(height: 8),
-                                const Text(
-                                  'ШІ може озвучити розповідь про це місце для вас прямо зараз.',
-                                  style: TextStyle(fontSize: 14, color: NmColors.ink),
                                 ),
                                 const SizedBox(height: 12),
-                                SizedBox(
-                                  width: double.infinity,
-                                  child: ElevatedButton.icon(
-                                    onPressed: (widget.controller.isProcessing && widget.controller.activePoi?.id == widget.poi.id)
+                              ],
+
+                              Align(
+                                alignment: Alignment.centerLeft,
+                                child: _reportTextButton(context, c, widget.poi),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+
+                      // «Прослухати» · «Запитати ШІ»
+                      SafeArea(
+                        top: false,
+                        child: Padding(
+                          padding: const EdgeInsets.fromLTRB(24, 14, 24, 16),
+                          child: Row(
+                            children: [
+                              if (!silent) ...[
+                                Expanded(
+                                  flex: 10,
+                                  child: Semantics(
+                                    label: isAudioActiveThisPoi
                                         ? null
-                                        : () {
-                                            widget.controller.playNarrationForPoi(widget.poi);
-                                          },
-                                    icon: (widget.controller.isProcessing && widget.controller.activePoi?.id == widget.poi.id)
-                                        ? const SizedBox(
-                                            width: 18,
-                                            height: 18,
-                                            child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
-                                          )
-                                        : const Icon(Icons.volume_up, size: 20),
-                                    label: Text(
-                                      (widget.controller.isProcessing && widget.controller.activePoi?.id == widget.poi.id)
-                                          ? 'Готуємо розповідь…'
-                                          : 'Прослухати розповідь ШІ',
-                                      style: const TextStyle(
-                                        fontWeight: FontWeight.w600,
-                                        fontSize: 15,
+                                        : L.t('Прослухати розповідь знову',
+                                            'Listen to the story again'),
+                                    child: ElevatedButton(
+                                      onPressed: preparingThis
+                                          ? null
+                                          : () {
+                                              if (isPlayingThisPoi) {
+                                                c.pauseAudio();
+                                              } else if (isAudioActiveThisPoi) {
+                                                c.resumeAudio();
+                                              } else {
+                                                c.playNarrationForPoi(widget.poi);
+                                              }
+                                            },
+                                      style: NmButtons.secondary(),
+                                      child: Text(
+                                        preparingThis
+                                            ? L.t('Готуємо…', 'Preparing…')
+                                            : isPlayingThisPoi
+                                                ? L.t('Пауза', 'Pause')
+                                                : isAudioActiveThisPoi
+                                                    ? L.t('Продовжити', 'Resume')
+                                                    : L.t('Прослухати', 'Listen'),
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
                                       ),
                                     ),
-                                    style: NmButtons.primary(),
                                   ),
                                 ),
+                                const SizedBox(width: 10),
                               ],
-                            ),
-                          ),
-                        ],
-
-                        // 🏛 Description Section
-                        if (description.isNotEmpty) ...[
-                          Text(
-                            'Про місце',
-                            style: NmText.title(18),
-                          ),
-                          const SizedBox(height: 6),
-                          Text(
-                            description,
-                            style: const TextStyle(
-                              fontSize: 15,
-                              color: NmColors.ink,
-                              height: 1.4,
-                            ),
-                          ),
-                          const SizedBox(height: 16),
-                        ],
-
-                        // 💡 Key Facts Section
-                        if (facts.isNotEmpty) ...[
-                          Text(
-                            'Цікаві факти',
-                            style: NmText.title(18),
-                          ),
-                          const SizedBox(height: 8),
-                          ...facts.map((f) => Padding(
-                                padding: const EdgeInsets.only(bottom: 8),
-                                child: Row(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    Text(
-                                      '• ',
-                                      style: const TextStyle(
-                                        color: NmColors.ochre,
-                                        fontSize: 16,
-                                        fontWeight: FontWeight.w600,
-                                      ),
-                                    ),
-                                    Expanded(
-                                      child: Text(
-                                        f,
-                                        style: const TextStyle(
-                                          fontSize: 14,
-                                          color: NmColors.ink,
-                                          height: 1.35,
-                                        ),
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              )),
-                          const SizedBox(height: 16),
-                        ],
-
-                        // Fallback message if no data at all yet
-                        if (!isProcessing && narration.isEmpty && description.isEmpty && facts.isEmpty) ...[
-                          Container(
-                            padding: const EdgeInsets.all(14),
-                            decoration: BoxDecoration(
-                              color: NmColors.background,
-                              borderRadius: BorderRadius.circular(14),
-                            ),
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Row(
-                                  children: [
-                                    Icon(Icons.info_outline, size: 20, color: NmColors.muted),
-                                    const SizedBox(width: 8),
-                                    Expanded(
-                                      child: Text(
-                                        'Цей об\'єкт знайдено на карті',
-                                        style: TextStyle(
-                                          fontSize: 15,
-                                          fontWeight: FontWeight.w600,
-                                          color: NmColors.ink,
-                                        ),
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                                const SizedBox(height: 6),
-                                Text(
-                                  'У відкритих реєстрах стаття відсутня, проте ШІ може підготувати опис та розповідь прямо зараз.',
-                                  style: TextStyle(fontSize: 14, color: NmColors.muted, height: 1.35),
-                                ),
-                                const SizedBox(height: 12),
-                                OutlinedButton.icon(
+                              Expanded(
+                                flex: 13,
+                                child: ElevatedButton.icon(
                                   onPressed: () {
-                                    setState(() => _isRequesting = true);
-                                    widget.controller.researchPoiNow(widget.poi, force: true).whenComplete(() {
-                                      if (mounted) setState(() => _isRequesting = false);
-                                    });
+                                    c.trackUi('chat_opened', widget.poi);
+                                    _showAiChatModal(context, c, widget.poi);
                                   },
-                                  icon: const Icon(Icons.auto_awesome, size: 18),
-                                  label: const Text('Згенерувати опис ШІ зараз'),
+                                  icon: const NmIcon(NmIcons.ai, size: 20, color: Colors.white),
+                                  label: Text(
+                                    L.t('Запитати ШІ', 'Ask the AI'),
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                  style: NmButtons.primary(),
                                 ),
-                              ],
-                            ),
+                              ),
+                            ],
                           ),
-                          const SizedBox(height: 16),
-                        ],
-                      ],
-                    ),
-                  ),
-                ),
-
-                // Ask AI Button
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(24, 0, 24, 10),
-                  child: SizedBox(
-                    width: double.infinity,
-                    child: ElevatedButton.icon(
-                      style: NmButtons.primary(),
-                      onPressed: () {
-                        Navigator.pop(context);
-                        _showAiChatModal(context, widget.controller, widget.poi);
-                      },
-                      icon: const Icon(Icons.auto_awesome, size: 20),
-                      label: const Text(
-                        'Запитати ШІ про це місце',
-                        style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+                        ),
                       ),
-                    ),
+                    ],
                   ),
                 ),
-
-                // Bottom Close Button
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(24, 0, 24, 16),
-                  child: SizedBox(
-                    width: double.infinity,
-                    child: OutlinedButton(
-                      style: NmButtons.secondary(),
-                      onPressed: () => Navigator.pop(context),
-                      child: const Text(
-                        'Закрити',
-                        style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
-                      ),
-                    ),
-                  ),
-                ),
-              ],
-            ),
+              ),
+            ],
           ),
         );
       },
@@ -1525,20 +2564,26 @@ class _PoiDetailsSheetState extends State<_PoiDetailsSheet> {
   }
 }
 
-/// Helper to open the AI Chat Bottom Sheet.
-void _showAiChatModal(BuildContext context, WalkController controller, Poi poi) {
-  showModalBottomSheet(
-    context: context,
-    isScrollControlled: true,
-    backgroundColor: Colors.transparent,
+/// "Фото: Вікіпедія · Author · CC BY-SA 4.0" — the author and licence the photo's licence asks for.
+String _photoCaption(PlacePhoto p) {
+  final where = p.source == PhotoSource.wikipedia
+      ? L.t('Фото: Вікіпедія', 'Photo: Wikipedia')
+      : L.t('Фото: Вікісховище', 'Photo: Wikimedia Commons');
+  return [where, if (p.author != null) p.author!, if (p.license != null) p.license!].join(' · ');
+}
+
+/// Opens the full-screen chat with the guide about [poi].
+void _showAiChatModal(
+    BuildContext context, WalkController controller, Poi poi) {
+  Navigator.of(context).push(MaterialPageRoute(
     builder: (context) => _AiChatSheet(
       controller: controller,
       poi: poi,
     ),
-  );
+  ));
 }
 
-/// Interactive AI Chat Bottom Sheet for querying Gemini about a POI.
+/// Screen 6 — ask the guide (Gemini) about a place.
 class _AiChatSheet extends StatefulWidget {
   final WalkController controller;
   final Poi poi;
@@ -1555,17 +2600,19 @@ class _AiChatSheet extends StatefulWidget {
 class _AiChatSheetState extends State<_AiChatSheet> {
   final TextEditingController _textController = TextEditingController();
   final ScrollController _scrollController = ScrollController();
-  List<ChatMessage> get _messages => widget.controller.getChatHistory(widget.poi.id);
+  List<ChatMessage> get _messages =>
+      widget.controller.getChatHistory(widget.poi.id);
   bool _isLoading = false;
   String? _currentlySpeakingText;
 
-  final List<String> _quickQuestions = const [
-    'Коли це з\'явилося?',
-    'Чим особливе це місце?',
-    'Хто автор чи архітектор?',
-    'Розкажи цікавий факт',
-    'Яка тут історія чи легенда?',
-  ];
+  List<String> get _quickQuestions => [
+        L.t('Коли це з\'явилося?', 'When was it built?'),
+        L.t('Чим особливе це місце?', 'What is special about this place?'),
+        L.t('Хто автор чи архітектор?', 'Who is the author or architect?'),
+        L.t('Розкажи цікавий факт', 'Tell me an interesting fact'),
+        L.t('Яка тут історія чи легенда?',
+            'What is the history or legend here?'),
+      ];
 
   @override
   void initState() {
@@ -1575,11 +2622,16 @@ class _AiChatSheetState extends State<_AiChatSheet> {
       widget.controller.addChatMessage(
         widget.poi.id,
         ChatMessage(
-          text: 'Вітаю! Я ваш ШІ-гід. Запитайте мене будь-що про «${widget.poi.name}»!',
+          text: L.t(
+              'Запитайте мене про «${widget.poi.shownName}»: його історію, людей і події, пов\'язані з ним. '
+                  'Відповідаю лише за перевіреними джерелами.',
+              'Ask me about "${widget.poi.shownName}": its history and the people and events connected with it. '
+                  'I answer only from verified sources.'),
           isUser: false,
         ),
       );
     }
+    _scrollToBottom();
   }
 
   @override
@@ -1622,7 +2674,8 @@ class _AiChatSheetState extends State<_AiChatSheet> {
       widget.controller.addChatMessage(
         widget.poi.id,
         ChatMessage(
-          text: 'Вибачте, виникла помилка зв\'язку з ШІ: $e',
+          text: L.t('Вибачте, виникла помилка зв\'язку з ШІ: $e',
+              'Sorry, there was a connection error with the AI: $e'),
           isUser: false,
         ),
       );
@@ -1672,120 +2725,63 @@ class _AiChatSheetState extends State<_AiChatSheet> {
 
   @override
   Widget build(BuildContext context) {
-    final bottomInset = MediaQuery.of(context).viewInsets.bottom;
-    final screenHeight = MediaQuery.of(context).size.height;
-    final modalHeight = (screenHeight * 0.85)
-        .clamp(280.0, math.max(280.0, screenHeight - bottomInset - 40))
-        .toDouble();
-
-    return Padding(
-      padding: EdgeInsets.only(bottom: bottomInset),
-      child: Container(
-        height: modalHeight,
-        decoration: const BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
-        ),
+    return Scaffold(
+      backgroundColor: NmColors.surface,
+      resizeToAvoidBottomInset: true,
+      body: SafeArea(
         child: Column(
           children: [
-            // Drag handle
-            Container(
-              margin: const EdgeInsets.only(top: 12, bottom: 8),
-              width: 40,
-              height: 4,
-              decoration: BoxDecoration(
-                color: NmColors.sand,
-                borderRadius: BorderRadius.circular(2),
-              ),
-            ),
-
-            // Header
+            // Header: back · «Запитайте гіда» / «Про …» · AI mark
             Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
+              padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
               child: Row(
                 children: [
-                  Container(
-                    width: 38,
-                    height: 38,
-                    decoration: const BoxDecoration(
-                      color: NmColors.cream,
-                      shape: BoxShape.circle,
-                    ),
-                    child: const Icon(
-                      Icons.auto_awesome,
-                      color: NmColors.ink,
-                      size: 20,
-                    ),
+                  NmCircleButton(
+                    tooltip: L.t('Назад', 'Back'),
+                    background: NmColors.background,
+                    shadow: false,
+                    onPressed: () => Navigator.of(context).maybePop(),
+                    child: const NmIcon(NmIcons.back, size: 22),
                   ),
                   const SizedBox(width: 12),
                   Expanded(
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
+                        Text(L.t('Запитайте гіда', 'Ask the guide'),
+                            style: NmText.title(20)),
+                        const SizedBox(height: 2),
                         Text(
-                          widget.poi.name,
-                          style: NmText.title(20),
+                          L.t('Про «${widget.poi.shownName}»',
+                              'About "${widget.poi.shownName}"'),
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
-                        ),
-                        Text(
-                          'ШІ-екскурсовод • Gemini',
-                          style: TextStyle(
-                            fontSize: 12,
-                            color: NmColors.muted,
-                          ),
+                          style: NmText.small,
                         ),
                       ],
                     ),
                   ),
-                  IconButton(
-                    icon: const Icon(Icons.close, size: 24),
-                    onPressed: () => Navigator.pop(context),
+                  const SizedBox(width: 12),
+                  Container(
+                    width: 44,
+                    height: 44,
+                    decoration: const BoxDecoration(
+                      color: NmColors.cream,
+                      shape: BoxShape.circle,
+                    ),
+                    child: const Center(child: NmIcon(NmIcons.ai, size: 22)),
                   ),
                 ],
               ),
             ),
 
-            // Quick suggestion chips
-            Container(
-              height: 48,
-              padding: const EdgeInsets.symmetric(vertical: 6),
-              child: ListView.separated(
-                padding: const EdgeInsets.symmetric(horizontal: 16),
-                scrollDirection: Axis.horizontal,
-                itemCount: _quickQuestions.length,
-                separatorBuilder: (_, __) => const SizedBox(width: 8),
-                itemBuilder: (context, index) {
-                  final q = _quickQuestions[index];
-                  return InkWell(
-                    onTap: _isLoading ? null : () => _sendMessage(q),
-                    borderRadius: BorderRadius.circular(16),
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                      decoration: BoxDecoration(
-                        color: NmColors.background,
-                        borderRadius: BorderRadius.circular(16),
-                      ),
-                      child: Text(
-                        q,
-                        style: TextStyle(
-                          fontSize: 13,
-                          color: _isLoading ? NmColors.stone : NmColors.ink,
-                          fontWeight: FontWeight.w500,
-                        ),
-                      ),
-                    ),
-                  );
-                },
-              ),
-            ),
-
-            // Message history list
+            // Messages
             Expanded(
               child: ListView.builder(
                 controller: _scrollController,
-                keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                keyboardDismissBehavior:
+                    ScrollViewKeyboardDismissBehavior.onDrag,
+                padding: const EdgeInsets.fromLTRB(20, 16, 20, 16),
                 itemCount: _messages.length + (_isLoading ? 1 : 0),
                 itemBuilder: (context, index) {
                   if (index == _messages.length && _isLoading) {
@@ -1797,26 +2793,46 @@ class _AiChatSheetState extends State<_AiChatSheet> {
               ),
             ),
 
-            // Input Area
-            Container(
-              padding: EdgeInsets.only(
-                left: 16,
-                right: 16,
-                top: 10,
-                bottom: MediaQuery.of(context).padding.bottom > 0
-                    ? MediaQuery.of(context).padding.bottom + 8
-                    : 14,
+            // Quick questions
+            SizedBox(
+              height: 56,
+              child: ListView.separated(
+                padding: const EdgeInsets.fromLTRB(20, 4, 20, 12),
+                scrollDirection: Axis.horizontal,
+                itemCount: _quickQuestions.length,
+                separatorBuilder: (_, __) => const SizedBox(width: 8),
+                itemBuilder: (context, index) {
+                  final q = _quickQuestions[index];
+                  return OutlinedButton(
+                    onPressed: _isLoading ? null : () => _sendMessage(q),
+                    style: ButtonStyle(
+                      backgroundColor:
+                          const WidgetStatePropertyAll(NmColors.surface),
+                      foregroundColor: WidgetStateProperty.resolveWith((s) =>
+                          s.contains(WidgetState.disabled)
+                              ? NmColors.stone
+                              : NmColors.ink),
+                      side: const WidgetStatePropertyAll(
+                          BorderSide(color: NmColors.line)),
+                      shape: const WidgetStatePropertyAll(StadiumBorder()),
+                      minimumSize: const WidgetStatePropertyAll(Size(0, 40)),
+                      padding: const WidgetStatePropertyAll(
+                          EdgeInsets.symmetric(horizontal: 16)),
+                      textStyle: const WidgetStatePropertyAll(TextStyle(
+                        fontFamily: NmFonts.sans,
+                        fontSize: 13,
+                        fontWeight: FontWeight.w600,
+                      )),
+                    ),
+                    child: Text(q),
+                  );
+                },
               ),
-              decoration: BoxDecoration(
-                color: Colors.white,
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.black.withValues(alpha: 0.05),
-                    offset: const Offset(0, -2),
-                    blurRadius: 6,
-                  ),
-                ],
-              ),
+            ),
+
+            // Input
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
               child: Row(
                 children: [
                   Expanded(
@@ -1824,64 +2840,36 @@ class _AiChatSheetState extends State<_AiChatSheet> {
                       controller: _textController,
                       textInputAction: TextInputAction.send,
                       onSubmitted: _sendMessage,
+                      style: NmText.body,
                       decoration: InputDecoration(
-                        hintText: 'Запитайте про «${widget.poi.name}»...',
-                        hintStyle: TextStyle(
-                          fontSize: 15,
-                          color: NmColors.stone,
-                        ),
-                        filled: true,
-                        fillColor: NmColors.background,
-                        border: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(24),
-                          borderSide: BorderSide.none,
-                        ),
+                        hintText: L.t('Запитайте про це місце…',
+                            'Ask about this place…'),
+                        // 52 px tall pill, as in the design.
                         contentPadding: const EdgeInsets.symmetric(
-                          horizontal: 18,
-                          vertical: 12,
-                        ),
+                            horizontal: 20, vertical: 14),
                       ),
-                      style: const TextStyle(fontSize: 15),
                     ),
                   ),
-                  const SizedBox(width: 10),
-                  // Send button
-                  GestureDetector(
-                    onTap: () => _sendMessage(_textController.text),
-                    child: Container(
-                      width: 48,
-                      height: 48,
-                      decoration: BoxDecoration(
-                        color: _isLoading
-                            ? NmColors.stone
-                            : NmColors.ink,
-                        shape: BoxShape.circle,
-                        boxShadow: [
-                          if (!_isLoading)
-                            BoxShadow(
-                              color: NmColors.ink.withValues(alpha: 0.35),
-                              blurRadius: 8,
-                              offset: const Offset(0, 3),
-                            ),
-                        ],
-                      ),
-                      child: _isLoading
-                          ? const Center(
-                              child: SizedBox(
-                                width: 20,
-                                height: 20,
-                                child: CircularProgressIndicator(
-                                  color: Colors.white,
-                                  strokeWidth: 2,
-                                ),
-                              ),
-                            )
-                          : const Icon(
-                              Icons.send_rounded,
+                  const SizedBox(width: 8),
+                  NmCircleButton(
+                    size: 52,
+                    tooltip: L.t('Надіслати', 'Send'),
+                    background: _isLoading ? NmColors.stone : NmColors.ink,
+                    shadow: false,
+                    onPressed: _isLoading
+                        ? null
+                        : () => _sendMessage(_textController.text),
+                    child: _isLoading
+                        ? const SizedBox(
+                            width: 20,
+                            height: 20,
+                            child: CircularProgressIndicator(
                               color: Colors.white,
-                              size: 22,
+                              strokeWidth: 2,
                             ),
-                    ),
+                          )
+                        : const NmIcon(NmIcons.send,
+                            size: 22, color: Colors.white),
                   ),
                 ],
               ),
@@ -1893,126 +2881,112 @@ class _AiChatSheetState extends State<_AiChatSheet> {
   }
 
   Widget _buildMessageBubble(ChatMessage msg) {
+    final width = MediaQuery.of(context).size.width;
     if (msg.isUser) {
       return Padding(
-        padding: const EdgeInsets.only(bottom: 12),
+        padding: const EdgeInsets.only(bottom: 16),
         child: Align(
           alignment: Alignment.centerRight,
           child: Container(
-            constraints: BoxConstraints(
-              maxWidth: MediaQuery.of(context).size.width * 0.78,
-            ),
+            constraints: BoxConstraints(maxWidth: width * 0.78),
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
             decoration: const BoxDecoration(
               color: NmColors.ink,
               borderRadius: BorderRadius.only(
-                topLeft: Radius.circular(18),
-                topRight: Radius.circular(18),
-                bottomLeft: Radius.circular(18),
-                bottomRight: Radius.circular(4),
+                topLeft: Radius.circular(22),
+                topRight: Radius.circular(22),
+                bottomLeft: Radius.circular(22),
+                bottomRight: Radius.circular(6),
               ),
             ),
             child: Text(
               msg.text,
-              style: const TextStyle(
-                color: Colors.white,
-                fontSize: 15,
-                height: 1.35,
-              ),
-            ),
-          ),
-        ),
-      );
-    } else {
-      final isSpeaking = _currentlySpeakingText == msg.text;
-      return Padding(
-        padding: const EdgeInsets.only(bottom: 12),
-        child: Align(
-          alignment: Alignment.centerLeft,
-          child: Container(
-            constraints: BoxConstraints(
-              maxWidth: MediaQuery.of(context).size.width * 0.85,
-            ),
-            padding: const EdgeInsets.fromLTRB(16, 12, 12, 10),
-            decoration: BoxDecoration(
-              color: NmColors.background,
-              borderRadius: const BorderRadius.only(
-                topLeft: Radius.circular(18),
-                topRight: Radius.circular(18),
-                bottomRight: Radius.circular(18),
-                bottomLeft: Radius.circular(4),
-              ),
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  msg.text,
-                  style: const TextStyle(
-                    color: NmColors.ink,
-                    fontSize: 15,
-                    height: 1.4,
-                  ),
-                ),
-                const SizedBox(height: 6),
-                Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    InkWell(
-                      onTap: () => _speakMessage(msg.text),
-                      borderRadius: BorderRadius.circular(16),
-                      child: Padding(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 6,
-                          vertical: 4,
-                        ),
-                        child: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Icon(
-                              isSpeaking
-                                  ? Icons.stop_circle_outlined
-                                  : Icons.volume_up_outlined,
-                              size: 18,
-                              color: isSpeaking
-                                  ? NmColors.ink
-                                  : NmColors.muted,
-                            ),
-                            const SizedBox(width: 4),
-                            Text(
-                              isSpeaking ? 'Зупинити' : 'Озвучити',
-                              style: TextStyle(
-                                fontSize: 12,
-                                fontWeight: FontWeight.w600,
-                                color: isSpeaking
-                                    ? NmColors.ink
-                                    : NmColors.muted,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ],
+              style: NmText.body.copyWith(color: Colors.white),
             ),
           ),
         ),
       );
     }
+
+    final isSpeaking = _currentlySpeakingText == msg.text;
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 16),
+      child: Align(
+        alignment: Alignment.centerLeft,
+        child: ConstrainedBox(
+          constraints: BoxConstraints(maxWidth: width * 0.86),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                decoration: const BoxDecoration(
+                  color: NmColors.background,
+                  borderRadius: BorderRadius.only(
+                    topLeft: Radius.circular(22),
+                    topRight: Radius.circular(22),
+                    bottomRight: Radius.circular(22),
+                    bottomLeft: Radius.circular(6),
+                  ),
+                ),
+                child: Text(msg.text, style: NmText.body),
+              ),
+              const SizedBox(height: 8),
+              SizedBox(
+                height: 36,
+                child: OutlinedButton.icon(
+                  onPressed: () => _speakMessage(msg.text),
+                  icon: NmIcon(
+                    isSpeaking ? NmIcons.stop : NmIcons.volume,
+                    size: 15,
+                    color: isSpeaking ? Colors.white : NmColors.ink,
+                  ),
+                  label: Text(isSpeaking
+                      ? L.t('Зупинити', 'Stop')
+                      : L.t('Озвучити', 'Read aloud')),
+                  style: ButtonStyle(
+                    backgroundColor: WidgetStatePropertyAll(
+                        isSpeaking ? NmColors.ink : NmColors.surface),
+                    foregroundColor: WidgetStatePropertyAll(
+                        isSpeaking ? Colors.white : NmColors.ink),
+                    side: WidgetStatePropertyAll(isSpeaking
+                        ? BorderSide.none
+                        : const BorderSide(color: NmColors.line)),
+                    shape: const WidgetStatePropertyAll(StadiumBorder()),
+                    minimumSize: const WidgetStatePropertyAll(Size(0, 36)),
+                    padding: const WidgetStatePropertyAll(
+                        EdgeInsets.symmetric(horizontal: 14)),
+                    textStyle: const WidgetStatePropertyAll(TextStyle(
+                      fontFamily: NmFonts.sans,
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600,
+                    )),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 
   Widget _buildLoadingBubble() {
     return Padding(
-      padding: const EdgeInsets.only(bottom: 12),
+      padding: const EdgeInsets.only(bottom: 16),
       child: Align(
         alignment: Alignment.centerLeft,
         child: Container(
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-          decoration: BoxDecoration(
+          decoration: const BoxDecoration(
             color: NmColors.background,
-            borderRadius: BorderRadius.circular(16),
+            borderRadius: BorderRadius.only(
+              topLeft: Radius.circular(22),
+              topRight: Radius.circular(22),
+              bottomRight: Radius.circular(22),
+              bottomLeft: Radius.circular(6),
+            ),
           ),
           child: Row(
             mainAxisSize: MainAxisSize.min,
@@ -2027,14 +3001,290 @@ class _AiChatSheetState extends State<_AiChatSheet> {
               ),
               const SizedBox(width: 10),
               Text(
-                'ШІ думає над відповіддю...',
-                style: TextStyle(
-                  color: NmColors.muted,
-                  fontSize: 14,
-                  fontStyle: FontStyle.italic,
-                ),
+                L.t('Гід думає над відповіддю…', 'The guide is thinking…'),
+                style: NmText.small,
               ),
             ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// "This place is on the map but has no verified story, so it is not narrated."
+Widget _silentNote() {
+  return Container(
+    padding: const EdgeInsets.all(12),
+    decoration: BoxDecoration(
+      color: NmColors.cream,
+      borderRadius: BorderRadius.circular(14),
+    ),
+    child: Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Icon(Icons.volume_off, size: 20, color: NmColors.wine),
+        const SizedBox(width: 10),
+        Expanded(
+          child: Text(
+            L.t(
+              'Цей об\'єкт не озвучується: про нього немає перевірених джерел. Його видно лише на мапі.',
+              'This place is not narrated: there are no verified sources about it. It is shown on the map only.',
+            ),
+            style: const TextStyle(
+                fontSize: 14, color: NmColors.ink, height: 1.35),
+          ),
+        ),
+      ],
+    ),
+  );
+}
+
+/// Compact flag on a card: "inaccurate information".
+Widget _reportButton(BuildContext context, WalkController controller, Poi poi) {
+  final reported = controller.reportedPoiIds.contains(poi.id);
+  return IconButton(
+    tooltip: reported
+        ? L.t('Ви вже повідомили про неточність', 'You already reported this')
+        : L.t('Неточна інформація', 'Inaccurate information'),
+    onPressed: () => _showReportSheet(context, controller, poi),
+    icon: Icon(
+      reported ? Icons.report : Icons.report_gmailerrorred_outlined,
+      color: reported ? NmColors.wine : NmColors.muted,
+    ),
+  );
+}
+
+Widget _reportTextButton(
+    BuildContext context, WalkController controller, Poi poi) {
+  final reported = controller.reportedPoiIds.contains(poi.id);
+  return TextButton.icon(
+    onPressed: () => _showReportSheet(context, controller, poi),
+    icon: Icon(
+      reported ? Icons.report : Icons.report_gmailerrorred_outlined,
+      size: 20,
+      color: reported ? NmColors.wine : NmColors.muted,
+    ),
+    label: Text(
+      reported
+          ? L.t('Ви повідомили про неточність', 'You reported this')
+          : L.t('Неточна інформація', 'Inaccurate information'),
+      style: TextStyle(
+        fontSize: 14,
+        fontWeight: FontWeight.w600,
+        color: reported ? NmColors.wine : NmColors.muted,
+      ),
+    ),
+  );
+}
+
+void _showLanguageSheet(BuildContext context, WalkController controller) {
+  showModalBottomSheet(
+    context: context,
+    backgroundColor: Colors.transparent,
+    builder: (ctx) => ListenableBuilder(
+      listenable: controller,
+      builder: (ctx, _) => Material(
+        color: Colors.white,
+        borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
+        child: SafeArea(
+          top: false,
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(24, 20, 24, 20),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Text('Мова / Language', style: NmText.title(22)),
+                const SizedBox(height: 6),
+                Text(
+                  L.t(
+                    'Мова інтерфейсу, розповідей, відповідей ШІ та голосу гіда.',
+                    'Language of the interface, the stories, the AI answers and the guide\'s voice.',
+                  ),
+                  style: const TextStyle(fontSize: 13, color: NmColors.muted),
+                ),
+                const SizedBox(height: 14),
+                for (final lang in AppLang.values)
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 8),
+                    child: ListTile(
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(14),
+                        side: BorderSide(
+                          color: controller.lang == lang
+                              ? NmColors.ink
+                              : NmColors.line,
+                          width: controller.lang == lang ? 2 : 1,
+                        ),
+                      ),
+                      title: Text(lang.nativeName,
+                          style: const TextStyle(
+                              fontSize: 16, fontWeight: FontWeight.w600)),
+                      trailing: controller.lang == lang
+                          ? const Icon(Icons.check_circle, color: NmColors.ink)
+                          : null,
+                      onTap: () async {
+                        await controller.setLang(lang);
+                        if (ctx.mounted) Navigator.of(ctx).pop();
+                      },
+                    ),
+                  ),
+                const SizedBox(height: 16),
+                SwitchListTile(
+                  contentPadding: EdgeInsets.zero,
+                  value: controller.analyticsEnabled,
+                  onChanged: (v) => controller.setAnalyticsEnabled(v),
+                  title: Text(
+                    L.t('Анонімна статистика', 'Anonymous statistics'),
+                    style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+                  ),
+                  subtitle: Text(
+                    L.t(
+                      'Допомагає покращувати гід: які місця слухають, де трапляються збої. Без імені, пошти та координат.',
+                      'Helps improve the guide: which places are heard, where things fail. No name, e-mail or coordinates.',
+                    ),
+                    style: const TextStyle(fontSize: 12, color: NmColors.muted),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    ),
+  );
+}
+
+void _showReportSheet(
+    BuildContext context, WalkController controller, Poi poi) {
+  showModalBottomSheet(
+    context: context,
+    isScrollControlled: true,
+    backgroundColor: Colors.transparent,
+    builder: (ctx) => _ReportSheet(controller: controller, poi: poi),
+  );
+}
+
+class _ReportSheet extends StatefulWidget {
+  final WalkController controller;
+  final Poi poi;
+
+  const _ReportSheet({required this.controller, required this.poi});
+
+  @override
+  State<_ReportSheet> createState() => _ReportSheetState();
+}
+
+class _ReportSheetState extends State<_ReportSheet> {
+  ReportReason _reason = ReportReason.wrongFacts;
+  final TextEditingController _comment = TextEditingController();
+  bool _busy = false;
+
+  @override
+  void dispose() {
+    _comment.dispose();
+    super.dispose();
+  }
+
+  Future<void> _send() async {
+    if (_busy) return;
+    setState(() => _busy = true);
+    final box = context.findRenderObject() as RenderBox?;
+    final origin =
+        box == null ? null : box.localToGlobal(Offset.zero) & box.size;
+    final ok = await widget.controller.reportPlace(widget.poi, _reason,
+        comment: _comment.text, origin: origin);
+    if (!mounted) return;
+    if (ok) {
+      Navigator.of(context).pop();
+    } else {
+      setState(() => _busy = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding:
+          EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
+      child: Container(
+        decoration: const BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+        ),
+        child: SafeArea(
+          top: false,
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.fromLTRB(24, 20, 24, 20),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Row(
+                  children: [
+                    const Icon(Icons.report_gmailerrorred_outlined,
+                        color: NmColors.wine),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Text(
+                          L.t('Неточна інформація', 'Inaccurate information'),
+                          style: NmText.title(22)),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  '«${widget.poi.shownName}»',
+                  style: const TextStyle(fontSize: 14, color: NmColors.muted),
+                ),
+                const SizedBox(height: 14),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: [
+                    for (final r in ReportReason.values)
+                      ChoiceChip(
+                        label: Text(r.label),
+                        selected: _reason == r,
+                        onSelected: (_) => setState(() => _reason = r),
+                      ),
+                  ],
+                ),
+                const SizedBox(height: 14),
+                TextField(
+                  controller: _comment,
+                  maxLength: 300,
+                  maxLines: 3,
+                  decoration: InputDecoration(
+                    hintText: L.t('Що саме не так? (необов\'язково)',
+                        'What exactly is wrong? (optional)'),
+                    border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(14)),
+                  ),
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  L.t(
+                    'Відкриється меню «Поділитися»: оберіть пошту чи месенджер, щоб надіслати повідомлення розробникам. У ньому лише це місце та що застосунок розповів про нього.',
+                    'The share menu opens: pick mail or a messenger to send the message to the developers. It contains only this place and what the app said about it.',
+                  ),
+                  style: const TextStyle(
+                      fontSize: 12, color: NmColors.muted, height: 1.35),
+                ),
+                const SizedBox(height: 12),
+                ElevatedButton.icon(
+                  style: NmButtons.primary(),
+                  onPressed: _busy ? null : _send,
+                  icon: const Icon(Icons.send_rounded, size: 18),
+                  label: Text(
+                    L.t('Надіслати', 'Send'),
+                    style: const TextStyle(
+                        fontSize: 16, fontWeight: FontWeight.w600),
+                  ),
+                ),
+              ],
+            ),
           ),
         ),
       ),

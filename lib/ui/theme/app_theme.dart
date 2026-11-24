@@ -43,7 +43,31 @@ class NmColors {
 
   /// Red half of the compass needle.
   static const Color compassRed = Color(0xFFD92D20);
+
+  /// Grey half of the compass needle.
+  static const Color compassGrey = Color(0xFF98A2B3);
+
+  /// Ring of the compass button.
+  static const Color compassRing = Color(0xFF4B5565);
+
+  /// Thin outline of the wine "Завершити прогулянку" button.
+  static const Color wineLine = Color(0xFFDDB8BE);
+
+  /// Soft wine circle behind the flag on the "end the walk?" sheet.
+  static const Color wineSoft = Color(0xFFF2E1E3);
+
+  /// Ring of a step that has not started yet ("Готуємо озвучення").
+  static const Color stepIdle = Color(0xFFB8B1A2);
 }
+
+/// The soft shadow under floating cards and round buttons (0 10px 30px, 10% ink).
+const List<BoxShadow> nmShadow = [
+  BoxShadow(
+    color: Color(0x1A1B1A17),
+    blurRadius: 30,
+    offset: Offset(0, 10),
+  ),
+];
 
 /// Font families bundled in assets/fonts (see pubspec.yaml).
 class NmFonts {
