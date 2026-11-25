@@ -6,6 +6,7 @@ import 'package:geolocator/geolocator.dart';
 import 'package:http/http.dart' as http;
 import 'package:path_provider/path_provider.dart';
 import '../models/poi.dart';
+import 'alternative_places_service.dart';
 
 /// Loads POIs from the Overpass API (OpenStreetMap) and caches them locally.
 ///
@@ -63,8 +64,24 @@ class OverpassService {
     this.requestTimeout = const Duration(seconds: 28),
     Future<String> Function()? cacheDirectory,
     DateTime Function()? now,
+    AlternativePlacesService? alternative,
+    this.alternativeDelay = const Duration(seconds: 5),
+    this.alternativeLanguages,
   })  : _cacheDirectory = cacheDirectory,
-        _now = now ?? DateTime.now;
+        _now = now ?? DateTime.now,
+        _alternative = alternative ?? AlternativePlacesService();
+
+  final AlternativePlacesService _alternative;
+
+  /// If Overpass has not answered after this long, the Wikipedia search is started beside it
+  /// (at once when every Overpass mirror has failed). Whichever brings places first is used.
+  final Duration alternativeDelay;
+
+  /// The user's language first, read when a search starts (the user may switch it).
+  final List<String> Function()? alternativeLanguages;
+
+  /// True when the last [loadPois] got its places from the Wikipedia search, not Overpass.
+  bool usedAlternative = false;
 
   final Future<String> Function()? _cacheDirectory;
   final DateTime Function() _now;
@@ -169,18 +186,21 @@ class OverpassService {
       final quickFirst = _cachedPois == null || _isFarFromCache(lat, lng);
       List<Poi> pois;
       var partial = false;
+      var viaAlternative = false;
       if (quickFirst) {
-        pois = await _fetchFromOverpass(lat, lng, quick: true);
+        (pois, viaAlternative) = await _fetchWithBackup(lat, lng, quick: true);
         partial = true;
       } else {
         try {
-          pois = await _fetchFromOverpass(lat, lng);
+          (pois, viaAlternative) = await _fetchWithBackup(lat, lng);
         } catch (e) {
           debugPrint('[OverpassService] Full search failed, trying the quick one: $e');
-          pois = await _fetchFromOverpass(lat, lng, quick: true);
+          (pois, viaAlternative) = await _fetchWithBackup(lat, lng, quick: true);
           partial = true;
         }
       }
+      usedAlternative = viaAlternative;
+      if (viaAlternative) partial = true; // Overpass is asked again as soon as it may be
       _partial = partial;
       _cachedPois = pois;
       _cacheCenterLat = lat;
@@ -236,6 +256,51 @@ class OverpassService {
   bool _isFarFromCache(double lat, double lng) {
     if (_cacheCenterLat == null || _cacheCenterLng == null) return true;
     return Geolocator.distanceBetween(lat, lng, _cacheCenterLat!, _cacheCenterLng!) > _cacheValidRadiusM;
+  }
+
+  /// Overpass with the Wikipedia search beside it: started when Overpass is slow
+  /// ([alternativeDelay]) or has failed. The first to bring places wins; fails only when both do.
+  Future<(List<Poi>, bool)> _fetchWithBackup(double lat, double lng, {bool quick = false}) {
+    final done = Completer<(List<Poi>, bool)>();
+    var mainDone = false, altDone = false, altStarted = false;
+    Object? mainError;
+    Timer? timer;
+
+    void maybeFail() {
+      if (mainDone && altDone && !done.isCompleted) done.completeError(mainError ?? StateError('no places'));
+    }
+
+    void startAlt() {
+      if (altStarted || done.isCompleted) return;
+      altStarted = true;
+      debugPrint('[OverpassService] Overpass is slow or down: asking Wikipedia for places');
+      _alternative.fetch(lat, lng, languages: alternativeLanguages?.call()).then((pois) {
+        altDone = true;
+        if (pois.isNotEmpty && !done.isCompleted) {
+          done.complete((pois, true));
+        } else {
+          maybeFail();
+        }
+      }, onError: (Object _) {
+        altDone = true;
+        maybeFail();
+      });
+    }
+
+    _fetchFromOverpass(lat, lng, quick: quick).then((pois) {
+      mainDone = true;
+      if (!done.isCompleted) done.complete((pois, false));
+    }, onError: (Object e) {
+      mainDone = true;
+      mainError = e;
+      if (!altStarted) {
+        startAlt();
+      } else {
+        maybeFail();
+      }
+    });
+    timer = Timer(alternativeDelay, startAlt);
+    return done.future.whenComplete(() => timer?.cancel());
   }
 
   Future<List<Poi>> _fetchFromOverpass(double lat, double lng, {bool quick = false}) async {

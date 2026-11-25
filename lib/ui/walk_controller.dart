@@ -151,7 +151,7 @@ class WalkController extends ChangeNotifier {
         _aiService = aiService ?? AiService(apiKey: apiKey),
         _ttsService = ttsService ?? TtsService(apiKey: apiKey),
         _audioService = audioService ?? AudioPlayerService(),
-        _overpassService = overpassService ?? OverpassService(),
+        _overpassService = overpassService ?? OverpassService(alternativeLanguages: () => [L.lang.code, if (L.lang.code != 'en') 'en']),
         _researchService = researchService ?? ResearchService(
           categoryService: PoiCategoryService(),
           cacheService: PoiCacheService(),
@@ -1055,6 +1055,17 @@ class WalkController extends ChangeNotifier {
     await _loadOsmPoisAsync(force: true);
   }
 
+  /// Two entries for one place: the same Wikidata item, or the same name a few metres apart
+  /// (one name inside the other: "Львівська ратуша" / "Ратуша").
+  @visibleForTesting
+  static bool samePlace(Poi a, Poi b) {
+    if (a.wikidataId != null && a.wikidataId == b.wikidataId) return true;
+    final d = Geolocator.distanceBetween(a.latitude, a.longitude, b.latitude, b.longitude);
+    if (d > 40) return false;
+    final x = a.name.trim().toLowerCase(), y = b.name.trim().toLowerCase();
+    return x.isNotEmpty && y.isNotEmpty && (x.contains(y) || y.contains(x));
+  }
+
   /// Load OSM POIs in the background, without blocking the walk start.
   Future<void> _loadOsmPoisAsync({bool force = false}) async {
     if (_isOsmLoading) return;
@@ -1086,7 +1097,10 @@ class WalkController extends ChangeNotifier {
 
       // Merge: add OSM POIs that don't duplicate existing ones
       final existingIds = _allPois.map((p) => p.id).toSet();
-      final newPois = osmPois.where((p) => !existingIds.contains(p.id)).toList();
+      // The same place can come from OpenStreetMap and from Wikipedia: keep one.
+      final newPois = osmPois
+          .where((p) => !existingIds.contains(p.id) && !_allPois.any((e) => samePlace(e, p)))
+          .toList();
 
       final deduped = <Poi>[];
       for (final osmPoi in newPois) {
