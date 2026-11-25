@@ -12,7 +12,10 @@ import '../models/poi.dart';
 /// Features:
 ///   - Searches within 500m radius (configurable).
 ///   - Extracts Wikidata IDs and full OSM tags for downstream research.
-///   - Two-tier cache: in-memory + disk (JSON file via path_provider).
+///   - Two-tier cache: in-memory + disk (JSON file via path_provider). The disk keeps the last
+///     [maxAreas] areas the user walked in, so places are there without internet: an area
+///     younger than [freshFor] is used as it is, an older one (up to [keepFor]) is shown when the
+///     network fails — buildings stand for years, an old list beats an empty map.
 ///   - Dynamic reload: re-fetches when user moves 250m from last query center.
 ///   - Rate limiting with exponential backoff on errors.
 ///   - Graceful fallback to cache on network failure.
@@ -58,7 +61,25 @@ class OverpassService {
   OverpassService({
     this.staggerDelay = const Duration(seconds: 2),
     this.requestTimeout = const Duration(seconds: 28),
-  });
+    Future<String> Function()? cacheDirectory,
+    DateTime Function()? now,
+  })  : _cacheDirectory = cacheDirectory,
+        _now = now ?? DateTime.now;
+
+  final Future<String> Function()? _cacheDirectory;
+  final DateTime Function() _now;
+
+  /// How many areas the disk remembers.
+  static const int maxAreas = 8;
+
+  /// A saved area this young is used without asking the network.
+  static const Duration freshFor = Duration(hours: 24);
+
+  /// A saved area this young may still be shown when the network fails.
+  static const Duration keepFor = Duration(days: 60);
+
+  /// True when the last [loadPois] answered from an old saved list because the network failed.
+  bool servedFromOldCache = false;
 
   /// The cached list comes from the quick, reduced search: the full one follows soon.
   bool _partial = false;
@@ -103,18 +124,23 @@ class OverpassService {
     }
 
     // 2. Check disk cache (valid only for the place it was fetched for)
-    List<Poi>? diskPois;
+    List<_Area>? areas;
+    _Area? fallback; // old or distant-ish list: shown only if the network fails
     if (!force) {
-      diskPois = await _loadFromDisk();
-      if (diskPois != null && _isNearCacheCenter(lat, lng)) {
-        _cachedPois = diskPois;
+      areas = await _readAreas();
+      final near = _nearest(areas, lat, lng, _cacheValidRadiusM);
+      if (near != null && _now().difference(near.savedAt) <= freshFor) {
+        _cachedPois = near.pois;
+        _cacheCenterLat = near.lat;
+        _cacheCenterLng = near.lng;
+        _partial = near.partial; // a saved quick search: the full one is still due
         lastLoadFailed = false;
-        debugPrint('[OverpassService] Using disk cache: '
-            '${diskPois.length} POIs');
-        return diskPois;
+        servedFromOldCache = false;
+        debugPrint('[OverpassService] Using disk cache: ${near.pois.length} POIs');
+        return near.pois;
       }
-      // A cache from another place must never be served as a fallback either.
-      if (diskPois != null && !_isNearCacheCenter(lat, lng, maxM: 1500)) diskPois = null;
+      // Never a list from another place (further than 1.5 km), whatever its age.
+      fallback = near ?? _nearest(areas, lat, lng, 1500);
     }
 
     // 3. Rate limiting check
@@ -127,7 +153,8 @@ class OverpassService {
       if (elapsed < backoff) {
         debugPrint('[OverpassService] Rate limited, using cache');
         if (_cachedPois != null) return _cachedPois!;
-        if (diskPois != null) return diskPois;
+        fallback ??= _nearest(areas ?? await _readAreas(), lat, lng, 1500);
+        if (fallback != null) return _offline(fallback);
         debugPrint('[OverpassService] Rate limited and no cache available, returning empty list');
         lastLoadFailed = true;
         return [];
@@ -160,7 +187,8 @@ class OverpassService {
       _cacheCenterLng = lng;
       _consecutiveErrors = 0;
       lastLoadFailed = false;
-      await _saveToDisk(pois, lat, lng);
+      servedFromOldCache = false;
+      await _saveToDisk(pois, lat, lng, partial: partial);
       debugPrint('[OverpassService] Fetched from Overpass: ${pois.length} POIs'
           '${partial ? ' (quick search, full one follows)' : ''}');
       return pois;
@@ -170,15 +198,38 @@ class OverpassService {
           '(error #$_consecutiveErrors): $e');
       // Fall back to any existing cache
       if (_cachedPois != null) return _cachedPois!;
-      if (diskPois != null) return diskPois;
+      // Even after "refresh" (force) the saved list is better than an empty map.
+      fallback ??= _nearest(areas ?? await _readAreas(), lat, lng, 1500);
+      if (fallback != null) return _offline(fallback);
       lastLoadFailed = true;
       return []; // Return empty list rather than crashing on network outage
     }
   }
 
-  bool _isNearCacheCenter(double lat, double lng, {double maxM = _cacheValidRadiusM}) {
-    if (_cacheCenterLat == null || _cacheCenterLng == null) return false;
-    return Geolocator.distanceBetween(lat, lng, _cacheCenterLat!, _cacheCenterLng!) <= maxM;
+  /// Answers from a saved list while the network is out; asks again soon ([shouldReload]).
+  List<Poi> _offline(_Area area) {
+    debugPrint('[OverpassService] Network unavailable: showing ${area.pois.length} saved places '
+        '(${_now().difference(area.savedAt).inHours} h old)');
+    _cachedPois = area.pois;
+    _cacheCenterLat = area.lat;
+    _cacheCenterLng = area.lng;
+    _partial = true; // try the network again as soon as the rate limit allows
+    lastLoadFailed = false;
+    servedFromOldCache = true;
+    return area.pois;
+  }
+
+  static _Area? _nearest(List<_Area> areas, double lat, double lng, double maxM) {
+    _Area? best;
+    var bestD = double.infinity;
+    for (final a in areas) {
+      final d = Geolocator.distanceBetween(lat, lng, a.lat, a.lng);
+      if (d <= maxM && d < bestD) {
+        best = a;
+        bestD = d;
+      }
+    }
+    return best;
   }
 
   /// Build and execute the Overpass QL query with fallback support.
@@ -486,130 +537,136 @@ out bb;
 
   Future<String> get _cachePath async {
     if (kIsWeb) return '';
-    final dir = await getApplicationDocumentsDirectory();
-    return '${dir.path}/$_cacheFileName';
+    final custom = _cacheDirectory;
+    final dir = custom != null ? await custom() : (await getApplicationDocumentsDirectory()).path;
+    return '$dir/$_cacheFileName';
   }
 
-  Future<void> _saveToDisk(List<Poi> pois, double lat, double lng) async {
-    if (kIsWeb) return;
+  Future<void> _saveToDisk(List<Poi> pois, double lat, double lng, {bool partial = false}) async {
+    if (kIsWeb || pois.isEmpty) return;
     try {
-      final path = await _cachePath;
+      final areas = await _readAreas();
+      final same = _nearest(areas, lat, lng, _cacheValidRadiusM);
+      // A quick (reduced) search must not replace a fuller list of the same place.
+      if (partial && same != null && !same.partial && same.pois.length > pois.length) return;
+      areas.removeWhere((a) => identical(a, same));
+      areas.insert(0, _Area(lat: lat, lng: lng, savedAt: _now(), partial: partial, pois: pois));
+      if (areas.length > maxAreas) areas.removeRange(maxAreas, areas.length);
       final data = {
-        'center_lat': lat,
-        'center_lng': lng,
-        'timestamp': DateTime.now().toIso8601String(),
-        'pois': pois.map((p) => <String, dynamic>{
-          'id': p.id,
-          'name': p.name,
-          'latitude': p.latitude,
-          'longitude': p.longitude,
-          'triggerRadius': p.triggerRadius,
-          'shortDescription': p.shortDescription,
-          'confidence': p.confidence,
-          'wikidataId': p.wikidataId,
-          'osmTags': p.osmTags,
-          'sources': p.sources.map((s) => <String, dynamic>{
-            'title': s.title,
-            'url': s.url,
-          }).toList(),
-        }).toList(),
+        'version': 2,
+        'areas': [for (final a in areas) a.toJson()],
       };
-      await File(path).writeAsString(jsonEncode(data));
+      final file = File(await _cachePath);
+      await file.parent.create(recursive: true);
+      await file.writeAsString(jsonEncode(data));
     } catch (e) {
       debugPrint('[OverpassService] Failed to save cache: $e');
     }
   }
 
-  Future<List<Poi>?> _loadFromDisk() async {
-    if (kIsWeb) return null;
+  /// The saved areas, newest first (older than [keepFor] and too small ones are dropped).
+  /// Also reads the old single-area file.
+  Future<List<_Area>> _readAreas() async {
+    if (kIsWeb) return [];
     try {
-      final path = await _cachePath;
-      final file = File(path);
-      if (!await file.exists()) return null;
-
-      final data = jsonDecode(await file.readAsString()) as Map<String, dynamic>;
-
-      // Check cache age — expire disk cache after 24 hours
-      final timestampStr = data['timestamp'] as String?;
-      if (timestampStr != null) {
-        final timestamp = DateTime.tryParse(timestampStr);
-        if (timestamp != null) {
-          final age = DateTime.now().difference(timestamp);
-          if (age > const Duration(hours: 24)) {
-            debugPrint('[OverpassService] Disk cache expired (${age.inHours}h old), fetching fresh POIs');
-            return null;
-          }
-        }
+      final file = File(await _cachePath);
+      if (!await file.exists()) return [];
+      final data = jsonDecode(await file.readAsString());
+      if (data is! Map<String, dynamic>) return [];
+      final raw = data['areas'] is List ? data['areas'] as List : [data]; // old format: one area
+      final out = <_Area>[];
+      for (final r in raw) {
+        try {
+          final a = _Area.fromJson(r as Map<String, dynamic>, fallbackTime: _now());
+          if (a.pois.length < 3) continue; // too little to rely on
+          if (_now().difference(a.savedAt) > keepFor) continue;
+          out.add(a);
+        } catch (_) {} // one bad entry must not lose the others
       }
-
-      final rawPois = data['pois'] as List<dynamic>? ?? [];
-      // If disk cache has fewer than 3 POIs, don't rely on it
-      if (rawPois.length < 3) {
-        debugPrint('[OverpassService] Disk cache has too few POIs (${rawPois.length}), re-fetching');
-        return null;
-      }
-
-      _cacheCenterLat = (data['center_lat'] as num?)?.toDouble();
-      _cacheCenterLng = (data['center_lng'] as num?)?.toDouble();
-      return rawPois.map((p) {
-        final m = p as Map<String, dynamic>;
-        List<PoiSource> sources = [];
-        final rawSources = m['sources'] as List<dynamic>?;
-        if (rawSources != null) {
-          for (final s in rawSources) {
-            if (s is Map<String, dynamic>) {
-              sources.add(PoiSource(
-                title: s['title'] as String? ?? '',
-                url: s['url'] as String? ?? '',
-              ));
-            }
-          }
-        }
-        // Restore OSM tags
-        Map<String, String>? osmTags;
-        final rawTags = m['osmTags'] as Map<String, dynamic>?;
-        if (rawTags != null) {
-          osmTags = rawTags.map((k, v) => MapEntry(k, v.toString()));
-        }
-
-        return Poi(
-          id: m['id'] as String,
-          name: m['name'] as String,
-          latitude: (m['latitude'] as num).toDouble(),
-          longitude: (m['longitude'] as num).toDouble(),
-          triggerRadius: (m['triggerRadius'] as num?)?.toDouble() ?? defaultTriggerRadiusM,
-          shortDescription: m['shortDescription'] as String? ?? '',
-          facts: [],
-          narrationText: '',
-          sources: sources,
-          confidence: m['confidence'] as String? ?? 'osm',
-          wikidataId: m['wikidataId'] as String?,
-          osmTags: osmTags,
-        );
-      }).toList();
+      return out;
     } catch (e) {
       debugPrint('[OverpassService] Failed to load cache: $e');
-      return null;
+      return [];
     }
   }
 
-  /// Invalidate both in-memory and disk cache to force a clean Overpass search.
+  /// Forgets what is in memory so the next search goes to the network. The saved areas on disk
+  /// stay: if the network is out, "refresh" must not leave the map empty.
   Future<void> clearCache() async {
     _cachedPois = null;
     _cacheCenterLat = null;
     _cacheCenterLng = null;
     _lastRequestTime = null;
     _consecutiveErrors = 0;
-    if (!kIsWeb) {
+    _partial = false;
+  }
+}
+
+/// One saved search: where, when, and the places found.
+class _Area {
+  final double lat;
+  final double lng;
+  final DateTime savedAt;
+  final bool partial;
+  final List<Poi> pois;
+  const _Area({required this.lat, required this.lng, required this.savedAt, required this.partial, required this.pois});
+
+  Map<String, dynamic> toJson() => {
+        'center_lat': lat,
+        'center_lng': lng,
+        'timestamp': savedAt.toIso8601String(),
+        'partial': partial,
+        'pois': [
+          for (final p in pois)
+            <String, dynamic>{
+              'id': p.id,
+              'name': p.name,
+              'latitude': p.latitude,
+              'longitude': p.longitude,
+              'triggerRadius': p.triggerRadius,
+              'shortDescription': p.shortDescription,
+              'confidence': p.confidence,
+              'wikidataId': p.wikidataId,
+              'osmTags': p.osmTags,
+              'sources': [
+                for (final s in p.sources) <String, dynamic>{'title': s.title, 'url': s.url}
+              ],
+            }
+        ],
+      };
+
+  factory _Area.fromJson(Map<String, dynamic> j, {required DateTime fallbackTime}) {
+    final pois = <Poi>[];
+    for (final p in (j['pois'] as List<dynamic>? ?? [])) {
       try {
-        final path = await _cachePath;
-        final file = File(path);
-        if (await file.exists()) {
-          await file.delete();
-        }
-      } catch (e) {
-        debugPrint('[OverpassService] Failed to delete disk cache: $e');
-      }
+        final m = p as Map<String, dynamic>;
+        final tags = (m['osmTags'] as Map<String, dynamic>?)?.map((k, v) => MapEntry(k, v.toString()));
+        pois.add(Poi(
+          id: m['id'] as String,
+          name: m['name'] as String,
+          latitude: (m['latitude'] as num).toDouble(),
+          longitude: (m['longitude'] as num).toDouble(),
+          triggerRadius: (m['triggerRadius'] as num?)?.toDouble() ?? OverpassService.defaultTriggerRadiusM,
+          shortDescription: m['shortDescription'] as String? ?? '',
+          facts: [],
+          narrationText: '',
+          sources: [
+            for (final s in (m['sources'] as List<dynamic>? ?? []))
+              if (s is Map<String, dynamic>)
+                PoiSource(title: s['title'] as String? ?? '', url: s['url'] as String? ?? ''),
+          ],
+          confidence: m['confidence'] as String? ?? 'osm',
+          wikidataId: m['wikidataId'] as String?,
+          osmTags: tags,
+        ));
+      } catch (_) {} // skip a broken place, keep the rest
     }
+    return _Area(
+      lat: (j['center_lat'] as num).toDouble(),
+      lng: (j['center_lng'] as num).toDouble(),
+      savedAt: DateTime.tryParse(j['timestamp'] as String? ?? '') ?? fallbackTime,
+      partial: j['partial'] as bool? ?? false,
+      pois: pois,
+    );
   }
 }
